@@ -1,7 +1,7 @@
 package github
 
 import (
-	gogh "github.com/google/go-github/v72/github"
+	gogh "github.com/google/go-github/v88/github"
 )
 
 func str(p *string) string {

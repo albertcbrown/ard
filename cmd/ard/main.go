@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/albertcbrown/ard/internal/cli"
+	"github.com/albertcbrown/ard/internal/configcmd"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -23,5 +24,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // handlers wires one function per subcommand. Each new command adds one
 // line here; a nil field runs the command as a "not implemented" stub.
 func handlers() cli.Handlers {
-	return cli.Handlers{}
+	return cli.Handlers{
+		ConfigCheck: configcmd.Check,
+	}
 }

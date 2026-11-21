@@ -24,8 +24,7 @@ const maxAttempts = 4
 type readOnlyTransport struct{ next http.RoundTripper }
 
 func (t readOnlyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	switch req.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	if req.Method == http.MethodGet {
 		return t.next.RoundTrip(req)
 	}
 	if req.Body != nil {

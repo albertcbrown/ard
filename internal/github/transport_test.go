@@ -269,7 +269,7 @@ func TestReadOnlyTransport(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
 	defer srv.Close()
 	c := &http.Client{Transport: readOnlyTransport{next: http.DefaultTransport}}
-	for _, m := range []string{"POST", "PATCH", "PUT", "DELETE"} {
+	for _, m := range []string{"POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"} {
 		req, _ := http.NewRequest(m, srv.URL+"/graphql", strings.NewReader("{}"))
 		if _, err := c.Do(req); !errors.Is(err, ErrReadOnly) {
 			t.Errorf("%s: err = %v, want ErrReadOnly", m, err)
@@ -285,5 +285,47 @@ func TestReadOnlyTransport(t *testing.T) {
 	resp.Body.Close()
 	if hits != 1 {
 		t.Errorf("GET hits = %d", hits)
+	}
+}
+
+func TestTimeoutTransportRetriesSlowGET(t *testing.T) {
+	for _, tc := range []struct {
+		method    string
+		wantCalls int
+	}{{"GET", 2}, {"POST", 1}} {
+		t.Run(tc.method, func(t *testing.T) {
+			var mu sync.Mutex
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				calls++
+				first := calls == 1
+				mu.Unlock()
+				if first {
+					select {
+					case <-time.After(300 * time.Millisecond):
+					case <-r.Context().Done():
+					}
+				}
+			}))
+			defer srv.Close()
+			rt := newRetryTransport(timeoutTransport{next: http.DefaultTransport, d: 100 * time.Millisecond}, time.Minute, nil)
+			rt.sleep = func(ctx context.Context, d time.Duration) error { return nil }
+			req, _ := http.NewRequest(tc.method, srv.URL, nil)
+			resp, err := rt.RoundTrip(req)
+			if tc.method == "GET" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+			} else if err == nil {
+				t.Error("POST timeout: want error")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if calls != tc.wantCalls {
+				t.Errorf("attempts = %d, want %d", calls, tc.wantCalls)
+			}
+		})
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	gogh "github.com/google/go-github/v72/github"
+	gogh "github.com/google/go-github/v88/github"
 )
 
 const defaultBaseURL = "https://api.github.com/"
@@ -80,13 +80,14 @@ func New(cfg Config) (*HTTP, error) {
 	}
 	h := &HTTP{repo: cfg.Repo, auth: cfg.Auth, baseURL: cfg.BaseURL, cfg: cfg}
 	h.httpc = &http.Client{Transport: h.wrap(authRT)}
-	h.gh = gogh.NewClient(h.httpc)
-	u, err := url.Parse(cfg.BaseURL)
-	if err != nil {
+	if _, err := url.Parse(cfg.BaseURL); err != nil {
 		return nil, fmt.Errorf("github: parse BaseURL: %w", err)
 	}
-	h.gh.BaseURL = u
-	h.gh.UserAgent = "ard"
+	gc, err := gogh.NewClient(gogh.WithHTTPClient(h.httpc), gogh.WithURLs(&cfg.BaseURL, nil), gogh.WithUserAgent("ard"))
+	if err != nil {
+		return nil, fmt.Errorf("github: new client: %w", err)
+	}
+	h.gh = gc
 	return h, nil
 }
 
@@ -259,8 +260,10 @@ func (h *HTTP) Identity(ctx context.Context) (Identity, error) {
 		if err != nil {
 			return Identity{}, err
 		}
-		jc := gogh.NewClient(&http.Client{Transport: h.wrap(jwtRT)})
-		jc.BaseURL = h.gh.BaseURL
+		jc, err := gogh.NewClient(gogh.WithHTTPClient(&http.Client{Transport: h.wrap(jwtRT)}), gogh.WithURLs(&h.baseURL, nil), gogh.WithUserAgent("ard"))
+		if err != nil {
+			return Identity{}, err
+		}
 		a, _, err := jc.Apps.Get(ctx, "")
 		if err != nil {
 			return Identity{}, mapErr("identity: get app", err)

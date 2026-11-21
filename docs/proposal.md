@@ -35,7 +35,7 @@ flowchart TD
         A["Agent adapters: claude, kimi, dsh-tui"]
         C["Committer: sole writer to main"]
         X["Reaper: ard:executor:failed, keep 24 h"]
-        D["State: one SQLite db per scanner"]
+        D["State: controller db plus one SQLite db per scanner"]
     end
 ```
 
@@ -148,7 +148,7 @@ A scanner is a directory, `.ard/scanners/<name>/`, holding either an executable 
 5. **Group.** Findings that share a `group` key join one issue, up to `group_size` (N), as a checklist with one line per finding. New findings join an open group issue that has room and is not yet claimed; otherwise they start a new one.
 6. **File.** Create the issue with `ard:scanner:<name>` and `ard:pending`, then queue `.ard/<issue#>/issue.md` to the committer. The issue comes first because its number names the directory.
 
-**Each scanner has its own state, and GitHub is the truth.** Every scanner keeps a separate SQLite file, `~/.ard/state/<owner>-<repo>/<scanner>.db`: fingerprint to issue, first and last seen, suppressions, last run. Scanners never share or lock each other's state, and one can be reset without touching the rest. Every issue body carries hidden markers (`<!-- ard:fp=<fingerprint> -->`), so `ard rebuild-state <scanner>` restores a database from GitHub after a lost disk or a host move.
+**Each scanner has its own state, and GitHub is the truth.** Every scanner keeps a separate SQLite file, `~/.ard/state/<owner>-<repo>/<scanner>.db`: fingerprint to issue, first and last seen, suppressions, last run. Scanners never share or lock each other's state, and one can be reset without touching the rest. The controller keeps its own jobs, attempts and events in `_controller.db` in the same directory, and dry-run uses `~/.ard/state-dryrun/<owner>-<repo>/`. Every issue body carries hidden markers (`<!-- ard:fp=<fingerprint> -->`), so `ard rebuild-state <scanner>` restores a database from GitHub after a lost disk or a host move.
 
 **Closed is not always "forget".** Removing a fingerprint on every close, as first sketched, refiles a won't-fix issue on the next run. Completed closes stop tracking the finding but keep a `fixed` tombstone, so a finding that comes back is filed as a regression of the old issue. Not-planned closes suppress, and re-raise early if severity rises.
 
@@ -202,7 +202,9 @@ Triage turns an issue into a `plan.md` a worker can execute, one role at a time,
 
 An executor runs one agent job somewhere and reports back; the controller does not care where. Both executors implement the same five calls: `prepare`, `start`, `status`, `logs`, `cleanup`. Job IDs are ULIDs minted at claim time; they name the worktree and the logs and appear as the `Ard-Job` commit trailer. The executor captures the job's stdout separately from its combined log, because the adapter parses one and the committed log comes from the other. Scanner jobs get network egress for advisory databases; agent jobs get only their model key.
 
-**One pool of job slots, drained from the end.** At most `max_pods` jobs (default 3) run at once, shared by every loop. When a slot frees, the controller fills it in this order: reviewers, then workers, then triage, then scanners, oldest first within each. Finishing work in flight beats starting new work, so a busy day grows the scanner backlog, not the pile of half-done PRs. The merger and the Reaper are controller code and take no slot.
+Local-executor details: the job worktree is always detached at a SHA resolved from the job's ref (the executor never checks out a branch; the committer owns branch worktrees). The host keeps two files per job: `<base>.log` (stdout and stderr combined, the heartbeat source and the committed log) and `<base>.stdout` (stdout only, parsed by the adapter). A read-only job (`ReadOnly`, used by scanners) gets the worktree mounted `:ro` under Docker, or `chmod -R a-w` on the host. The heartbeat is the log file's mtime while the PID is alive; liveness alone is not a beat. Phase 0 local jobs do not survive a controller restart: the pipes belong to the controller, so after a restart the job reports `orphaned` (PID alive, start time verified) or `gone`, and the Reaper kills and fails it. The executor is not an effect: it never calls GitHub or commits, so jobs run normally under `--dry-run`. Host-mode jobs run as the controller's uid: they can read the GitHub App key and `~/.config/gh` by absolute path, write `RepoDir/.git`, and undo `chmod a-w`. Roles that handle untrusted input need a `Dockerfile` until a decision issue settles this.
+
+**One pool of job slots, drained from the end.** At most `max_pods` jobs (default 3) run at once, shared by every loop. When a slot frees, the controller fills it in this order: reviewers, then workers, then triage, then scanners, oldest first within each. Finishing work in flight beats starting new work, so a busy day grows the scanner backlog, not the pile of half-done PRs. The merger and the Reaper are controller code and take no slot. Slots are granted when a loop polls and nothing is queued: a loop that found work waiting within the last two of its intervals has that demand reserved ahead of lower classes, so a freed slot can sit idle until that loop's next poll. A scanner run that gets no slot is skipped, not queued.
 
 |  | Local executor | Kubernetes executor |
 | --- | --- | --- |
@@ -231,7 +233,7 @@ A worker implements `plan.md` on its own branch and ends with a draft PR, test r
 
 1. **Poll and claim** `ard:worker:<role>` like triage, also skipping `ard:needs-human`. Workers rank second for job slots, after reviewers.
 2. **Branch** `worker/<role>-<issue#>-<slug>` from `origin/main`. The slug is the issue title in kebab case, ASCII, at most 40 characters. A fix round reuses the existing branch.
-3. **Worktree** on that branch, with the sidecar mounted read-only.
+3. **Worktree** detached at the branch head, with the sidecar mounted read-only. The branch itself belongs to the committer.
 4. **Run the agent** with `.ard/workers/<role>/prompt.txt`, `issue.md`, `plan.md`, the triage logs and, in a fix round, the reviewer logs and PR review comments. It edits code and writes `.ard/<issue#>/<role>.md`.
 5. **Guard the diff** before anything leaves the host. Reject changes to `.github/workflows/`, to `.ard/config.yaml` or any role directory, to other issues' `.ard/` directories, and to secret-shaped files. Over 1,000 changed lines goes to `ard:needs-human` instead of review.
 6. **Commit and push.** Add the code, `<role>.md` and the run's redacted output in `.ard/<issue#>/logs/`. Commit with the title `<type>: <issue title> (#<issue>)`, the summary from `<role>.md` as the body and an `Ard-Job: <job-id>` trailer, then push the branch.
@@ -297,7 +299,7 @@ Configuration is by convention: a role exists because its directory exists, and 
 ```
 
 - A directory with `prompt.txt` is an agent role; a scanner directory with an executable `scan` is a deterministic scanner.
-- A `Dockerfile` builds the role's image; without one the role runs in the default `ard-agent` image (agent CLIs, git, common linters).
+- A `Dockerfile` builds the role's image; without one the local executor runs a host subprocess and the Kubernetes executor uses the default `ard-agent` image (agent CLIs, git, common linters).
 - Any other file in the directory (scripts, allowlists) is mounted read-only beside the prompt.
 
 ```yaml
