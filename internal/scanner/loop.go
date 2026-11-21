@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/config"
@@ -85,11 +86,14 @@ func (d dueScanner) name() string {
 	return d.role.Name
 }
 
-// Tick runs the most overdue scanner, if any is due.
+// Tick runs due scanners, most overdue first, and stops after the first one
+// that did anything but get denied a pool slot. A scanner denied a slot stays
+// the most overdue; without the walk it would starve the built-ins and every
+// other scanner.
 func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 	cfg := env.Cfg
 	now := l.p.now()
-	var best *dueScanner
+	var due []dueScanner
 	consider := func(c dueScanner, every time.Duration) error {
 		store, err := l.p.Stores(ctx, c.name())
 		if err != nil {
@@ -106,9 +110,7 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 				return nil
 			}
 		}
-		if best == nil || c.due.Before(best.due) {
-			best = &c
-		}
+		due = append(due, c)
 		return nil
 	}
 	var errs []error
@@ -130,17 +132,22 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 			errs = append(errs, err)
 		}
 	}
-	if best != nil {
-		if err := l.run(ctx, env, cfg, *best, now); err != nil {
+	sort.SliceStable(due, func(i, j int) bool { return due[i].due.Before(due[j].due) })
+	for _, d := range due {
+		outcome, err := l.run(ctx, env, cfg, d, now)
+		if err != nil {
 			errs = append(errs, err)
+		}
+		if outcome != OutcomeNoSlot {
+			break
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved, d dueScanner, now time.Time) error {
+func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved, d dueScanner, now time.Time) (string, error) {
 	if d.builtin != nil {
-		return l.runBuiltin(ctx, env, d.builtin)
+		return OutcomeOK, l.runBuiltin(ctx, env, d.builtin)
 	}
 	p := *l.p // per-tick copy so the run logs under the loop's tick tag
 	p.Log = env.Log
@@ -148,8 +155,8 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 	if since.IsZero() {
 		since = now
 	}
-	_, err := p.Run(ctx, cfg, d.role, since)
-	return err
+	res, err := p.Run(ctx, cfg, d.role, since)
+	return res.Outcome, err
 }
 
 func (l *Loop) runBuiltin(ctx context.Context, env controller.Env, b Builtin) error {

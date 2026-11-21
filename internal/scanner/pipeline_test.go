@@ -3,6 +3,8 @@ package scanner
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -617,5 +619,122 @@ func TestDryRunJoinsASyntheticGroupIssue(t *testing.T) {
 	rb, _ := h.row("b")
 	if ra.Issue != rb.Issue || ra.Issue >= 0 {
 		t.Errorf("rows %+v %+v", ra, rb)
+	}
+}
+
+func TestRunStopsWhenReconcileCannotSave(t *testing.T) {
+	h := newHarness(t, nil)
+	h.eng.set(fnd("a", SevHigh))
+	h.store.failApply = 1 // the save after CreateIssue
+	if _, err := h.run(); err == nil {
+		t.Fatal("want an error")
+	}
+	h.store.failApply = 1 // now the reconcile that adopts the issue
+	calls := h.eng.calls
+	res, err := h.run()
+	if err == nil || res.Outcome != OutcomeError || h.eng.calls != calls {
+		t.Fatalf("res = %+v, err = %v, scans %d -> %d: a stale snapshot must not reach the scan", res, err, calls, h.eng.calls)
+	}
+	if h.lastRun().Outcome != OutcomeError {
+		t.Errorf("run row = %+v", h.lastRun())
+	}
+	h.mustRun()
+	if h.writes("CreateIssue") != 1 || len(h.all()) != 1 {
+		t.Errorf("%d creates", h.writes("CreateIssue"))
+	}
+	h.wantRow("a", 1, StatusOpen)
+}
+
+func TestDryRunAdoptsLedgerIssuesAfterACrash(t *testing.T) {
+	h := newHarness(t, nil)
+	dry, err := effects.NewDryRun(effects.DryRunOptions{Log: quiet, LedgerPath: filepath.Join(t.TempDir(), "effects.jsonl")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dry.Close()
+	h.p.Effects = dry
+	h.eng.set(fnd("a", SevHigh), fnd("b", SevLow))
+	h.store.failApply = 2 // both saves after the synthetic CreateIssue calls fail
+	if _, err := h.run(); err == nil {
+		t.Fatal("want an error")
+	}
+	if _, ok := h.row("a"); ok {
+		t.Fatal("rows were saved despite the failure")
+	}
+	res := h.mustRun()
+	if res.Created != 0 || res.New != 0 {
+		t.Fatalf("res = %+v: the ledger's issues must be adopted, not re-filed", res)
+	}
+	h.wantRow("a", -1, StatusOpen)
+	issues, err := dry.Issues()
+	if err != nil || len(issues) != 2 {
+		t.Errorf("ledger issues = %+v, %v", issues, err)
+	}
+}
+
+func TestRunPausedAfterTheScanFilesNothing(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.Paused = func(context.Context) bool { return true }
+	h.eng.set(fnd("a", SevHigh))
+	res, err := h.run()
+	if err != nil || res.Outcome != OutcomePaused {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if len(h.all()) != 0 || len(h.gh.Writes()) != 0 {
+		t.Error("a paused run wrote to GitHub")
+	}
+	if _, err := h.db.LastRun(h.ctx); !errors.Is(err, scannerdb.ErrNotFound) {
+		t.Errorf("a paused run was recorded: %v", err)
+	}
+	h.p.Paused = func(context.Context) bool { return false }
+	if res := h.mustRun(); res.Created != 1 {
+		t.Errorf("res = %+v", res)
+	}
+}
+
+func TestDryRunJoinToARealIssueDoesNotCommit(t *testing.T) {
+	h := newHarness(t, func(r *config.Role) { r.GroupSize = 3 })
+	h.eng.set(gfnd("a", SevHigh, "g"))
+	h.mustRun() // live: a real issue and one commit
+	dry, _ := effects.NewDryRun(effects.DryRunOptions{Log: quiet})
+	h.p.Effects = dry
+	h.eng.set(gfnd("a", SevHigh, "g"), gfnd("b", SevLow, "g"))
+	res := h.mustRun()
+	if res.Joined != 1 || len(h.com.reqs) != 1 {
+		t.Errorf("res = %+v, %d commits: dry-run must not commit", res, len(h.com.reqs))
+	}
+}
+
+func TestRunCapsAChecklistThatWouldOverflowTheBody(t *testing.T) {
+	h := newHarness(t, func(r *config.Role) { r.GroupSize = 100000; r.MaxOpen = 20 })
+	var fs []Finding
+	for i := 0; i < 150; i++ {
+		fp := fmt.Sprintf("fp-%03d-%s", i, strings.Repeat("x", 500))
+		fs = append(fs, Finding{Fingerprint: fp, Title: strings.Repeat("t", 150), Severity: SevLow, Group: "g", Body: strings.Repeat("d", 1500)})
+	}
+	h.eng.set(fs...)
+	res := h.mustRun()
+	if res.Created != 1 || res.OverBudget == 0 || res.Filed+res.OverBudget != 150 {
+		t.Fatalf("res = %+v", res)
+	}
+	if n := len(h.issue(1).Body); n > MaxBodyChars {
+		t.Fatalf("body is %d chars, want <= %d", n, MaxBodyChars)
+	}
+	if got := len(ParseBody(h.issue(1).Body).Lines); got != res.Filed {
+		t.Errorf("%d lines for %d filed findings", got, res.Filed)
+	}
+	// The rest is filed on later runs, never in an oversized body.
+	for i := 0; i < 5; i++ {
+		h.mustRun()
+	}
+	for _, is := range h.all() {
+		if len(is.Body) > MaxBodyChars {
+			t.Errorf("issue #%d body is %d chars", is.Number, len(is.Body))
+		}
+	}
+	for _, f := range fs {
+		if _, ok := h.row(f.Fingerprint); !ok {
+			t.Fatalf("%s never filed", f.Fingerprint[:10])
+		}
 	}
 }

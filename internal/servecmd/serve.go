@@ -21,6 +21,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
+	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/pool"
@@ -96,6 +97,15 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		Repo: repo, Root: root, Home: home, Token: d.Token, Scanners: scanners,
 	}
 	defer w.closeAll()
+	// A scan can outlast a pause, so the scanners re-check after it. The
+	// check fails closed, like the gate's own.
+	w.Paused = func(ctx context.Context) bool {
+		c, err := config.Load(root)
+		if err != nil {
+			return true
+		}
+		return gate.Check(ctx, c).Paused
+	}
 
 	cc, err := controller.New(controller.Deps{
 		Log: log,
@@ -114,6 +124,13 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		// and #20's closeout-resume (when it lands) goes first.
 		Startup: []controller.Hook{
 			{Name: "pool-adopt", Fn: func(ctx context.Context) error {
+				var cl workspaceCleaner
+				if ex, err := local.New(local.Options{Root: filepath.Join(home, ".ard"), Log: log}); err == nil {
+					cl = ex
+				}
+				if err := failStaleScannerJobs(ctx, store, cl, log); err != nil {
+					return err
+				}
 				p, err := adoptPool(ctx, store, cfg.MaxPods, log)
 				if err != nil {
 					return err
@@ -158,6 +175,7 @@ type wiring struct {
 	Home     string // the user's home directory; ~/.ard holds state, logs and worktrees
 	Token    gitx.TokenFunc
 	Scanners *scannerdb.Registry
+	Paused   func(ctx context.Context) bool // nil = never paused
 	pool     atomic.Pointer[pool.Pool]
 
 	mu      sync.Mutex

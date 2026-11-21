@@ -15,10 +15,12 @@ import (
 
 type namedEngine struct {
 	ran    []string
+	tried  []string
 	noSlot bool
 }
 
 func (e *namedEngine) Scan(_ context.Context, r config.Role, _ time.Time) (ScanResult, error) {
+	e.tried = append(e.tried, r.Name)
 	if e.noSlot {
 		return ScanResult{}, ErrNoSlot
 	}
@@ -230,5 +232,29 @@ func TestLoopTickTimeout(t *testing.T) {
 	}
 	if got := newLoopFixture(t, nil).loop.TickTimeout(&config.Resolved{}); got != 0 {
 		t.Errorf("no scanners: %v, want the default", got)
+	}
+}
+
+func TestLoopDeniedScannerDoesNotStarveOthers(t *testing.T) {
+	b := &fakeBuiltin{name: "stale", every: time.Hour}
+	f := newLoopFixture(t, []config.Role{every("cve", 6*time.Hour), every("lint", 6*time.Hour)}, b)
+	f.seedRun("cve", 20*time.Hour)
+	f.seedRun("lint", 10*time.Hour)
+	f.seedRun("stale", 5*time.Hour)
+	f.eng.noSlot = true
+	f.tick()
+	if len(f.eng.tried) != 2 || f.eng.tried[0] != "cve" || f.eng.tried[1] != "lint" {
+		t.Errorf("tried %v: every due scanner must be offered, oldest first", f.eng.tried)
+	}
+	if b.runs != 1 {
+		t.Errorf("the built-in was starved by denied scanners: %d runs", b.runs)
+	}
+	// Once one scanner does run, the walk stops.
+	f.eng.noSlot = false
+	f.eng.tried, f.eng.ran = nil, nil
+	f.clock = f.clock.Add(time.Minute)
+	f.tick()
+	if len(f.eng.ran) != 1 || f.eng.ran[0] != "cve" {
+		t.Errorf("ran %v", f.eng.ran)
 	}
 }
