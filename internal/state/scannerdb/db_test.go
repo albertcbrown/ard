@@ -102,7 +102,7 @@ func TestApply(t *testing.T) {
 	for name, bad := range map[string]Finding{
 		"empty fp":   fnd("", 1, t0),
 		"no seen":    {Fingerprint: "z", Status: StatusOpen},
-		"bad status": {Fingerprint: "z", Status: "gone", FirstSeen: t0, LastSeen: t0},
+		"bad status": {Fingerprint: "z", Status: "weird", FirstSeen: t0, LastSeen: t0},
 	} {
 		err := d.Apply(ctx, Batch{DeleteFindings: []string{"a"}, PutFindings: []Finding{fnd("new", 9, t0), bad}})
 		if err == nil {
@@ -334,5 +334,23 @@ func TestConcurrentOpenNewFile(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+func TestGoneStatusAndPipelineOutcomes(t *testing.T) {
+	ctx := tctx(t)
+	d := newDB(t)
+	g := fnd("a", 1, t0)
+	g.Status = StatusGone
+	if err := d.Apply(ctx, Batch{PutFindings: []Finding{g}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := d.Finding(ctx, "a"); err != nil || got.Status != StatusGone {
+		t.Errorf("got %+v, %v", got, err)
+	}
+	for _, o := range []string{"ok", "dropped", "dropped_backpressure", "dropped_global_cap", "scan_failed", "timeout", "error"} {
+		if _, err := d.RecordRun(ctx, Run{StartedAt: t0, Outcome: o}); err != nil {
+			t.Errorf("outcome %q rejected: %v", o, err)
+		}
 	}
 }

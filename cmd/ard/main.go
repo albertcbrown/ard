@@ -27,8 +27,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 // line here; a nil field runs the command as a "not implemented" stub.
 func handlers() cli.Handlers {
 	return cli.Handlers{
-		ConfigCheck: configcmd.Check,
-		Serve:       servecmd.Serve,
-		LabelsSync:  labelsync.Command,
+		ConfigCheck:  configcmd.Check,
+		Serve:        servecmd.Serve,
+		LabelsSync:   labelsync.Command,
+		RebuildState: servecmd.RebuildState,
 	}
 }

@@ -27,6 +27,7 @@ type StateReason string
 const (
 	ReasonCompleted  StateReason = "completed"
 	ReasonNotPlanned StateReason = "not_planned"
+	ReasonDuplicate  StateReason = "duplicate"
 	ReasonReopened   StateReason = "reopened"
 )
 
