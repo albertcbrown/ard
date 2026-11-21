@@ -16,6 +16,8 @@
 //
 // Caller contract, for the loops (#15), the pool (#16) and the Reaper (#37):
 //
+//   - serve, the loops and the Reaper share a single *Closer from New: the
+//     per-job busy lock only serialises Run and Resume within one instance.
 //   - serve startup calls Closer.Resume after taking the host lock and before
 //     adopting running jobs.
 //   - The Reaper must not mark a job failed while its close-out phase is set
