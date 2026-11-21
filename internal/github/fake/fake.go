@@ -207,6 +207,19 @@ func (f *Fake) Pinned(n int) bool {
 	return f.s.pinned[n]
 }
 
+// TransferIssue mirrors GitHub moving issue n to another repository: every
+// later call on n returns ErrNotFound and n leaves lists and search. Numbers
+// are not reused. It bypasses the write log and panics on a PR or unknown n.
+func (f *Fake) TransferIssue(n int) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	if it := f.s.must(n); it.isPR {
+		panic(fmt.Sprintf("fake: #%d is a pull request and cannot be transferred", n))
+	}
+	delete(f.s.items, n)
+	delete(f.s.pinned, n)
+}
+
 // ---- internals ----
 
 func (s *state) id() int64 { s.nextID++; return s.nextID }

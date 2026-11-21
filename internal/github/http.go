@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,7 +80,7 @@ func New(cfg Config) (*HTTP, error) {
 		return nil, fmt.Errorf("github: auth: %w", err)
 	}
 	h := &HTTP{repo: cfg.Repo, auth: cfg.Auth, baseURL: cfg.BaseURL, cfg: cfg}
-	h.httpc = &http.Client{Transport: h.wrap(authRT)}
+	h.httpc = newAPIClient(h.wrap(authRT))
 	if _, err := url.Parse(cfg.BaseURL); err != nil {
 		return nil, fmt.Errorf("github: parse BaseURL: %w", err)
 	}
@@ -187,18 +188,141 @@ func mapErr(op string, err error) error {
 		}
 		return fmt.Errorf("github: %s: %w", op, e)
 	}
+	var rerr *gogh.RedirectionError
+	if errors.As(err, &rerr) {
+		return fmt.Errorf("github: %s: %w", op, &HTTPError{Status: rerr.StatusCode, Message: "unexpected redirect to " + redirectPath(rerr.Location)})
+	}
 	if status, msg, ok := httpStatus(err); ok {
 		switch status {
 		case http.StatusUnauthorized:
 			return fmt.Errorf("github: %s: %w: %s", op, ErrUnauthorized, msg)
 		case http.StatusForbidden:
 			return fmt.Errorf("github: %s: %w: %s", op, ErrForbidden, msg)
-		case http.StatusNotFound:
+		case http.StatusNotFound, http.StatusGone:
 			return fmt.Errorf("github: %s: %w: %s", op, ErrNotFound, msg)
 		}
 		return fmt.Errorf("github: %s: %w", op, &HTTPError{Status: status, Message: msg})
 	}
 	return fmt.Errorf("github: %s: %w", op, err)
+}
+
+// refuseRedirect makes every http.Client in this package return a 3xx response
+// as it is. Following one would turn a write into a GET, replay it into another
+// repository, or carry credentials to another host (the auth headers are added
+// inside the transport, so Go's cross-host Authorization strip never applies).
+func refuseRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+// newAPIClient returns an http.Client over rt that never follows redirects.
+func newAPIClient(rt http.RoundTripper) *http.Client {
+	return &http.Client{Transport: rt, CheckRedirect: refuseRedirect}
+}
+
+// fail is mapErr for repo-scoped calls: a refused redirect is classified by
+// probing the repository (see "Guardrails" in the proposal). n > 0 means the op
+// names an issue or PR number. nil in, nil out.
+func (h *HTTP) fail(ctx context.Context, op string, n int, err error) error {
+	var rerr *gogh.RedirectionError
+	if err == nil || !errors.As(err, &rerr) {
+		return mapErr(op, err)
+	}
+	return fmt.Errorf("github: %s: %w", op, h.classifyRedirect(ctx, n, rerr))
+}
+
+// classifyRedirect decides what a refused redirect means. Only positive
+// evidence that an issue now lives in another repository reads as not found;
+// everything else is an error the caller cannot mistake for "gone".
+func (h *HTTP) classifyRedirect(ctx context.Context, n int, rerr *gogh.RedirectionError) error {
+	// The probe must not call fail (no recursion).
+	repo, _, err := h.gh.Repositories.Get(ctx, h.o(), h.r())
+	if err != nil {
+		var probe *gogh.RedirectionError
+		if errors.As(err, &probe) {
+			return h.movedError(ctx, probe)
+		}
+		pe := mapErr("check repository", err)
+		if errors.Is(pe, ErrNotFound) {
+			// An outage or permission glitch must not read as "issue gone".
+			return &HTTPError{Status: rerr.StatusCode, Message: "unexpected redirect to " + redirectPath(rerr.Location) + "; repository check: " + pe.Error()}
+		}
+		return pe
+	}
+	if n > 0 {
+		base, _ := url.Parse(h.baseURL)
+		id, to, ok := redirectTarget(rerr.Location, base)
+		other := (id != 0 && repo.GetID() != 0 && id != repo.GetID()) ||
+			(to != (Repo{}) && !strings.EqualFold(to.String(), h.repo.String()))
+		if ok && other {
+			return fmt.Errorf("%w: issue moved to another repository (%s)", ErrNotFound, redirectPath(rerr.Location))
+		}
+	}
+	return &HTTPError{Status: rerr.StatusCode, Message: "unexpected redirect to " + redirectPath(rerr.Location)}
+}
+
+// movedError builds the error for a configured repository that redirects. It
+// resolves the new name best-effort and never follows the move.
+func (h *HTTP) movedError(ctx context.Context, rerr *gogh.RedirectionError) *RepoMovedError {
+	e := &RepoMovedError{Repo: h.repo, Location: redirectPath(rerr.Location)}
+	base, _ := url.Parse(h.baseURL)
+	id, to, ok := redirectTarget(rerr.Location, base)
+	switch {
+	case !ok:
+	case to != (Repo{}):
+		e.To = to
+	case id != 0:
+		if r, _, err := h.gh.Repositories.GetByID(ctx, id); err == nil {
+			if to, err := ParseRepo(r.GetFullName()); err == nil {
+				e.To = to
+			}
+		}
+	}
+	return e
+}
+
+// redirectTarget strips the BaseURL path prefix (GHES "/api/v3") and parses
+// "repositories/<id>/..." or "repos/<owner>/<name>/...". ok is false for another
+// host or an unknown shape.
+func redirectTarget(loc, base *url.URL) (repoID int64, repo Repo, ok bool) {
+	if loc == nil || base == nil {
+		return 0, Repo{}, false
+	}
+	if loc.Host != "" && !strings.EqualFold(loc.Host, base.Host) {
+		return 0, Repo{}, false
+	}
+	p := loc.Path
+	if prefix := strings.TrimRight(base.Path, "/"); prefix != "" {
+		if !strings.HasPrefix(p, prefix+"/") {
+			return 0, Repo{}, false
+		}
+		p = strings.TrimPrefix(p, prefix)
+	}
+	parts := strings.Split(strings.Trim(p, "/"), "/")
+	switch {
+	case len(parts) >= 2 && parts[0] == "repositories":
+		id, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || id <= 0 {
+			return 0, Repo{}, false
+		}
+		return id, Repo{}, true
+	case len(parts) >= 3 && parts[0] == "repos" && parts[1] != "" && parts[2] != "":
+		r, err := ParseRepo(parts[1] + "/" + parts[2])
+		if err != nil {
+			return 0, Repo{}, false
+		}
+		return 0, r, true
+	}
+	return 0, Repo{}, false
+}
+
+// redirectPath is the path only, never the query or host, and capped.
+func redirectPath(loc *url.URL) string {
+	if loc == nil || loc.Path == "" {
+		return "<none>"
+	}
+	p := loc.Path
+	if len(p) > 200 {
+		p = p[:200]
+	}
+	return p
 }
 
 func is404(err error) bool {
@@ -260,7 +384,7 @@ func (h *HTTP) Identity(ctx context.Context) (Identity, error) {
 		if err != nil {
 			return Identity{}, err
 		}
-		jc, err := gogh.NewClient(gogh.WithHTTPClient(&http.Client{Transport: h.wrap(jwtRT)}), gogh.WithURLs(&h.baseURL, nil), gogh.WithUserAgent("ard"))
+		jc, err := gogh.NewClient(gogh.WithHTTPClient(newAPIClient(h.wrap(jwtRT))), gogh.WithURLs(&h.baseURL, nil), gogh.WithUserAgent("ard"))
 		if err != nil {
 			return Identity{}, err
 		}
@@ -295,7 +419,7 @@ func (h *HTTP) baseTransport() http.RoundTripper {
 func (h *HTTP) GetIssue(ctx context.Context, n int) (Issue, error) {
 	i, _, err := h.gh.Issues.Get(ctx, h.o(), h.r(), n)
 	if err != nil {
-		return Issue{}, mapErr(fmt.Sprintf("get issue %d", n), err)
+		return Issue{}, h.fail(ctx, fmt.Sprintf("get issue %d", n), n, err)
 	}
 	return issueFrom(i), nil
 }
@@ -312,7 +436,7 @@ func (h *HTTP) ListIssues(ctx context.Context, o ListIssuesOpts) ([]Issue, error
 		opts.ListOptions.Page = page
 		items, resp, err := h.gh.Issues.ListByRepo(ctx, h.o(), h.r(), opts)
 		if err != nil {
-			return nil, mapErr("list issues", err)
+			return nil, h.fail(ctx, "list issues", 0, err)
 		}
 		for _, i := range items {
 			if i.IsPullRequest() && !o.IncludePRs {
@@ -352,7 +476,7 @@ func (h *HTTP) SearchIssues(ctx context.Context, q string, o SearchOpts) ([]Issu
 		return out, nextPage(resp), nil
 	})
 	if err != nil {
-		return nil, mapErr("search issues", err)
+		return nil, h.fail(ctx, "search issues", 0, err)
 	}
 	return items, nil
 }
@@ -375,7 +499,7 @@ func (h *HTTP) ListComments(ctx context.Context, n int, since time.Time) ([]Comm
 		}
 		return out, nextPage(resp), nil
 	})
-	return items, mapErr(fmt.Sprintf("list comments %d", n), err)
+	return items, h.fail(ctx, fmt.Sprintf("list comments %d", n), n, err)
 }
 
 func (h *HTTP) ListTimeline(ctx context.Context, n int) ([]TimelineEvent, error) {
@@ -392,7 +516,7 @@ func (h *HTTP) ListTimeline(ctx context.Context, n int) ([]TimelineEvent, error)
 		}
 		return out, nextPage(resp), nil
 	})
-	return items, mapErr(fmt.Sprintf("list timeline %d", n), err)
+	return items, h.fail(ctx, fmt.Sprintf("list timeline %d", n), n, err)
 }
 
 func (h *HTTP) ListLabels(ctx context.Context) ([]Label, error) {
@@ -409,7 +533,7 @@ func (h *HTTP) ListLabels(ctx context.Context) ([]Label, error) {
 		}
 		return out, nextPage(resp), nil
 	})
-	return items, mapErr("list labels", err)
+	return items, h.fail(ctx, "list labels", 0, err)
 }
 
 func (h *HTTP) GetPermission(ctx context.Context, login string) (Permission, error) {
@@ -418,7 +542,7 @@ func (h *HTTP) GetPermission(ctx context.Context, login string) (Permission, err
 		if is404(err) {
 			return Permission{Level: "none"}, nil
 		}
-		return Permission{}, mapErr("get permission "+login, err)
+		return Permission{}, h.fail(ctx, "get permission "+login, 0, err)
 	}
 	return Permission{Level: p.GetPermission(), Role: p.GetRoleName()}, nil
 }
@@ -426,7 +550,7 @@ func (h *HTTP) GetPermission(ctx context.Context, login string) (Permission, err
 func (h *HTTP) GetPR(ctx context.Context, n int) (PullRequest, error) {
 	p, _, err := h.gh.PullRequests.Get(ctx, h.o(), h.r(), n)
 	if err != nil {
-		return PullRequest{}, mapErr(fmt.Sprintf("get PR %d", n), err)
+		return PullRequest{}, h.fail(ctx, fmt.Sprintf("get PR %d", n), n, err)
 	}
 	return prFrom(p), nil
 }
@@ -453,7 +577,7 @@ func (h *HTTP) ListPRs(ctx context.Context, o ListPRsOpts) ([]PullRequest, error
 		}
 		return out, nextPage(resp), nil
 	})
-	return items, mapErr("list PRs", err)
+	return items, h.fail(ctx, "list PRs", 0, err)
 }
 
 func (h *HTTP) ListPRFiles(ctx context.Context, n int) ([]PRFile, error) {
@@ -470,7 +594,7 @@ func (h *HTTP) ListPRFiles(ctx context.Context, n int) ([]PRFile, error) {
 		}
 		return out, nextPage(resp), nil
 	})
-	return items, mapErr(fmt.Sprintf("list PR files %d", n), err)
+	return items, h.fail(ctx, fmt.Sprintf("list PR files %d", n), n, err)
 }
 
 func (h *HTTP) ListReviewComments(ctx context.Context, n int) ([]ReviewComment, error) {
@@ -488,7 +612,7 @@ func (h *HTTP) ListReviewComments(ctx context.Context, n int) ([]ReviewComment, 
 		}
 		return out, nextPage(resp), nil
 	})
-	return items, mapErr(fmt.Sprintf("list review comments %d", n), err)
+	return items, h.fail(ctx, fmt.Sprintf("list review comments %d", n), n, err)
 }
 
 // ---- Writer ----
@@ -500,7 +624,7 @@ func (h *HTTP) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {
 	}
 	i, _, err := h.gh.Issues.Create(ctx, h.o(), h.r(), req)
 	if err != nil {
-		return Issue{}, mapErr("create issue", err)
+		return Issue{}, h.fail(ctx, "create issue", 0, err)
 	}
 	return issueFrom(i), nil
 }
@@ -516,7 +640,7 @@ func (h *HTTP) UpdateIssue(ctx context.Context, n int, u IssueUpdate) error {
 		req.StateReason = &s
 	}
 	_, _, err := h.gh.Issues.Edit(ctx, h.o(), h.r(), n, req)
-	return mapErr(fmt.Sprintf("update issue %d", n), err)
+	return h.fail(ctx, fmt.Sprintf("update issue %d", n), n, err)
 }
 
 func (h *HTTP) PinIssue(ctx context.Context, n int) error {
@@ -532,7 +656,7 @@ func (h *HTTP) AddLabels(ctx context.Context, n int, labels ...string) error {
 		return nil
 	}
 	_, _, err := h.gh.Issues.AddLabelsToIssue(ctx, h.o(), h.r(), n, labels)
-	return mapErr(fmt.Sprintf("add labels %d", n), err)
+	return h.fail(ctx, fmt.Sprintf("add labels %d", n), n, err)
 }
 
 func (h *HTTP) RemoveLabel(ctx context.Context, n int, label string) error {
@@ -540,7 +664,7 @@ func (h *HTTP) RemoveLabel(ctx context.Context, n int, label string) error {
 	if err != nil && is404(err) {
 		return nil
 	}
-	return mapErr(fmt.Sprintf("remove label %d", n), err)
+	return h.fail(ctx, fmt.Sprintf("remove label %d", n), n, err)
 }
 
 func (h *HTTP) CreateLabel(ctx context.Context, l Label) error {
@@ -548,7 +672,7 @@ func (h *HTTP) CreateLabel(ctx context.Context, l Label) error {
 	if err != nil && isAlreadyExists(err) {
 		return fmt.Errorf("github: create label %q: %w", l.Name, ErrConflict)
 	}
-	return mapErr(fmt.Sprintf("create label %q", l.Name), err)
+	return h.fail(ctx, fmt.Sprintf("create label %q", l.Name), 0, err)
 }
 
 func (h *HTTP) UpdateLabel(ctx context.Context, name string, l Label) error {
@@ -556,13 +680,13 @@ func (h *HTTP) UpdateLabel(ctx context.Context, name string, l Label) error {
 		l.Name = name
 	}
 	_, _, err := h.gh.Issues.EditLabel(ctx, h.o(), h.r(), name, &gogh.Label{Name: &l.Name, Color: &l.Color, Description: &l.Description})
-	return mapErr(fmt.Sprintf("update label %q", name), err)
+	return h.fail(ctx, fmt.Sprintf("update label %q", name), 0, err)
 }
 
 func (h *HTTP) CreateComment(ctx context.Context, n int, body string) (Comment, error) {
 	c, _, err := h.gh.Issues.CreateComment(ctx, h.o(), h.r(), n, &gogh.IssueComment{Body: &body})
 	if err != nil {
-		return Comment{}, mapErr(fmt.Sprintf("create comment %d", n), err)
+		return Comment{}, h.fail(ctx, fmt.Sprintf("create comment %d", n), n, err)
 	}
 	return commentFrom(c), nil
 }
@@ -574,14 +698,14 @@ func (h *HTTP) CreatePR(ctx context.Context, in NewPR) (PullRequest, error) {
 	}
 	p, _, err := h.gh.PullRequests.Create(ctx, h.o(), h.r(), req)
 	if err != nil {
-		return PullRequest{}, mapErr("create PR", err)
+		return PullRequest{}, h.fail(ctx, "create PR", 0, err)
 	}
 	return prFrom(p), nil
 }
 
 func (h *HTTP) UpdatePR(ctx context.Context, n int, u PRUpdate) error {
 	_, _, err := h.gh.PullRequests.Edit(ctx, h.o(), h.r(), n, &gogh.PullRequest{Title: u.Title, Body: u.Body})
-	return mapErr(fmt.Sprintf("update PR %d", n), err)
+	return h.fail(ctx, fmt.Sprintf("update PR %d", n), n, err)
 }
 
 func (h *HTTP) MarkReady(ctx context.Context, n int) error {
@@ -610,7 +734,7 @@ func (h *HTTP) CreateReview(ctx context.Context, n int, in ReviewInput) error {
 		req.Comments = append(req.Comments, &gogh.DraftReviewComment{Path: &path, Line: &line, Side: &side, Body: &body})
 	}
 	_, _, err := h.gh.PullRequests.CreateReview(ctx, h.o(), h.r(), n, req)
-	return mapErr(fmt.Sprintf("create review %d", n), err)
+	return h.fail(ctx, fmt.Sprintf("create review %d", n), n, err)
 }
 
 func (h *HTTP) UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) error {
@@ -624,7 +748,7 @@ func (h *HTTP) UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) 
 			return fmt.Errorf("github: update branch %d: %w", n, ErrConflict)
 		}
 	}
-	return mapErr(fmt.Sprintf("update branch %d", n), err)
+	return h.fail(ctx, fmt.Sprintf("update branch %d", n), n, err)
 }
 
 func (h *HTTP) MergePR(ctx context.Context, n int, in MergeInput) (MergeResult, error) {
@@ -640,7 +764,7 @@ func (h *HTTP) MergePR(ctx context.Context, n int, in MergeInput) (MergeResult, 
 		case statusIs(err, http.StatusConflict):
 			return MergeResult{}, fmt.Errorf("github: merge PR %d: %w", n, ErrConflict)
 		}
-		return MergeResult{}, mapErr(fmt.Sprintf("merge PR %d", n), err)
+		return MergeResult{}, h.fail(ctx, fmt.Sprintf("merge PR %d", n), n, err)
 	}
 	if !res.GetMerged() {
 		return MergeResult{}, fmt.Errorf("github: merge PR %d: %w: %s", n, ErrNotMergeable, res.GetMessage())
@@ -655,5 +779,5 @@ func (h *HTTP) DeleteBranch(ctx context.Context, branch string) error {
 			return nil
 		}
 	}
-	return mapErr(fmt.Sprintf("delete branch %q", branch), err)
+	return h.fail(ctx, fmt.Sprintf("delete branch %q", branch), 0, err)
 }

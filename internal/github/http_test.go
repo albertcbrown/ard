@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -615,5 +616,193 @@ func TestReviewAndPRListing(t *testing.T) {
 	}
 	if q := s.requests()[len(s.requests())-1].Query; q.Get("since") != "2026-01-01T00:00:00Z" {
 		t.Errorf("comments query = %v", q)
+	}
+}
+
+// redirect answers with a 3xx whose Location is path on the stub's own host.
+func redirect(t *testing.T, code int, path string) http.HandlerFunc {
+	body := fixture(t, "moved.json")
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "http://"+r.Host+path+"?token=x")
+		w.WriteHeader(code)
+		io.WriteString(w, body)
+	}
+}
+
+func TestRedirects(t *testing.T) {
+	ctx := context.Background()
+	var otherHits atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { otherHits.Add(1) }))
+	t.Cleanup(other.Close)
+
+	notFound := func(e error) bool { return errors.Is(e, ErrNotFound) && !errors.Is(e, ErrRepoMoved) }
+	httpErr := func(status int) func(error) bool {
+		return func(e error) bool {
+			var he *HTTPError
+			return errors.As(e, &he) && he.Status == status && !errors.Is(e, ErrNotFound) && !IsTransient(e)
+		}
+	}
+	moved := func(to Repo, contains ...string) func(error) bool {
+		return func(e error) bool {
+			var rm *RepoMovedError
+			if !errors.As(e, &rm) || !errors.Is(e, ErrRepoMoved) || errors.Is(e, ErrNotFound) || IsTransient(e) {
+				return false
+			}
+			if rm.Repo != (Repo{"o", "r"}) || rm.To != to {
+				return false
+			}
+			for _, c := range contains {
+				if !strings.Contains(e.Error(), c) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	repoOK := respond(200, fixture(t, "repo.json"))
+	tests := []struct {
+		name      string
+		routes    map[string]http.HandlerFunc
+		call      func(h *HTTP) error
+		check     func(error) bool
+		forbidden []string // paths no request may reach
+	}{
+		{"GetIssue transferred (repositories id)", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repositories/42/issues/3"),
+			"GET /repos/o/r":          repoOK,
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, notFound, []string{"/repositories/42/issues/3"}},
+		{"GetIssue transferred (repos shape)", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repos/x/y/issues/3"),
+			"GET /repos/o/r":          repoOK,
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, notFound, []string{"/repos/x/y/issues/3"}},
+		{"ListComments transferred", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3/comments": redirect(t, 301, "/repositories/42/issues/3/comments"),
+			"GET /repos/o/r":                   repoOK,
+		}, func(h *HTTP) error { _, err := h.ListComments(ctx, 3, time.Time{}); return err }, notFound, []string{"/repositories/42/issues/3/comments"}},
+		{"ListTimeline transferred", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3/timeline": redirect(t, 301, "/repositories/42/issues/3/timeline"),
+			"GET /repos/o/r":                   repoOK,
+		}, func(h *HTTP) error { _, err := h.ListTimeline(ctx, 3); return err }, notFound, []string{"/repositories/42/issues/3/timeline"}},
+		{"AddLabels transferred via 307", map[string]http.HandlerFunc{
+			"POST /repos/o/r/issues/3/labels": redirect(t, 307, "/repositories/42/issues/3/labels"),
+			"GET /repos/o/r":                  repoOK,
+		}, func(h *HTTP) error { return h.AddLabels(ctx, 3, "x") }, notFound, []string{"/repositories/42/issues/3/labels"}},
+		{"CreateComment transferred via 301", map[string]http.HandlerFunc{
+			"POST /repos/o/r/issues/3/comments": redirect(t, 301, "/repositories/42/issues/3/comments"),
+			"GET /repos/o/r":                    repoOK,
+		}, func(h *HTTP) error { _, err := h.CreateComment(ctx, 3, "x"); return err }, notFound, []string{"/repositories/42/issues/3/comments"}},
+		{"RemoveLabel transferred", map[string]http.HandlerFunc{
+			"DELETE /repos/o/r/issues/3/labels/x": redirect(t, 301, "/repositories/42/issues/3/labels/x"),
+			"GET /repos/o/r":                      repoOK,
+		}, func(h *HTTP) error { return h.RemoveLabel(ctx, 3, "x") }, notFound, []string{"/repositories/42/issues/3/labels/x"}},
+		{"GetIssue redirect to the same repo id", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/9": redirect(t, 301, "/repositories/7/issues/9"),
+			"GET /repos/o/r":          repoOK,
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 9); return err }, httpErr(301), []string{"/repositories/7/issues/9"}},
+		{"missing Location", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/9": respond(301, fixture(t, "moved.json")),
+			"GET /repos/o/r":          repoOK,
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 9); return err }, httpErr(301), nil},
+		{"cross-host Location", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/9": func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Location", other.URL+"/repositories/42/issues/9")
+				w.WriteHeader(301)
+			},
+			"GET /repos/o/r": repoOK,
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 9); return err }, httpErr(301), nil},
+		{"probe 404", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repositories/42/issues/3"),
+			"GET /repos/o/r":          respond(404, `{"message":"Not Found"}`),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, func(e error) bool {
+			var he *HTTPError
+			return !errors.Is(e, ErrNotFound) && errors.As(e, &he)
+		}, []string{"/repositories/42/issues/3"}},
+		{"probe without id", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repositories/42/issues/3"),
+			"GET /repos/o/r":          respond(200, `{"full_name":"o/r"}`),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, httpErr(301), []string{"/repositories/42/issues/3"}},
+		{"invalid repo name in Location", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repos/x/%20/issues/3"),
+			"GET /repos/o/r":          repoOK,
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, httpErr(301), nil},
+		{"probe 500", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repositories/42/issues/3"),
+			"GET /repos/o/r":          respond(500, `{"message":"oops"}`),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, func(e error) bool {
+			return IsTransient(e) && !errors.Is(e, ErrNotFound)
+		}, []string{"/repositories/42/issues/3"}},
+		{"renamed, name resolved", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/7": redirect(t, 301, "/repositories/7/issues/7"),
+			"GET /repos/o/r":          redirect(t, 301, "/repositories/7"),
+			"GET /repositories/7":     respond(200, fixture(t, "repo_renamed.json")),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 7); return err }, moved(Repo{"o2", "r2"}, "o/r", "o2/r2"), []string{"/repositories/7/issues/7"}},
+		{"renamed, resolve fails", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/7": redirect(t, 301, "/repositories/7/issues/7"),
+			"GET /repos/o/r":          redirect(t, 301, "/repositories/7"),
+			"GET /repositories/7":     respond(404, `{"message":"Not Found"}`),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 7); return err }, moved(Repo{}, "/repositories/7"), []string{"/repositories/7/issues/7"}},
+		{"ListLabels on renamed repo", map[string]http.HandlerFunc{
+			"GET /repos/o/r/labels": redirect(t, 301, "/repositories/7/labels"),
+			"GET /repos/o/r":        redirect(t, 301, "/repositories/7"),
+			"GET /repositories/7":   respond(200, fixture(t, "repo_renamed.json")),
+		}, func(h *HTTP) error { _, err := h.ListLabels(ctx); return err }, moved(Repo{"o2", "r2"}), []string{"/repositories/7/labels"}},
+		{"ListLabels redirect, repo 200", map[string]http.HandlerFunc{
+			"GET /repos/o/r/labels": redirect(t, 301, "/repositories/7/labels"),
+			"GET /repos/o/r":        repoOK,
+		}, func(h *HTTP) error { _, err := h.ListLabels(ctx); return err }, httpErr(301), []string{"/repositories/7/labels"}},
+		{"GetPermission on renamed repo", map[string]http.HandlerFunc{
+			"GET /repos/o/r/collaborators/al/permission": redirect(t, 301, "/repositories/7/collaborators/al/permission"),
+			"GET /repos/o/r":      redirect(t, 301, "/repositories/7"),
+			"GET /repositories/7": respond(404, `{"message":"Not Found"}`),
+		}, func(h *HTTP) error { _, err := h.GetPermission(ctx, "al"); return err }, moved(Repo{}), []string{"/repositories/7/collaborators/al/permission"}},
+		{"CreateIssue on renamed repo (307)", map[string]http.HandlerFunc{
+			"POST /repos/o/r/issues": redirect(t, 307, "/repositories/7/issues"),
+			"GET /repos/o/r":         redirect(t, 301, "/repositories/7"),
+			"GET /repositories/7":    respond(404, `{"message":"Not Found"}`),
+		}, func(h *HTTP) error { _, err := h.CreateIssue(ctx, NewIssue{Title: "t"}); return err }, moved(Repo{}), []string{"/repositories/7/issues"}},
+		{"Identity 301", map[string]http.HandlerFunc{
+			"GET /user": redirect(t, 301, "/elsewhere"),
+		}, func(h *HTTP) error { _, err := h.Identity(ctx); return err }, httpErr(301), []string{"/elsewhere"}},
+		{"PinIssue GraphQL 307", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/7": respond(200, fixture(t, "issue.json")),
+			"POST /graphql":           redirect(t, 307, "/elsewhere/graphql"),
+		}, func(h *HTTP) error { return h.PinIssue(ctx, 7) }, httpErr(307), []string{"/elsewhere/graphql"}},
+		{"deleted issue 410", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/5": respond(410, `{"message":"This issue was deleted"}`),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 5); return err }, notFound, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			otherHits.Store(0)
+			s := newStubAPI(t, tc.routes)
+			h := newTestHTTP(t, s, nil)
+			err := tc.call(h)
+			if err == nil || !tc.check(err) {
+				t.Fatalf("err = %v (%T)", err, err)
+			}
+			for _, r := range s.requests() {
+				for _, f := range tc.forbidden {
+					if r.Path == f {
+						t.Errorf("redirect target was requested: %s %s", r.Method, r.Path)
+					}
+				}
+				if r.Path == "/elsewhere" || r.Path == "/teapot" {
+					t.Errorf("unexpected request %s %s", r.Method, r.Path)
+				}
+			}
+			if n := otherHits.Load(); n != 0 {
+				t.Errorf("other host got %d requests", n)
+			}
+			if msg := err.Error(); strings.Contains(msg, "Bearer") || strings.Contains(msg, "tok") && strings.Contains(msg, "Authorization") || strings.Contains(msg, "token=x") {
+				t.Errorf("error leaks credentials or query: %v", err)
+			}
+		})
+	}
+}
+
+func TestRepoMovedErrorIsNotTransient(t *testing.T) {
+	e := fmt.Errorf("wrapped: %w", &RepoMovedError{Repo: Repo{"o", "r"}, Location: "/repositories/7"})
+	if IsTransient(e) || !errors.Is(e, ErrRepoMoved) || errors.Is(e, ErrNotFound) {
+		t.Errorf("err = %v", e)
 	}
 }
