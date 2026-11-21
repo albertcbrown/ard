@@ -41,6 +41,10 @@ flowchart TD
 
 Each arrow is a label the controller sets at close-out; dashed lines show the stages it runs. A reviewer's `changes` verdict sends the PR back to the worker, at most three times; once every review passes, the merger lands it.
 
+## Stack
+
+**Stack (decided, #9).** Go, one static binary (CGO off) with: cobra, gopkg.in/yaml.v3, modernc.org/sqlite, go-github v88 with ghinstallation/v2, log/slog, golang.org/x/tools (for the architecture test only) and an internal `internal/gitx` for git.
+
 ## Label state machine
 
 Every label starts with `ard:`, and every stage uses one grammar: `ard:<stage>:<role>` requests work, `:running` marks a claim, `:done` marks completion. A loop picks up an issue that has the request label and none of `:running`, `:done`, `ard:executor:failed`, `ard:needs-human` or `ard:hold`.
@@ -293,7 +297,7 @@ A PR merges when all of these hold:
 - required status checks are green on the current head
 - the branch is up to date with `main`; if it is behind, the merger updates it and waits for checks on the new head
 - it carries none of `ard:hold`, `ard:needs-human`, `ard:tests:failed` or `ard:executor:failed`
-- the diff touches no protected path; the list comes only from `merge.protected_paths`, with no floor in code (decided, #3), so a human who empties the list removes the gate. `ard init` writes the defaults `.github/`, `.ard/config.yaml`, the four role trees (`.ard/scanners/`, `.ard/triage/`, `.ard/workers/`, `.ard/reviewers/`) and `CODEOWNERS`. An entry ending in `/` is a directory prefix; any other entry is a doublestar glob. A PR that touches one gets `ard:needs-approval` and merges on the next poll after a human approves
+- the diff touches no protected path; the list comes only from `merge.protected_paths`, with no floor in code (decided, #3), so a human who empties the list removes the gate. `ard init` writes the defaults `.github/`, `.ard/config.yaml`, the four role trees (`.ard/scanners/`, `.ard/triage/`, `.ard/workers/`, `.ard/reviewers/`) and `CODEOWNERS`. An entry ending in `/` is a directory prefix; any other entry is a doublestar glob. Trailing-slash prefix semantics are planned; `internal/config` currently strips the slash (follow-up, see #3). A PR that touches one gets `ard:needs-approval` and merges on the next poll after a human approves
 
 It squash-merges with the worker's commit title and the `Ard-Job` trailer, then deletes the branch, so `.ard/<issue#>/` and its logs land on `main` with the code. If updating the branch conflicts, it re-requests the worker for a rebase round, which counts toward `max_review_rounds`.
 
@@ -338,16 +342,14 @@ sidecars:
 overrides:                   # only what differs from convention
   scanners/cve:             { every: 6h, max_open: 10, group_size: 1, autoclose: true }
   scanners/lint:            { every: 24h, max_open: 3, group_size: 20, autoclose: true }
-  triage/lead:              { sidecar: vpe-specs, timeout: 15m, model: claude-opus-5-5 }   # tiers: Opus 5.5 lead/architect/security-review; Sonnet 5.5 workers and most reviewers; Haiku 5.5 lint/docs
+  triage/lead:              { sidecar: vpe-specs, timeout: 15m, model: claude-opus-5-5 }
   triage/architect:         { sidecar: vpe-specs }
   triage/engineer:          { after: [architect, product-manager, designer, documentation-planner] }
   workers/engineer:         { tests: make test, timeout: 60m, reviewers: [security-review, eng-review] }
   reviewers/license-review: { agent: kimi, when: { paths: [go.mod, go.sum, "package*.json"] } }
 ```
 
-**Models are tiered (decided, #8).** Opus 5.5 for the lead, architect and security review; Sonnet 5.5 for workers and most reviewers; Haiku 5.5 for lint and docs work. The `budget_usd_per_day: 50` and per-job `max_budget_usd` values are provisional and are recalibrated from measured cost per job between Gate 1 and Gate 2.
-
-**Stack (decided, #9).** Go, one static binary (CGO off) with: cobra, gopkg.in/yaml.v3, modernc.org/sqlite, go-github v88 with ghinstallation/v2, log/slog, golang.org/x/tools (for the architecture test only) and an internal `internal/gitx` for git.
+**Models are tiered (decided, #8).** Opus 5.5 for the lead, architect and security review; Sonnet 5.5 for workers and most reviewers; Haiku 5.5 for lint and docs work. The `budget_usd_per_day: 50` and per-job `max_budget_usd` values are provisional and are recalibrated from measured cost per job and per merged PR between Gate 1 and Gate 2.
 
 Anything unset takes its default: scanners every 4 h with `max_open` 5 and `group_size` 10, triage every 15 min, a 30-minute job timeout, `make test`, 2 test-fix attempts and 3 review rounds. Durations accept `m`, `h` and `d`. Per-role keys are `every`, `max_open`, `group_size`, `autoclose`, `timeout`, `agent`, `model`, `max_budget_usd`, `budget_usd_per_day`, `sidecar`, `after`, `tests`, `reviewers` and `when` (`paths`, or `triage` roles that ran). There are no per-role config files: `ard init` writes a role's starting overrides into `config.yaml`. Once a second repo adopts ard, role directories can move to a shared roles repo pinned by ref, like a sidecar; a repo's own directory of the same name wins.
 
@@ -357,7 +359,7 @@ Agents with push access read text that strangers can write, so the controls sit 
 
 - **Identity: a GitHub App, not a PAT.** Installation tokens expire hourly and are scoped to contents, issues and pull requests (read and write), plus checks (read) so the merger can see required checks. Leaving out the `workflows` permission makes GitHub itself reject any push that edits `.github/workflows/`, a backstop to the diff guard. A personal token (`ARD_GITHUB_TOKEN`) is accepted only for local `--dry-run` development, and the client is then made read-only so no write can reach GitHub.
 - **Agents hold no GitHub token.** The executor does. The agent's environment has only its model API key; in Kubernetes a network policy limits egress to the model API and package registries.
-- **Intake is configurable (decided, #2).** `intake` is either `all` (every human-filed issue enters, no label) or `label` (only issues with the configured label). GitHub lets only triage-level collaborators add labels, so in label mode an outsider cannot start a job: the controller honours the label only if the latest `labeled` event came from an actor with triage or higher permission, or from the App. In both modes the issue is re-gated if its body is edited afterwards. Note that `all` mode lets any issue author start a job, so use it only on repos where that is acceptable.
+- **Intake is configurable (decided, #2).** `intake` is either `all` (every human-filed issue enters, no label) or `label` (only issues with the configured label). GitHub lets only triage-level collaborators add labels, so in label mode an outsider cannot start a job: the controller honours the label only if the latest `labeled` event came from an actor with triage or higher permission, or from the App. In both modes the issue is re-gated if its body is edited afterwards. Note that `all` mode lets any issue author start a job, so use it only on repos where that is acceptable. Intake is planned, see #2.
 - **Untrusted text is passed as data.** Issue bodies, comments and PR text go to the agent as files the prompt labels as untrusted input, never spliced into the instructions.
 - **Role files are human-owned.** The diff guard rejects any worker change to `.ard/config.yaml` or a role directory, and the merger treats those paths as protected through `merge.protected_paths` (the `ard init` defaults), so no agent can rewrite its own prompt.
 - **Merges are gated.** The merger lands a PR only when every review passed and required checks are green on an up-to-date branch; protected paths wait for a human approval. The App may bypass the approval rule, never required checks.
