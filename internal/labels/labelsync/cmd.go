@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -49,9 +48,9 @@ func Command(ctx context.Context, e *cli.Env) error {
 // run loads and validates the configuration before it builds any GitHub
 // client, so a bad config never reaches the network.
 func run(ctx context.Context, e *cli.Env, open func(ctx context.Context, root string) (deps, error)) error {
-	root, err := repoRoot(e.ConfigPath)
+	root, err := config.RepoRoot(e.ConfigPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("labels sync: %w", err)
 	}
 	res, err := config.Load(root)
 	if err != nil {
@@ -90,25 +89,6 @@ func resolveRepo(ctx context.Context, e *cli.Env, root string) (github.Repo, err
 	}
 	e.Log.Info("repo taken from the origin remote", "repo", repo.String())
 	return repo, nil
-}
-
-// repoRoot maps --config to the repository root config.Load expects: the
-// default is the current directory; a path inside a .ard directory strips it.
-// TODO: the same helper is unexported in configcmd; export it as
-// config.RepoRoot and use it from both.
-func repoRoot(configPath string) (string, error) {
-	if configPath == "" {
-		return ".", nil
-	}
-	abs, err := filepath.Abs(configPath)
-	if err != nil {
-		return "", fmt.Errorf("labels sync: resolving --config: %w", err)
-	}
-	dir := filepath.Dir(abs)
-	if filepath.Base(dir) == ".ard" {
-		return filepath.Dir(dir), nil
-	}
-	return dir, nil
 }
 
 // Print writes one line per change, stale label and failure, then a summary.
