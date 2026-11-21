@@ -232,6 +232,7 @@ func TestPrepareJobValidation(t *testing.T) {
 		{ID: "a", Stage: StageReview, Role: "x", Issue: 1, Branch: "worker/x"},
 		{ID: "a", Stage: StageWorker, Role: "x", Issue: 1},
 		{Stage: StageTriage, Role: "x", Issue: 1},
+		{ID: "a", Stage: StageTriage, Role: "x", Issue: 1}, // no BaseSHA
 	} {
 		if _, err := Prepare(context.Background(), j, e.d); err == nil {
 			t.Errorf("job %+v accepted", j)

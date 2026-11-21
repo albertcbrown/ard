@@ -130,6 +130,9 @@ func (j Job) validate() error {
 	if j.ID == "" || j.Role == "" || j.Issue == 0 {
 		return fmt.Errorf("closeout job %q: id, role and issue are required", j.ID)
 	}
+	if j.ExitCode == 0 && j.BaseSHA == "" {
+		return fmt.Errorf("closeout job %s: BaseSHA is required to find the changed files", j.ID)
+	}
 	if j.Stage == StageReview && j.PR == 0 {
 		return fmt.Errorf("closeout job %s: a review needs a PR", j.ID)
 	}

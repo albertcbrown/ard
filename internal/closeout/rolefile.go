@@ -98,6 +98,9 @@ func Parse(b []byte) (RoleFile, error) {
 		}
 		return RoleFile{}, malformed("frontmatter: %v", err)
 	}
+	if err := checkTypes(front); err != nil {
+		return RoleFile{}, err
+	}
 	var extra rawFront
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return RoleFile{}, malformed("frontmatter holds more than one document")
@@ -188,4 +191,38 @@ func clip(s string, n int) string {
 		return string(r[:n]) + "..."
 	}
 	return s
+}
+
+// checkTypes rejects scalars yaml.v3 would coerce: role, status, verdict and
+// worker must be strings, attempt an integer, next a list of strings.
+func checkTypes(front string) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(front), &doc); err != nil || len(doc.Content) == 0 {
+		return malformed("frontmatter: unreadable")
+	}
+	m := doc.Content[0]
+	if m.Kind != yaml.MappingNode {
+		return malformed("frontmatter is not a mapping")
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		key, v := m.Content[i].Value, m.Content[i+1]
+		ok := true
+		switch key {
+		case "role", "status", "verdict", "worker":
+			ok = v.Kind == yaml.ScalarNode && v.Tag == "!!str"
+		case "attempt":
+			ok = v.Kind == yaml.ScalarNode && v.Tag == "!!int"
+		case "next":
+			ok = v.Kind == yaml.SequenceNode
+			for _, e := range v.Content {
+				if e.Kind != yaml.ScalarNode || e.Tag != "!!str" {
+					ok = false
+				}
+			}
+		}
+		if !ok {
+			return malformed("field %s: wrong type", key)
+		}
+	}
+	return nil
 }

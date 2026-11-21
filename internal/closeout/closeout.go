@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/committer"
@@ -59,6 +60,7 @@ type Record struct {
 	Job       Job
 	Plan      Plan
 	SHA       string
+	Synthetic bool // the commit was a dry-run: nothing reached the remote
 	CommentID int64
 }
 
@@ -163,10 +165,43 @@ func (d Deps) now() time.Time {
 }
 
 // Closer executes close-out plans.
-type Closer struct{ d Deps }
+type Closer struct {
+	d    Deps
+	mu   sync.Mutex
+	busy map[string]bool // jobs with an advance in flight
+}
 
 // New returns a Closer.
-func New(d Deps) *Closer { return &Closer{d: d} }
+func New(d Deps) *Closer { return &Closer{d: d, busy: map[string]bool{}} }
+
+// acquire marks a job busy; it reports false when another Run or Resume
+// already holds it. Without it a concurrent list-then-create would double-post.
+func (c *Closer) acquire(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.busy == nil {
+		c.busy = map[string]bool{}
+	}
+	if c.busy[id] {
+		return false
+	}
+	c.busy[id] = true
+	return true
+}
+
+func (c *Closer) release(id string) {
+	c.mu.Lock()
+	delete(c.busy, id)
+	c.mu.Unlock()
+}
+
+// checkDeps refuses a live Closer that cannot look for its own comment.
+func (c *Closer) checkDeps() error {
+	if c.d.Comments == nil && !c.d.Effects.DryRun() {
+		return errors.New("closeout: Deps.Comments is required outside dry-run (a replay would post twice)")
+	}
+	return nil
+}
 
 // Run closes out j. If the job already has a record it resumes that one and
 // never reads the worktree again.
@@ -174,6 +209,13 @@ func (c *Closer) Run(ctx context.Context, j Job) (Outcome, error) {
 	if err := j.validate(); err != nil {
 		return "", err
 	}
+	if err := c.checkDeps(); err != nil {
+		return "", err
+	}
+	if !c.acquire(j.ID) {
+		return "", fmt.Errorf("closeout job %s: another close-out of this job is in flight", j.ID)
+	}
+	defer c.release(j.ID)
 	sj, err := c.d.Store.Job(ctx, j.ID)
 	if err != nil {
 		return "", fmt.Errorf("closeout job %s: load job: %w", j.ID, err)
@@ -203,6 +245,9 @@ func (c *Closer) Run(ctx context.Context, j Job) (Outcome, error) {
 
 // Resume finishes every close-out that was started and not closed.
 func (c *Closer) Resume(ctx context.Context) error {
+	if err := c.checkDeps(); err != nil {
+		return err
+	}
 	jobs, err := c.d.Store.OpenCloseouts(ctx)
 	if err != nil {
 		return fmt.Errorf("closeout resume: %w", err)
@@ -214,8 +259,14 @@ func (c *Closer) Resume(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
+		if !c.acquire(rec.Job.ID) {
+			c.d.log().Info("closeout.resume skipped: in flight", "job", rec.Job.ID)
+			continue
+		}
 		c.d.log().Info("closeout.resume", "job", rec.Job.ID, "issue", rec.Job.Issue, "phase", rec.Phase)
-		if _, err := c.advance(ctx, rec); err != nil {
+		_, err = c.advance(ctx, rec)
+		c.release(rec.Job.ID)
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -292,7 +343,11 @@ func (c *Closer) advance(ctx context.Context, rec Record) (Outcome, error) {
 	if err := os.RemoveAll(filepath.Join(c.d.StagingDir, rec.Job.ID)); err != nil {
 		c.d.log().Warn("closeout: remove staging", "job", rec.Job.ID, "error", err)
 	}
-	c.dropRawLog(rec)
+	if rec.Synthetic || c.d.Effects.DryRun() {
+		c.d.log().Info("closeout: raw log kept (dry-run)", "job", rec.Job.ID)
+	} else {
+		c.dropRawLog(rec)
+	}
 	return rec.Plan.Outcome, nil
 }
 
@@ -315,7 +370,7 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 	res, err := c.d.Committer.Commit(ctx, rec.Job.Branch, req)
 	switch {
 	case err == nil:
-		rec.SHA = res.SHA
+		rec.SHA, rec.Synthetic = res.SHA, res.Synthetic
 		return nil
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 		return err

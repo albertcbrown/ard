@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -382,6 +383,9 @@ func TestDryRun(t *testing.T) {
 	if sj := e.sjob(j.ID); sj.CloseoutPhase != string(PhaseClosed) {
 		t.Errorf("phase = %q", sj.CloseoutPhase)
 	}
+	if _, err := os.Stat(j.LogPath); err != nil {
+		t.Errorf("dry-run deleted the raw log: %v", err)
+	}
 	b, err := os.ReadFile(filepath.Join(dir, "effects.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -398,3 +402,48 @@ func TestDryRun(t *testing.T) {
 }
 
 var timeZero time.Time
+
+func TestConcurrentRunAndResume(t *testing.T) {
+	e := newEnv(t)
+	j := e.lead()
+	rec, err := Prepare(context.Background(), j, e.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := New(e.d)
+	if err := cl.save(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = cl.Run(context.Background(), j) }()
+		go func() { defer wg.Done(); _ = cl.Resume(context.Background()) }()
+	}
+	wg.Wait()
+	if err := cl.Resume(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.markerComments(7, j.ID); n != 1 {
+		t.Errorf("marker comments = %d, want 1", n)
+	}
+	if len(e.cm.commits) != 1 {
+		t.Errorf("commits = %d", len(e.cm.commits))
+	}
+	// A busy job is refused by Run and skipped by Resume.
+	if !cl.acquire("x") || cl.acquire("x") {
+		t.Error("acquire is not exclusive")
+	}
+}
+
+func TestCommentsRequiredLive(t *testing.T) {
+	e := newEnv(t)
+	e.d.Comments = nil
+	cl := New(e.d)
+	if _, err := cl.Run(context.Background(), e.lead()); err == nil || !strings.Contains(err.Error(), "Comments") {
+		t.Errorf("Run err = %v", err)
+	}
+	if err := cl.Resume(context.Background()); err == nil {
+		t.Error("Resume accepted a nil Comments")
+	}
+}
