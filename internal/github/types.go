@@ -1,0 +1,213 @@
+package github
+
+import (
+	"strconv"
+	"time"
+)
+
+// Repo identifies a GitHub repository.
+type Repo struct{ Owner, Name string }
+
+// String returns "owner/name".
+func (r Repo) String() string { return r.Owner + "/" + r.Name }
+
+// State is the open/closed state of an issue or PR. StateAll is valid only as
+// a list filter.
+type State string
+
+const (
+	StateOpen   State = "open"
+	StateClosed State = "closed"
+	StateAll    State = "all"
+)
+
+// StateReason says why an issue is closed (or reopened).
+type StateReason string
+
+const (
+	ReasonCompleted  StateReason = "completed"
+	ReasonNotPlanned StateReason = "not_planned"
+	ReasonReopened   StateReason = "reopened"
+)
+
+// Issue is a GitHub issue (or, when IsPR, the issue view of a PR).
+type Issue struct {
+	Number      int
+	NodeID      string // for GraphQL (PinIssue)
+	Title, Body string // Body is untrusted
+	State       State
+	StateReason StateReason
+	Author      string // login
+	Labels      []string
+	IsPR        bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	ClosedAt    *time.Time
+	URL         string
+}
+
+// Label is a repository label. Color is six hex digits without '#'.
+type Label struct{ Name, Color, Description string }
+
+// Comment is an issue or PR conversation comment. Body is untrusted.
+type Comment struct {
+	ID        int64
+	Author    string
+	Body      string
+	CreatedAt time.Time
+	URL       string
+}
+
+// PullRequest is a pull request.
+type PullRequest struct {
+	Number         int
+	NodeID         string
+	Title, Body    string
+	State          State
+	Draft, Merged  bool
+	Author         string
+	Labels         []string
+	HeadRef        string
+	HeadSHA        string
+	BaseRef        string
+	Mergeable      *bool  // nil while GitHub is still computing
+	MergeableState string // clean|behind|blocked|dirty|unstable|draft|unknown
+	URL            string
+}
+
+// PRFile is one file changed by a PR.
+type PRFile struct {
+	Path, PreviousPath, Status string
+	Additions, Deletions       int
+}
+
+// InlineComment is a line comment in a review. Side defaults to RIGHT.
+type InlineComment struct {
+	Path string
+	Line int
+	Side string
+	Body string
+}
+
+// ReviewInput is a review; it is always posted with event COMMENT.
+type ReviewInput struct {
+	CommitSHA, Body string
+	Comments        []InlineComment
+}
+
+// ReviewComment is an inline review comment on a PR.
+type ReviewComment struct {
+	ID        int64
+	Author    string
+	Path      string
+	Line      int
+	Body      string
+	CommitSHA string
+	CreatedAt time.Time
+}
+
+// IssueRef points at another issue or PR.
+type IssueRef struct {
+	Number int
+	IsPR   bool
+	State  State
+}
+
+// TimelineEvent is one entry of an issue timeline.
+type TimelineEvent struct {
+	Event     string // labeled, unlabeled, commented, cross-referenced, ...
+	Actor     string // login; "" when GitHub omits it
+	CreatedAt time.Time
+	Label     string    // labeled/unlabeled
+	Body      string    // commented (untrusted)
+	Source    *IssueRef // cross-referenced
+}
+
+// Permission is a user's collaborator permission on the repo.
+type Permission struct {
+	Level string // admin|write|read|none
+	Role  string // admin|maintain|write|triage|read|""
+}
+
+// AtLeastTriage reports whether the user can triage issues (role triage or
+// above).
+func (p Permission) AtLeastTriage() bool {
+	switch p.Role {
+	case "admin", "maintain", "write", "triage":
+		return true
+	case "":
+		return p.Level == "admin" || p.Level == "write"
+	}
+	return false
+}
+
+// AuthKind says how the client authenticates.
+type AuthKind string
+
+const (
+	AuthApp   AuthKind = "app"
+	AuthToken AuthKind = "token"
+)
+
+// Identity is the authenticated actor.
+type Identity struct {
+	Login string
+	ID    int64
+	Kind  AuthKind
+}
+
+// NoreplyEmail is the commit email GitHub associates with this identity.
+func (i Identity) NoreplyEmail() string {
+	return strconv.FormatInt(i.ID, 10) + "+" + i.Login + "@users.noreply.github.com"
+}
+
+// ListIssuesOpts filters ListIssues.
+type ListIssuesOpts struct {
+	State      State     // default StateOpen
+	Labels     []string  // AND
+	Since      time.Time // updated at or after; zero = no filter
+	IncludePRs bool      // default false
+	Max        int       // 0 = all pages
+}
+
+// SearchOpts shapes SearchIssues.
+type SearchOpts struct {
+	Sort  string // "created"|"updated"|""
+	Order string // "asc"|"desc"
+	Max   int    // default 100, hard cap 1000
+}
+
+// ListPRsOpts filters ListPRs.
+type ListPRsOpts struct {
+	State State
+	Head  string // branch name; the client prefixes the owner
+	Base  string
+}
+
+// NewIssue creates an issue.
+type NewIssue struct {
+	Title, Body string
+	Labels      []string
+}
+
+// IssueUpdate changes an issue; nil fields are left alone.
+type IssueUpdate struct {
+	Title, Body *string
+	State       *State
+	StateReason *StateReason
+}
+
+// NewPR creates a pull request.
+type NewPR struct {
+	Title, Body, Head, Base string
+	Draft                   bool
+}
+
+// PRUpdate changes a PR; nil fields are left alone.
+type PRUpdate struct{ Title, Body *string }
+
+// MergeInput is a squash merge. SHA is required: it is the head guard.
+type MergeInput struct{ SHA, Title, Message string }
+
+// MergeResult is the outcome of a merge.
+type MergeResult struct{ SHA string }
