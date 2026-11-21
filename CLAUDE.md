@@ -41,7 +41,9 @@ internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; clos
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
-internal/           controller, config, github, committer, executor, agent, scanner, state, ...
+internal/controller/ scheduler, kill switch (pause), leader lock, status issue
+internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, controller
+internal/           config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```
 

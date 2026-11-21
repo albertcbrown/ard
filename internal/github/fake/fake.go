@@ -941,6 +941,13 @@ func parseSearch(q string) (searchTerms, error) {
 			t.neg = true
 			tok = tok[1:]
 		}
+		if len(tok) >= 2 && strings.HasPrefix(tok, `"`) && strings.HasSuffix(tok, `"`) {
+			// Quoted free text: matched against the title (the only field
+			// the fake supports, so in:title is required alongside it).
+			t.key, t.value = "text", strings.Trim(tok, `"`)
+			out = append(out, t)
+			continue
+		}
 		k, v, ok := strings.Cut(tok, ":")
 		if !ok {
 			return nil, fmt.Errorf("unsupported free-text term %q", tok)
@@ -951,6 +958,10 @@ func parseSearch(q string) (searchTerms, error) {
 		case "is":
 			if v != "open" && v != "closed" && v != "issue" && v != "pr" {
 				return nil, fmt.Errorf("unsupported qualifier is:%s", v)
+			}
+		case "in":
+			if v != "title" {
+				return nil, fmt.Errorf("unsupported qualifier in:%s", v)
 			}
 		case "label":
 		default:
@@ -966,8 +977,10 @@ func (ts searchTerms) match(it *item) bool {
 	for _, t := range ts {
 		var ok bool
 		switch t.key {
-		case "repo":
+		case "repo", "in":
 			continue
+		case "text":
+			ok = strings.Contains(strings.ToLower(it.issue.Title), strings.ToLower(t.value))
 		case "is":
 			switch t.value {
 			case "open":
