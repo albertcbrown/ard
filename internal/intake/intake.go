@@ -31,7 +31,9 @@ type Input struct {
 	// EnabledAt is when all mode was first seen enabled. In all mode only
 	// issues created after it are admitted without the label; earlier issues
 	// still need the label. Zero means unknown, which fails closed to the
-	// label rules.
+	// label rules. It must be on GitHub's clock (for example the API
+	// response Date header, or the newest issue CreatedAt seen), never
+	// time.Now(): a controller clock running behind would admit backlog issues.
 	EnabledAt time.Time
 	// Perms holds GetPermission results keyed by the login Labeler returned.
 	Perms map[string]github.Permission
@@ -103,6 +105,13 @@ func eval(cfg config.Intake, in Input) step {
 	}
 
 	label := Label(cfg)
+	// A label ard itself applies (ard:needs-human, a stage label, ...) can't
+	// be the intake label: the App's own writes would admit untrusted issues.
+	if !strings.EqualFold(label, labels.Pending) {
+		if _, ok := labels.Parse(label); ok {
+			return fin(OutcomeSkip, ReasonBadConfig)
+		}
+	}
 	if !hasLabel(in.Issue.Labels, label) {
 		return fin(OutcomeSkip, ReasonLabelAbsent)
 	}
@@ -156,7 +165,7 @@ func Admit(cfg config.Intake, in Input) Decision {
 	d := Decision{Actor: s.actor, At: s.at}
 	perm, ok := in.Perms[s.actor]
 	switch {
-	case !ok:
+	case !ok || (perm.Role == "" && perm.Level == ""): // missing or zero data: no side effect
 		d.Outcome, d.Reason = OutcomeSkip, ReasonPermUnknown
 	case perm.AtLeastTriage():
 		d.Outcome, d.Reason = OutcomeAdmit, ReasonAuthorised
