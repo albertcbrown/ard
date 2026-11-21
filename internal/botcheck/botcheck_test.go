@@ -287,6 +287,33 @@ func TestScript(t *testing.T) {
 			push(t, c)
 			return map[string]string{"LIMIT": "2"}
 		}, 0, []string{"checked 0 bot commit", "last 2"}},
+		{"case-variant email", func(t *testing.T, c, _ string) map[string]string {
+			plant(t, c, human, ident{"Someone", "1000+ARD-TEST[BOT]@Users.Noreply.GitHub.com"}, "x", reg("README.md"))
+			push(t, c)
+			return nil
+		}, 1, []string{"README.md"}},
+		{"legacy noreply email", func(t *testing.T, c, _ string) map[string]string {
+			plant(t, c, human, ident{"Someone", "ard-test[bot]@users.noreply.github.com"}, "x", reg("README.md"))
+			push(t, c)
+			return nil
+		}, 1, []string{"README.md"}},
+		{"separator in committer name", func(t *testing.T, c, _ string) map[string]string {
+			plant(t, c, human, ident{"Some\x1fone", botID.email}, "x", reg("README.md"))
+			push(t, c)
+			return nil
+		}, 1, []string{"README.md"}},
+		{"rename out of .ard/12", func(t *testing.T, c, _ string) map[string]string {
+			botPlant(t, c, reg(".ard/12/a"))
+			plant(t, c, botID, botID, "ard(triage:lead): #12 mv", entry{path: ".ard/12/a", del: true}, reg("moved.txt"))
+			push(t, c)
+			return nil
+		}, 1, []string{"moved.txt"}},
+		{"window full of bot commits", func(t *testing.T, c, _ string) map[string]string {
+			botPlant(t, c, reg(".ard/12/a"))
+			botPlant(t, c, reg(".ard/12/b"))
+			push(t, c)
+			return map[string]string{"LIMIT": "2"}
+		}, 2, []string{"ARD_BOT_CHECK_SINCE"}},
 		{"unknown baseline", func(t *testing.T, c, _ string) map[string]string {
 			return map[string]string{"SINCE": strings.Repeat("1", 40)}
 		}, 2, []string{"not a commit"}},
@@ -383,7 +410,7 @@ func TestStepSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), sha) || !strings.Contains(string(b), "a\\|b\\`c.txt") {
+	if !strings.Contains(string(b), sha) || !strings.Contains(string(b), "a\\|b'c.txt") {
 		t.Fatalf("summary:\n%s", b)
 	}
 }

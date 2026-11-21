@@ -28,7 +28,7 @@ jobs:
       contents: read
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           ref: main
@@ -39,7 +39,6 @@ jobs:
           BOT_LOGIN: ${{ vars.ARD_BOT_LOGIN }}
           BRANCH: main
           SINCE: ${{ vars.ARD_BOT_CHECK_SINCE }}
-          LIMIT: '500'
         run: |
           set -euo pipefail
           export LC_ALL=C
@@ -75,7 +74,7 @@ jobs:
             from="last $limit"
           fi
 
-          log=$(git log --first-parent --format='%H%x1f%cn%x1f%ce' "${range[@]}")
+          log=$(git log --first-parent --format='%H%x1f%ce%x1f%cn' "${range[@]}")
           tmp=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/botcheck.XXXXXX")
           trap 'rm -f "$tmp"' EXIT
 
@@ -88,21 +87,32 @@ jobs:
             violations=$((violations + 1))
             echo "::error title=ard bot commit outside .ard/<issue#>/::$1 $(esc "$2"): $3"
             if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-              local p=${2//'`'/\\\`}
+              local p=${2//'`'/\'}
               p=${p//'|'/\\|}
               p=${p//$'\n'/ }
+              p=${p//$'\r'/ }
               printf '| %s | `%s` | %s |\n' "$1" "$p" "$3" >>"$GITHUB_STEP_SUMMARY"
             fi
           }
 
           if [[ -n "$log" ]]; then
-            while IFS=$'\x1f' read -r sha cn ce; do
+            last=""
+            nlog=0
+            while IFS=$'\x1f' read -r sha ce cn; do
+              nlog=$((nlog + 1))
               bot=0
+              # Case-insensitive; the legacy <login>@users.noreply form and any
+              # control character in the identity (fail closed) also count.
+              shopt -s nocasematch
               [[ "$cn" == "$BOT_LOGIN" ]] && bot=1
+              [[ "$ce" == "$BOT_LOGIN@users.noreply.github.com" ]] && bot=1
               if [[ "$ce" == *"$suffix" ]]; then
-                prefix=${ce%"$suffix"}
+                prefix=${ce:0:$((${#ce} - ${#suffix}))}
                 [[ -n "$prefix" && "$prefix" != *[!0-9]* ]] && bot=1
               fi
+              shopt -u nocasematch
+              [[ "$cn" == *[[:cntrl:]]* || "$ce" == *[[:cntrl:]]* ]] && bot=1
+              last=$bot
               [[ $bot == 1 ]] || continue
               checked=$((checked + 1))
 
@@ -156,6 +166,11 @@ jobs:
             done <<<"$log"
           fi
 
+          if [[ -z "$since" && "${nlog:-0}" -ge "$limit" && "${last:-0}" == 1 ]]; then
+            echo "::error title=ard bot commits::window full of bot commits; set ARD_BOT_CHECK_SINCE"
+            echo "checked $checked bot commit(s) on origin/$branch since $from: $violations violation(s)"
+            exit 2
+          fi
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" && $violations -gt 0 ]]; then
             { echo; echo "Rows above: bot commits that left .ard/<issue#>/."; } >>"$GITHUB_STEP_SUMMARY"
           fi
