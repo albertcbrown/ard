@@ -1,0 +1,165 @@
+// Package config loads .ard/config.yaml and discovers the role directories
+// under .ard/{scanners,triage,workers,reviewers}/ into one immutable
+// Resolved value. Every other package consumes only Resolved; none parses
+// YAML or walks the role directories itself. The package is pure: fs.FS in,
+// values out.
+package config
+
+import (
+	"sort"
+	"time"
+)
+
+// Kind is the type of a role directory.
+type Kind string
+
+const (
+	KindScanner  Kind = "scanner"
+	KindTriage   Kind = "triage"
+	KindWorker   Kind = "worker"
+	KindReviewer Kind = "reviewer"
+)
+
+// kindDir maps each kind to its directory under .ard/.
+var kindDir = map[Kind]string{
+	KindScanner:  "scanners",
+	KindTriage:   "triage",
+	KindWorker:   "workers",
+	KindReviewer: "reviewers",
+}
+
+// kindOrder is the canonical kind order: discovery and Resolved.Roles sort
+// by kind first, then by name.
+var kindOrder = []Kind{KindScanner, KindTriage, KindWorker, KindReviewer}
+
+// Intervals holds the poll interval of every loop. Durations under one
+// minute are rejected; the Reaper alone runs faster and is not
+// configurable.
+type Intervals struct {
+	Scanners  Duration // default 4h
+	Triage    Duration // default 15m
+	Workers   Duration // default 5m
+	Reviewers Duration // default 5m
+	Merger    Duration // default 5m
+}
+
+// Stale configures the built-in stale-issue closer (#25); the schema lives
+// here so config files can carry it before that issue lands.
+type Stale struct {
+	InactiveFor Duration // default 30d
+	SuppressFor Duration // default 90d
+}
+
+// Sidecar is a read-only companion repo mounted into a role's job.
+type Sidecar struct {
+	Repo string // "owner/name"
+	Ref  string // default "main"
+}
+
+// When gates a reviewer: a nil When means the reviewer runs on every PR.
+// Semantics are owned by #15; config only validates and exposes the shape.
+type When struct {
+	Paths  []string // run only when the diff touches one of these paths
+	Triage []string // run only when one of these triage roles ran
+}
+
+// Role is one discovered role directory plus its resolved settings.
+type Role struct {
+	Kind Kind
+	Name string
+	Dir  string // ".ard/<type>/<name>", repo-relative slash form
+
+	PromptPath string   // Dir + "/prompt.txt"; "" for a deterministic scanner
+	ScanPath   string   // Dir + "/scan"; "" for LLM roles
+	Dockerfile string   // Dir + "/Dockerfile"; "" => default ard-agent image
+	Extra      []string // other files, relative to Dir, sorted, mounted read-only
+
+	Agent   string        // role > global
+	Model   string        // optional
+	Timeout time.Duration // default 30m
+	Sidecar string        // key in Resolved.Sidecars; "" = none
+
+	// Scanner only.
+	Every     time.Duration // default Intervals.Scanners
+	MaxOpen   int           // default 5; 0 is never valid
+	GroupSize int           // default 10; 0 is never valid
+	Autoclose bool          // default true iff ScanPath != ""
+
+	// Triage only: hold this role's request until these triage roles, if
+	// requested, are done. Ordering is owned by #15.
+	After []string
+
+	// Worker only.
+	Tests           string   // default "make test"
+	MaxTestFixes    int      // default 2; 0 is never valid
+	MaxReviewRounds int      // default 3
+	Reviewers       []string // reviewer role names
+
+	// Reviewer only; nil = always.
+	When *When
+
+	// Budget caps (#8): zero means unset — the job cap falls back to
+	// Resolved.MaxBudgetUSD and the daily cap to Resolved.BudgetUSDPerDay.
+	MaxBudgetUSD    float64
+	BudgetUSDPerDay float64
+}
+
+// Resolved is the fully merged configuration: built-in defaults, then the
+// global config, then per-role overrides.
+type Resolved struct {
+	Repo            string  // repo root
+	MaxPods         int     // job slots shared by every loop; default 3
+	Executor        string  // "local" or "k8s"
+	Agent           string  // default agent CLI
+	RequireApproval bool    // default true
+	BudgetUSDPerDay float64 // whole-repo daily cap; default 50
+	MaxBudgetUSD    float64 // default per-job cap; default 5
+	GlobalMaxOpen   int     // open scanner issues across all scanners; default 30
+	Paused          bool
+
+	Intervals      Intervals
+	ProtectedPaths []string // merge.protected_paths, normalised
+	Stale          Stale
+	Sidecars       map[string]Sidecar
+	Roles          []Role // sorted by Kind then Name
+}
+
+// Role returns the role of the given kind and name.
+func (r *Resolved) Role(k Kind, name string) (Role, bool) {
+	for _, role := range r.Roles {
+		if role.Kind == k && role.Name == name {
+			return role, true
+		}
+	}
+	return Role{}, false
+}
+
+// RolesOf returns every role of the given kind, in canonical order.
+func (r *Resolved) RolesOf(k Kind) []Role {
+	var out []Role
+	for _, role := range r.Roles {
+		if role.Kind == k {
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
+// sortRoles orders roles by kind (kindOrder) then name.
+func sortRoles(roles []Role) {
+	sort.Slice(roles, func(i, j int) bool {
+		if roles[i].Kind != roles[j].Kind {
+			return kindRank(roles[i].Kind) < kindRank(roles[j].Kind)
+		}
+		return roles[i].Name < roles[j].Name
+	})
+}
+
+func kindRank(k Kind) int {
+	for i, kk := range kindOrder {
+		if kk == k {
+			return i
+		}
+	}
+	return len(kindOrder)
+}
