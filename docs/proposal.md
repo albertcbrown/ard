@@ -255,7 +255,7 @@ Reviewers run like workers against a PR instead of an issue: they read the chang
 2. **Pin the head SHA** and make a worktree there, so the review describes exactly one commit even if the branch moves.
 3. **Run the agent** with `.ard/reviewers/<role>/prompt.txt`, the diff against the merge base, `issue.md`, `plan.md`, the worker log, and the sidecar (security policy, license allowlist). In round 2 and later it also gets its previous findings and must say which are resolved.
 4. **The agent writes `<role>.md`** with `verdict: approve | changes` and findings as `file:line`, severity, blocking or not.
-5. **Close-out.** The controller posts the findings as one PR review with inline comments, commits `<role>.md` and the run's redacted output to the PR branch through the per-branch committer (`[skip ci]`), and swaps `:running` for `:done` or `:changes`.
+5. **Close-out.** The controller posts the findings as one PR review with inline comments, commits `<role>.md` and the run's redacted output to the PR branch through the per-branch committer (no `[skip ci]`: PR-branch commits always run CI so required checks report on the head), and swaps `:running` for `:done` or `:changes`.
 
 **The label is the gate, not GitHub's "request changes".** A bot's request-changes review blocks merge until someone dismisses it, even after the fix. Reviews post as comments; `ard:review:<role>:changes` is what sends the PR back to the worker.
 
