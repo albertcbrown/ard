@@ -130,7 +130,7 @@ func TestSuccessAndLogs(t *testing.T) {
 	if readFile(t, filepath.Join(h.Worktree, ".ard/7/issue.md")) != "UNTRUSTED\n" {
 		t.Error("input not written")
 	}
-	if !strings.Contains(h.LogPath, "/logs/o-r/7/worker-dev-") {
+	if !strings.Contains(h.LogPath, "/logs/o/r/7/worker-dev-") {
 		t.Errorf("log path %s", h.LogPath)
 	}
 	r, err := f.l.Logs(context.Background(), h, executor.LogsOptions{Stream: executor.Stdout})
@@ -380,7 +380,7 @@ func TestPrepareErrors(t *testing.T) {
 	if _, err := f.l.Prepare(ctx, j); err == nil {
 		t.Error("bad ref accepted")
 	}
-	if _, err := os.Stat(f.l.WorktreePath(j.Repo, j.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustWT(t, f.l, j)); !os.IsNotExist(err) {
 		t.Error("worktree left behind")
 	}
 	j = f.job(time.Minute)
@@ -388,7 +388,7 @@ func TestPrepareErrors(t *testing.T) {
 	if _, err := f.l.Prepare(ctx, j); err == nil {
 		t.Fatal("input failure not reported")
 	}
-	if _, err := os.Stat(f.l.WorktreePath(j.Repo, j.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustWT(t, f.l, j)); !os.IsNotExist(err) {
 		t.Error("worktree left after rollback")
 	}
 	if list := sh(t, f.repo, "git", "worktree", "list"); strings.Count(list, "\n") != 0 {
@@ -444,6 +444,27 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+func TestPruneRemovesEmptyNestedDirs(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.l.root, "logs", "o", "r", "7")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "old.log")
+	os.WriteFile(p, []byte("x"), 0o644)
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	os.Chtimes(p, old, old)
+	if err := f.l.Prune(context.Background(), 7*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(f.l.root, "logs", "o")); !os.IsNotExist(err) {
+		t.Error("empty owner dir kept")
+	}
+	if _, err := os.Stat(filepath.Join(f.l.root, "logs")); err != nil {
+		t.Error("logs dir removed")
+	}
+}
+
 func TestGitConfigInRepoNotExecuted(t *testing.T) {
 	f := newFixture(t)
 	marker := filepath.Join(t.TempDir(), "marker")
@@ -480,7 +501,7 @@ func TestInputSymlinkRejected(t *testing.T) {
 	if readFile(t, target) != "safe\n" {
 		t.Error("symlink target was written")
 	}
-	if _, err := os.Stat(f.l.WorktreePath(j.Repo, j.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(mustWT(t, f.l, j)); !os.IsNotExist(err) {
 		t.Error("worktree left behind")
 	}
 }
@@ -504,4 +525,13 @@ func TestCleanupPreparedHandleDoesNotSignalSelf(t *testing.T) {
 		t.Error("tracked job not stopped")
 	}
 	f.l.stop(h, nil) // PID 0 must be a no-op (the test process survives)
+}
+
+func mustWT(t *testing.T, l *Local, j executor.Job) string {
+	t.Helper()
+	p, err := l.WorktreePath(j.Repo, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

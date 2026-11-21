@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/albertcbrown/ard/internal/repopath"
 )
 
 // ErrLeaderHeld means another ard serve holds the leader lock.
@@ -22,12 +24,16 @@ type Leader struct {
 	path string
 }
 
-// LockPath returns <home>/.ard/locks/<owner>-<repo>.lock, lowercased. It is
+// LockPath returns <home>/.ard/locks/<owner>/<repo>.lock, lowercased. It is
 // the same in dry-run and live mode, so the two exclude each other on one
 // repo. The directory must be on a local filesystem: flock is unreliable on
 // network filesystems.
-func LockPath(home, owner, repo string) string {
-	return filepath.Join(home, ".ard", "locks", strings.ToLower(owner)+"-"+strings.ToLower(repo)+".lock")
+func LockPath(home, owner, repo string) (string, error) {
+	p, err := repopath.Join(filepath.Join(home, ".ard", "locks"), owner+"/"+repo)
+	if err != nil {
+		return "", fmt.Errorf("leader lock: %w", err)
+	}
+	return p + ".lock", nil
 }
 
 // AcquireLeader takes an exclusive, non-blocking flock on path. When another

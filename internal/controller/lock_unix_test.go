@@ -25,9 +25,37 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestLockPathLowercases(t *testing.T) {
-	if got, want := LockPath("/h", "Own", "ReP"), "/h/.ard/locks/own-rep.lock"; got != want {
-		t.Errorf("got %q want %q", got, want)
+func TestLockPath(t *testing.T) {
+	got, err := LockPath("/h", "Own", "ReP")
+	if want := "/h/.ard/locks/own/rep.lock"; err != nil || got != want {
+		t.Errorf("got %q, %v want %q", got, err, want)
+	}
+	a, _ := LockPath("/h", "a-b", "c")
+	b, _ := LockPath("/h", "a", "b-c")
+	if a == b {
+		t.Errorf("a-b/c and a/b-c collide at %s", a)
+	}
+	for _, in := range [][2]string{{"", "r"}, {"o", ""}, {"..", "r"}, {"o", ".."}, {"a/b", "c"}, {"o", "r/x"}} {
+		if _, err := LockPath("/h", in[0], in[1]); err == nil {
+			t.Errorf("LockPath(%q,%q) accepted", in[0], in[1])
+		}
+	}
+}
+
+func TestLeaderCreatesOwnerDir0700(t *testing.T) {
+	tmp := t.TempDir()
+	p, err := LockPath(tmp, "o", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := AcquireLeader(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Release()
+	fi, err := os.Stat(filepath.Join(tmp, ".ard", "locks", "o"))
+	if err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("owner dir: %v, %v", fi, err)
 	}
 }
 

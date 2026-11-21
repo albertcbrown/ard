@@ -53,6 +53,7 @@ internal/committer/ the only commit/push path for .ard/<issue#>/ (main lane, per
 internal/closeout/  job close-out: role file -> labels, comment, commits (resumable)
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
+internal/repopath/  owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
 internal/           config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```

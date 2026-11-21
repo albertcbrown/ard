@@ -42,8 +42,13 @@ func TestDir(t *testing.T) {
 		want   string
 		wantOK bool
 	}{
-		{"o/r", false, "/root/state/o-r", true},
-		{"o/r", true, "/root/state-dryrun/o-r", true},
+		{"o/r", false, "/root/state/o/r", true},
+		{"o/r", true, "/root/state-dryrun/o/r", true},
+		{"a-b/c", false, "/root/state/a-b/c", true},
+		{"a/b-c", false, "/root/state/a/b-c", true},
+		{"Foo/Bar", false, "/root/state/foo/bar", true},
+		{"foo/bar", false, "/root/state/foo/bar", true},
+		{"./b", false, "", false}, {`a\b/c`, false, "", false},
 		{"", false, "", false}, {"a", false, "", false}, {"a/b/c", false, "", false},
 		{"/b", false, "", false}, {"a/", false, "", false}, {"../x", false, "", false},
 	} {

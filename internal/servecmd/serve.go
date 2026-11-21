@@ -64,13 +64,20 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	if err != nil {
 		return fmt.Errorf("ard serve: find home directory: %w", err)
 	}
-	leader, err := controller.AcquireLeader(controller.LockPath(home, repo.Owner, repo.Name))
+	if err := state.CheckLegacy(filepath.Join(home, ".ard"), repo.String()); err != nil {
+		return &cli.ExitError{Code: 1, Err: fmt.Errorf("ard serve: %w", err)}
+	}
+	lockPath, err := controller.LockPath(home, repo.Owner, repo.Name)
+	if err != nil {
+		return fmt.Errorf("ard serve: %w", err)
+	}
+	leader, err := controller.AcquireLeader(lockPath)
 	if err != nil {
 		return &cli.ExitError{Code: 1, Err: fmt.Errorf("ard serve: %w", err)}
 	}
 	defer leader.Release()
 
-	stateDir, err := state.Dir(filepath.Join(home, ".ard"), repo.Owner+"/"+repo.Name, e.DryRun)
+	stateDir, err := state.Dir(filepath.Join(home, ".ard"), repo.String(), e.DryRun)
 	if err != nil {
 		return err
 	}
@@ -156,7 +163,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
-	log.Info("serve.start", "repo", repo.Owner+"/"+repo.Name, "dry_run", e.DryRun)
+	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun)
 	return cc.Run(ctx)
 }
 
