@@ -2,9 +2,12 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -66,4 +69,48 @@ func IsTransient(err error) bool {
 		return ne.Timeout()
 	}
 	return false
+}
+
+// statusError maps a failed response to ard's error vocabulary. Rate limits
+// are recognised earlier, in the retry transport.
+func statusError(status int, body []byte) error {
+	msg := errorMessage(body)
+	switch status {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("%w: %s", ErrUnauthorized, msg)
+	case http.StatusForbidden:
+		return fmt.Errorf("%w: %s", ErrForbidden, msg)
+	case http.StatusNotFound:
+		return fmt.Errorf("%w: %s", ErrNotFound, msg)
+	}
+	return &HTTPError{Status: status, Message: msg}
+}
+
+// errorMessage extracts GitHub's {"message": ...} (plus field errors) from a body.
+func errorMessage(body []byte) string {
+	var v struct {
+		Message string `json:"message"`
+		Errors  []struct {
+			Code    string `json:"code"`
+			Field   string `json:"field"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil || v.Message == "" {
+		s := strings.TrimSpace(string(body))
+		if len(s) > 200 {
+			s = s[:200]
+		}
+		return s
+	}
+	msg := v.Message
+	for _, e := range v.Errors {
+		switch {
+		case e.Message != "":
+			msg += "; " + e.Message
+		case e.Code != "":
+			msg += "; " + e.Field + " " + e.Code
+		}
+	}
+	return msg
 }
