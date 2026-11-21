@@ -53,9 +53,22 @@ func (e *runError) Unwrap() error { return e.err }
 // run executes git in dir with extra env entries and optional stdin. Stderr
 // is scrubbed of secrets before it appears in an error.
 func (g *Git) run(ctx context.Context, dir string, env []string, stdin string, secrets []string, args ...string) (string, string, error) {
+	// Hooks and fsmonitor are off for every command: RepoDir is shared with
+	// executor worktrees and must not get to run code with our credentials.
+	args = append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)
 	cmd := exec.CommandContext(ctx, g.bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	// Inherit nothing git-specific (GIT_DIR, GIT_INDEX_FILE, GIT_CONFIG_PARAMETERS ...).
+	var base []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			base = append(base, kv)
+		}
+	}
+	cmd.Env = append(base, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C",
+		// A human's global config (insteadOf, signing, hooks) must not change
+		// what the controller does.
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	cmd.Env = append(cmd.Env, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
