@@ -41,6 +41,10 @@ type Job struct {
 	ReadOnly   bool          // worktree read-only: Docker mounts :ro, host chmod -R a-w after Prepare
 	Inputs     []File        // written into the worktree by Prepare
 	Timeout    time.Duration // > 0
+	// TrustedInput: the job reads no untrusted input (a deterministic
+	// scanner); only valid with Stage "scanner". The zero value means it
+	// does, so a builder that forgets the field gets the host-mode warning.
+	TrustedInput bool
 }
 
 // File is a worktree-relative file written 0644 by Prepare.
@@ -84,6 +88,7 @@ type Handle struct {
 	ReadOnly            bool
 	Timeout             time.Duration
 	RoleDir, SidecarDir string // host paths
+	TrustedInput        bool   // copied from Job by Prepare
 }
 
 // State is the lifecycle state of a job.

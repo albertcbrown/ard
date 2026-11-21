@@ -22,6 +22,7 @@ import (
 	"github.com/albertcbrown/ard/internal/configsrc"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
+	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
@@ -133,7 +134,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		Repo: repo, Root: root, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners,
 	}
 	defer w.closeAll()
-	loader := &cfgLoader{src: src, fx: d.Effects, log: log, issue: func() int { return int(w.statusIssue.Load()) }}
+	loader := &cfgLoader{src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
 
 	// An origin/main whose config cannot be loaded does not abort startup:
 	// serve starts paused, tells the status issue, and retries every tick.
@@ -173,7 +174,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		Startup: []controller.Hook{
 			{Name: "pool-adopt", Fn: func(ctx context.Context) error {
 				var cl workspaceCleaner
-				if ex, err := local.New(local.Options{Root: filepath.Join(home, ".ard"), Log: log}); err == nil {
+				if ex, err := w.newExecutor(); err == nil {
 					cl = ex
 				}
 				if err := failStaleScannerJobs(ctx, store, cl, log); err != nil {
@@ -259,6 +260,27 @@ func (w *wiring) closeAll() {
 	}
 }
 
+// newExecutor builds the local executor every loop uses; its host-mode hook
+// appends a state.EventHostUntrusted row to the controller database. Every
+// loop that runs jobs (scanners, and later triage, workers and reviewers)
+// must build its executor here, so host-mode warnings are recorded.
+func (w *wiring) newExecutor() (*local.Local, error) {
+	return local.New(local.Options{
+		Root: filepath.Join(w.Home, ".ard"), Log: w.Log,
+		OnHostUntrusted: recordHostUntrusted(w.Store),
+	})
+}
+
+// recordHostUntrusted returns the executor hook that appends a
+// state.EventHostUntrusted row for a host-mode job.
+func recordHostUntrusted(store *state.Store) func(context.Context, executor.Handle) error {
+	return func(ctx context.Context, h executor.Handle) error {
+		return store.AppendEvent(ctx, state.Event{
+			Kind: state.EventHostUntrusted, JobID: h.JobID, Issue: h.Issue, Stage: h.Stage, Role: h.Role,
+		})
+	}
+}
+
 // Pool returns the slot pool adopted at startup. It panics if called before
 // the pool-adopt hook has run, which means a loop used it in its constructor.
 func (w *wiring) Pool() *pool.Pool {
@@ -270,7 +292,7 @@ func (w *wiring) Pool() *pool.Pool {
 }
 
 // registerLoops returns the loops to run: the scanners loop (#23) and the
-// stale closer (#25) so far. The triage, worker, reviewer, merger and Reaper loops each
+// stale closer (#25) so far. Loops that run jobs build their executor with w.newExecutor(). The triage, worker, reviewer, merger and Reaper loops each
 // add one constructor call here. It is a variable so tests can observe wiring.
 var registerLoops = func(w *wiring) []controller.Loop {
 	var loops []controller.Loop
