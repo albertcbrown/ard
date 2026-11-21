@@ -27,6 +27,7 @@ type track struct {
 	signal   string
 	finished time.Time
 	timer    *time.Timer
+	pid      int
 }
 
 type lockedWriter struct {
@@ -120,7 +121,7 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 	h.StartedAt = l.now().UTC()
 	h.Deadline = h.StartedAt.Add(h.Timeout)
 
-	tr := &track{done: make(chan struct{})}
+	tr := &track{done: make(chan struct{}), pid: h.PID}
 	l.mu.Lock()
 	l.tracks[h.JobID] = tr
 	l.mu.Unlock()
@@ -169,6 +170,9 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 // stop sends SIGTERM to the process group, then SIGKILL after the grace
 // period. It signals only a tracked or verified PID. done may be nil.
 func (l *Local) stop(h executor.Handle, done <-chan struct{}) {
+	if h.PID <= 0 {
+		return // kill(0) would signal the controller's own process group
+	}
 	if done == nil && !verified(h) {
 		return
 	}
@@ -255,6 +259,7 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 		running := !tr.exited
 		tr.mu.Unlock()
 		if running {
+			h.PID = tr.pid // a Prepare-era handle has PID 0; trust the tracker
 			l.stop(h, tr.done)
 		}
 	} else if verified(h) {

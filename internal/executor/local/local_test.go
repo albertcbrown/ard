@@ -420,3 +420,65 @@ func TestPrune(t *testing.T) {
 		t.Error("fresh log removed")
 	}
 }
+
+func TestGitConfigInRepoNotExecuted(t *testing.T) {
+	f := newFixture(t)
+	marker := filepath.Join(t.TempDir(), "marker")
+	hook := filepath.Join(f.repo, "fsm.sh")
+	os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755)
+	os.WriteFile(filepath.Join(f.repo, ".gitconfig"), []byte("[core]\n\tfsmonitor = "+hook+"\n"), 0o644)
+	os.MkdirAll(filepath.Join(f.repo, ".git/hooks"), 0o755)
+	os.WriteFile(filepath.Join(f.repo, ".git/hooks/post-checkout"), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755)
+	sh(t, f.repo, "git", "add", ".")
+	sh(t, f.repo, "git", "commit", "-q", "-m", "evil")
+	h, err := f.l.Prepare(context.Background(), f.job(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.l.Cleanup(context.Background(), h, executor.CleanupOptions{})
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("repo-controlled config or hook executed")
+	}
+}
+
+func TestInputSymlinkRejected(t *testing.T) {
+	f := newFixture(t)
+	target := filepath.Join(t.TempDir(), "victim")
+	os.WriteFile(target, []byte("safe\n"), 0o644)
+	os.MkdirAll(filepath.Join(f.repo, ".ard/7"), 0o755)
+	os.Symlink(target, filepath.Join(f.repo, ".ard/7/issue.md"))
+	sh(t, f.repo, "git", "add", ".")
+	sh(t, f.repo, "git", "commit", "-q", "-m", "link")
+	j := f.job(time.Minute)
+	j.Inputs = []executor.File{{Path: ".ard/7/issue.md", Data: []byte("UNTRUSTED")}}
+	if _, err := f.l.Prepare(context.Background(), j); err == nil {
+		t.Fatal("symlinked input accepted")
+	}
+	if readFile(t, target) != "safe\n" {
+		t.Error("symlink target was written")
+	}
+	if _, err := os.Stat(f.l.WorktreePath(j.Repo, j.ID)); !os.IsNotExist(err) {
+		t.Error("worktree left behind")
+	}
+}
+
+func TestCleanupPreparedHandleDoesNotSignalSelf(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	h, err := f.l.Prepare(ctx, f.job(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := f.l.Start(ctx, h, agent(t, "hang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// h still has PID 0; the tracker must supply the real pid.
+	if err := f.l.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if alive(started.PID) {
+		t.Error("tracked job not stopped")
+	}
+	f.l.stop(h, nil) // PID 0 must be a no-op (the test process survives)
+}
