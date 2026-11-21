@@ -19,8 +19,8 @@ const PollInterval = 5 * time.Minute
 // covers the reconcile, the filing and the commits around a scan.
 const tickSlack = 15 * time.Minute
 
-// Builtin is a scanner with no role directory, such as the stale closer
-// (#25). It needs no slot, executor or worktree. The loop schedules it from
+// Builtin is a scanner with no role directory. (The stale closer, #25, is not
+// one: it is a plain controller loop.) It needs no slot, executor or worktree. The loop schedules it from
 // its own database and records its runs there.
 type Builtin interface {
 	Name() string
