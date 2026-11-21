@@ -85,6 +85,15 @@ func check(dir string, l layout) ([]hit, error) {
 		inGitx := underOrEq(rel, l.gitx)
 		goGH := l.goGithub
 		ghPath, fakePath, gitxPath := mod+"/"+l.github, mod+"/"+l.fake, mod+"/"+l.gitx
+		gittestPath := gitxPath + "/gittest"
+		var gitPtr *types.Pointer
+		for _, q := range pkgs {
+			if q.PkgPath == gitxPath && q.Types != nil {
+				if tn, ok := q.Types.Scope().Lookup("Git").(*types.TypeName); ok {
+					gitPtr = types.NewPointer(tn.Type())
+				}
+			}
+		}
 
 		for _, f := range p.Syntax {
 			for _, imp := range f.Imports {
@@ -92,12 +101,23 @@ func check(dir string, l layout) ([]hit, error) {
 				if underOrEq(path, goGH) && !inGitHub {
 					add("R1", imp.Pos(), "imports "+path+"; only internal/github may")
 				}
+				if path == gittestPath {
+					add("R7", imp.Pos(), "non-test import of gitx/gittest, whose Run can push")
+				}
 				if path == fakePath && !inGitHub {
 					add("R3", imp.Pos(), "non-test import of the GitHub fake")
 				}
 			}
 			ast.Inspect(f, func(n ast.Node) bool {
 				switch n := n.(type) {
+				case *ast.InterfaceType:
+					// A consumer-side interface that *gitx.Git satisfies would let
+					// Commit/Push be called without naming gitx.
+					if !inGitx && rel != l.effects && gitPtr != nil && hasWriteMethod(p.TypesInfo.Types[n].Type) {
+						if iface, ok := p.TypesInfo.Types[n].Type.Underlying().(*types.Interface); ok && types.Implements(gitPtr, iface) {
+							add("R4", n.Pos(), "interface satisfied by (*gitx.Git) declares Commit or Push")
+						}
+					}
 				case *ast.BasicLit:
 					if n.Kind == token.STRING {
 						if s, err := strconv.Unquote(n.Value); err == nil && strings.Contains(s, "api.github.com") && !inGitHub {
@@ -117,7 +137,7 @@ func check(dir string, l layout) ([]hit, error) {
 				continue
 			}
 			switch {
-			case obj.Pkg().Path() == ghPath && (obj.Name() == "New" || obj.Name() == "Client" || obj.Name() == "Writer"):
+			case obj.Pkg().Path() == ghPath && (obj.Name() == "New" || obj.Name() == "Client" || obj.Name() == "Writer" || obj.Name() == "HTTP"):
 				if !inGitHub && rel != l.effects {
 					add("R2", id.Pos(), "use of github."+obj.Name()+"; only internal/effects may")
 				}
@@ -135,6 +155,19 @@ func check(dir string, l layout) ([]hit, error) {
 		return hits[i].Line < hits[j].Line
 	})
 	return hits, nil
+}
+
+func hasWriteMethod(t types.Type) bool {
+	iface, ok := t.Underlying().(*types.Interface)
+	if !ok {
+		return false
+	}
+	for i := 0; i < iface.NumMethods(); i++ {
+		if n := iface.Method(i).Name(); n == "Commit" || n == "Push" {
+			return true
+		}
+	}
+	return false
 }
 
 func isGitMethod(obj types.Object) bool {
@@ -208,6 +241,7 @@ func TestRulesSelf(t *testing.T) {
 	want := map[string]int{
 		"R1 internal/bad/r1.go": 1, "R2 internal/bad/r2.go": 1, "R3 internal/bad/r3.go": 1,
 		"R4 internal/bad/r4.go": 1, "R5 internal/bad/r5.go": 1, "R6 internal/bad/r6.go": 1,
+		"R4 internal/bad/r4iface.go": 1, "R7 internal/bad/r7.go": 1, "R2 internal/bad/r2http.go": 1,
 	}
 	// R1 file also uses nothing else; r2/r4 import allowed packages only.
 	if fmt.Sprint(got) != fmt.Sprint(want) {

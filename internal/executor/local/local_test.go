@@ -237,6 +237,29 @@ func TestForbiddenEnv(t *testing.T) {
 	}
 }
 
+func TestFixedEnv(t *testing.T) {
+	f := newFixture(t)
+	for _, e := range []string{"GITHUB_TOKEN=x", "HOME=/x", "ARD_X=1", "MY_API_KEY=x", "FOO", "ANTHROPIC_BASE_URL=x", "HTTPS_PROXY=x", "NODE_OPTIONS=x"} {
+		if err := f.l.checkFixed([]string{e}); !errors.Is(err, executor.ErrForbiddenEnv) {
+			t.Errorf("%q: %v", e, err)
+		}
+	}
+	if err := f.l.checkFixed([]string{"CLAUDE_CONFIG_DIR=/cfg", "DISABLE_AUTOUPDATER=1"}); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestFixedReachesProcess(t *testing.T) {
+	f := newFixture(t)
+	f.l.allowFixed["A"] = true
+	c := agent(t, "env")
+	c.Fixed = []string{"A=1"}
+	h, _ := f.run(t, f.job(20*time.Second), c)
+	if out := readFile(t, h.StdoutPath); !strings.Contains("\n"+out, "\nA=1\n") {
+		t.Errorf("A=1 missing from env:\n%s", out)
+	}
+}
+
 func TestLastOutputAdvances(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

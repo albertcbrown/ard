@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -70,16 +71,41 @@ func openLedger(path string) (*os.File, int, error) {
 	return f, next, nil
 }
 
-func appendRecord(f *os.File, r record) error {
+// ledgerFile is the part of *os.File the ledger uses; tests inject faults.
+type ledgerFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Seek(int64, int) (int64, error)
+	Truncate(int64) error
+	Close() error
+}
+
+// appendRecord writes one line and fsyncs. On any failure it truncates the
+// file back to where it started so no partial line survives; if that also
+// fails the ledger is unusable and the truncate error is returned as broken.
+func appendRecord(f ledgerFile, r record) (err, broken error) {
 	b, err := json.Marshal(r)
 	if err != nil {
-		return fmt.Errorf("effects: encode ledger record: %w", err)
+		return fmt.Errorf("effects: encode ledger record: %w", err), nil
 	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
-		return fmt.Errorf("effects: write ledger: %w", err)
+	off, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("effects: seek ledger: %w", err), fmt.Errorf("effects: ledger unusable: %w", err)
 	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("effects: sync ledger: %w", err)
+	werr := func() error {
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			return fmt.Errorf("effects: write ledger: %w", err)
+		}
+		if err := f.Sync(); err != nil {
+			return fmt.Errorf("effects: sync ledger: %w", err)
+		}
+		return nil
+	}()
+	if werr == nil {
+		return nil, nil
 	}
-	return nil
+	if terr := f.Truncate(off); terr != nil {
+		return werr, fmt.Errorf("effects: ledger unusable, truncate failed: %w", terr)
+	}
+	return werr, nil
 }
