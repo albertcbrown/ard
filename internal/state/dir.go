@@ -45,6 +45,10 @@ func CheckLegacy(root, repo string) error {
 	}
 	want := owner + "-" + name
 	for _, base := range []string{"state", "state-dryrun"} {
+		nd, err := Dir(root, repo, base == "state-dryrun")
+		if err != nil {
+			return fmt.Errorf("legacy state check: %w", err)
+		}
 		baseDir := filepath.Join(root, base)
 		entries, err := os.ReadDir(baseDir)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -64,7 +68,6 @@ func CheckLegacy(root, repo string) error {
 			}
 			for _, s := range sub {
 				if !s.IsDir() {
-					nd, _ := Dir(root, repo, base == "state-dryrun")
 					return fmt.Errorf("%w: found %s (from an older ard; it may belong to %s or another repo with the same dashed name). This version uses %s. Move or remove it by hand; ard does not migrate it (#82)",
 						ErrLegacyDir, old, repo, nd)
 				}
