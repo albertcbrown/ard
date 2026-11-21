@@ -41,6 +41,10 @@ flowchart TD
 
 Each arrow is a label the controller sets at close-out; dashed lines show the stages it runs. A reviewer's `changes` verdict sends the PR back to the worker, at most three times; once every review passes, the merger lands it.
 
+## Stack
+
+**Stack (decided, #9).** Go, one static binary (CGO off) with: cobra, gopkg.in/yaml.v3, modernc.org/sqlite, go-github v88 with ghinstallation/v2, log/slog, golang.org/x/tools (for the architecture test only) and an internal `internal/gitx` for git.
+
 ## Label state machine
 
 Every label starts with `ard:`, and every stage uses one grammar: `ard:<stage>:<role>` requests work, `:running` marks a claim, `:done` marks completion. A loop picks up an issue that has the request label and none of `:running`, `:done`, `ard:executor:failed`, `ard:needs-human` or `ard:hold`.
@@ -123,11 +127,13 @@ Short summary of what was done.
 - ...
 ```
 
-**All agent output is committed too.** Each run's full output lands in `.ard/<issue#>/logs/<stage>-<role>-<ts>.log`. Close-out redacts known secret values from the whole stream, secret-scans the whole redacted log, then caps it at 1 MiB: the first 32 KiB plus the last ~992 KiB, cut on line boundaries and joined by one truncation marker line. The full redacted log stays host-local for 7 days. Triage output goes to `main` through the committer; worker and reviewer output goes on the branch and ships in the PR. **Scanner run logs stay host-local in phase 0** (`~/.ard/logs/`, 7 days) and are not committed: one run can touch many issues, and close-out redaction and the secret scan (#20, #21) land after Gate 1. What a scanner run commits is `.ard/<issue#>/issue.md` for each issue it files or joins, nothing else. Committing scanner logs, redacted, to each touched issue is a follow-up. Never committed: scanner state databases, and any log the secret scan flags.
+**All agent output is committed too.** Each run's full output lands in `.ard/<issue#>/logs/<stage>-<role>-<ts>.log`. Close-out redacts known secret values from the whole stream, secret-scans the whole redacted log, then caps it at 1 MiB: the first 32 KiB plus the last ~992 KiB, cut on line boundaries and joined by one truncation marker line. The full redacted log stays host-local for 7 days. Git LFS is not used (decided, #4); revisit only if `.git` growth demands it. Once the redacted copy is committed, the raw log is deleted. Triage output goes to `main` through the committer; worker and reviewer output goes on the branch and ships in the PR. **Scanner run logs stay host-local in phase 0** (`~/.ard/logs/`, 7 days) and are not committed: one run can touch many issues, and close-out redaction and the secret scan (#20, #21) land after Gate 1. What a scanner run commits is `.ard/<issue#>/issue.md` for each issue it files or joins, nothing else. Committing scanner logs, redacted, to each touched issue is a follow-up. Never committed: scanner state databases, and any log the secret scan flags.
 
 **One writer location per issue directory at a time.** Until the worker branch exists, `main` owns `.ard/<issue#>/`; scanners and triage write there. Once the branch is cut, the branch owns it; workers and reviewers commit to the PR, and a scanner with new findings comments on the issue instead. This keeps the PR merge free of conflicts in `.ard/`.
 
 **One committer for main.** Close-outs never push. They hand a file set to the controller's committer, which keeps its own clean worktree of `main`, commits as `ard[bot]` with `ard(<stage>:<role>): #<issue> <summary> [skip ci]`, re-applies its snapshot on the fetched head, pushes with a lease, and retries up to 3 times (re-applying the whole-file snapshot is the rebase; if upstream changed one of its paths the request fails with a conflict instead of overwriting). A replay of an unchanged tree is a no-op that returns the upstream head. It refuses any change outside the `.ard/<issue#>/` directories. Because the bot must bypass branch protection on `main`, a CI check also alerts if a bot commit on `main` touches any other path.
+
+**Why `.ard/` stays on `main` (decided, #1).** An orphan `ard-state` branch is ruled out: worker and reviewer logs ride on PR branches, and a PR cannot carry files from unrelated history. The single committer, the `[skip ci]` marker and the path guard answer the usual objections. `[skip ci]` applies to main-branch bot commits only; commits on a PR branch never carry it, so CI always runs on them.
 
 **Directories outlive their issues as the audit trail.** A monthly janitor deletes `.ard/<issue#>/` for issues closed more than 90 days ago; git history keeps them.
 
@@ -186,7 +192,7 @@ Triage turns an issue into a `plan.md` a worker can execute, one role at a time,
 
 **Each poll (every 15 minutes by default), for each triage role:**
 
-1. Query for the role's request label (the lead's is `ard:pending`), excluding claimed, done, failed, blocked and held issues.
+1. Query for the role's request label (the lead's is `ard:pending`), excluding claimed, done, failed, blocked and held issues. Which human-filed issues receive `ard:pending` is the `intake` setting (decided, #2): in `all` mode every human-filed issue enters with no label needed; in `label` mode only issues carrying the configured intake label do. In label mode the controller honours the label only if the latest `labeled` event for it came from an actor with triage or higher permission, or from the App; otherwise the issue is ignored. Either way an edit to the issue body re-gates it. Intake is planned, see #2.
 2. Wait for a free job slot (triage ranks below reviewers and workers), then claim the oldest match: add `ard:triage:<role>:running` and record the job (id, executor, start, deadline).
 3. Prepare a detached worktree at `origin/main`, refresh `.ard/<issue#>/issue.md` from the issue and its comments, and mount the role's sidecar repo read-only at `$ARD_SIDECAR`.
 4. Run the agent CLI with `.ard/triage/<role>/prompt.txt` and the issue directory as context.
@@ -291,7 +297,7 @@ A PR merges when all of these hold:
 - required status checks are green on the current head
 - the branch is up to date with `main`; if it is behind, the merger updates it and waits for checks on the new head
 - it carries none of `ard:hold`, `ard:needs-human`, `ard:tests:failed` or `ard:executor:failed`
-- the diff touches no protected path (`.github/`, `.ard/config.yaml`, role directories, plus `merge.protected_paths`); a PR that does gets `ard:needs-approval` and merges on the next poll after a human approves
+- the diff touches no protected path; the list comes only from `merge.protected_paths`, with no floor in code (decided, #3), so a human who empties the list removes the gate. `ard init` writes the defaults `.github/`, `.ard/config.yaml`, the four role trees (`.ard/scanners/`, `.ard/triage/`, `.ard/workers/`, `.ard/reviewers/`) and `CODEOWNERS`. An entry ending in `/` is a directory prefix; any other entry is a doublestar glob. Trailing-slash prefix semantics are planned; `internal/config` currently strips the slash (follow-up, see #3). A PR that touches one gets `ard:needs-approval` and merges on the next poll after a human approves
 
 It squash-merges with the worker's commit title and the `Ard-Job` trailer, then deletes the branch, so `.ard/<issue#>/` and its logs land on `main` with the code. If updating the branch conflicts, it re-requests the worker for a rebase round, which counts toward `max_review_rounds`.
 
@@ -320,12 +326,14 @@ max_pods: 3                  # job slots shared by every loop
 executor: local              # local | k8s
 agent: claude                # default CLI for agent roles
 require_approval: true       # human adds ard:approved before a worker starts
-budget_usd_per_day: 50       # whole repo; roles can set their own
-max_budget_usd: 5            # per job
+budget_usd_per_day: 50       # whole repo; provisional, recalibrated between Gate 1 and Gate 2
+max_budget_usd: 5            # per job; provisional, same recalibration
 global_max_open: 30          # open scanner issues across all scanners
 paused: false
 intervals: { scanners: 4h, triage: 15m, workers: 5m, reviewers: 5m, merger: 5m }
-merge: { protected_paths: [infra/, migrations/] }
+intake: { mode: label, label: ard:pending }   # (planned, see #2) mode: all | label
+merge:                       # defaults written by `ard init`; the list is the only source (no floor in code)
+  protected_paths: [.github/, .ard/config.yaml, .ard/scanners/, .ard/triage/, .ard/workers/, .ard/reviewers/, CODEOWNERS, infra/]
 stale: { inactive_for: 30d, suppress_for: 90d }
 
 sidecars:
@@ -341,6 +349,8 @@ overrides:                   # only what differs from convention
   reviewers/license-review: { agent: kimi, when: { paths: [go.mod, go.sum, "package*.json"] } }
 ```
 
+**Models are tiered (decided, #8).** Opus 5.5 for the lead, architect and security review; Sonnet 5.5 for workers and most reviewers; Haiku 5.5 for lint and docs work. The `budget_usd_per_day: 50` and per-job `max_budget_usd` values are provisional and are recalibrated from measured cost per job and per merged PR between Gate 1 and Gate 2.
+
 Anything unset takes its default: scanners every 4 h with `max_open` 5 and `group_size` 10, triage every 15 min, a 30-minute job timeout, `make test`, 2 test-fix attempts and 3 review rounds. Durations accept `m`, `h` and `d`. Per-role keys are `every`, `max_open`, `group_size`, `autoclose`, `timeout`, `agent`, `model`, `max_budget_usd`, `budget_usd_per_day`, `sidecar`, `after`, `tests`, `reviewers` and `when` (`paths`, or `triage` roles that ran). There are no per-role config files: `ard init` writes a role's starting overrides into `config.yaml`. Once a second repo adopts ard, role directories can move to a shared roles repo pinned by ref, like a sidecar; a repo's own directory of the same name wins.
 
 ## Guardrails
@@ -349,9 +359,9 @@ Agents with push access read text that strangers can write, so the controls sit 
 
 - **Identity: a GitHub App, not a PAT.** Installation tokens expire hourly and are scoped to contents, issues and pull requests (read and write), plus checks (read) so the merger can see required checks. Leaving out the `workflows` permission makes GitHub itself reject any push that edits `.github/workflows/`, a backstop to the diff guard. A personal token (`ARD_GITHUB_TOKEN`) is accepted only for local `--dry-run` development, and the client is then made read-only so no write can reach GitHub.
 - **Agents hold no GitHub token.** The executor does. The agent's environment has only its model API key; in Kubernetes a network policy limits egress to the model API and package registries.
-- **Only labels start work.** GitHub lets only triage-level collaborators add labels, so an outsider's issue or comment cannot start a job. A human issue enters the pipeline when a maintainer adds `ard:pending`; the triage loop checks from the issue timeline that whoever added it has triage access, and re-gates the issue if its body is edited afterwards.
+- **Intake is configurable (decided, #2).** `intake` is either `all` (every human-filed issue enters, no label) or `label` (only issues with the configured label). GitHub lets only triage-level collaborators add labels, so in label mode an outsider cannot start a job: the controller honours the label only if the latest `labeled` event came from an actor with triage or higher permission, or from the App. In both modes the issue is re-gated if its body is edited afterwards. Note that `all` mode lets any issue author start a job, so use it only on repos where that is acceptable. Intake is planned, see #2.
 - **Untrusted text is passed as data.** Issue bodies, comments and PR text go to the agent as files the prompt labels as untrusted input, never spliced into the instructions.
-- **Role files are human-owned.** The diff guard rejects any worker change to `.ard/config.yaml` or a role directory, and the merger treats those paths as protected, so no agent can rewrite its own prompt.
+- **Role files are human-owned.** The diff guard rejects any worker change to `.ard/config.yaml` or a role directory, and the merger treats those paths as protected through `merge.protected_paths` (the `ard init` defaults), so no agent can rewrite its own prompt.
 - **Merges are gated.** The merger lands a PR only when every review passed and required checks are green on an up-to-date branch; protected paths wait for a human approval. The App may bypass the approval rule, never required checks.
 - **Agent text cannot close issues.** Agent text in a commit message, PR title or PR body has closing references neutralised (`committer.NeutraliseRefs`: "Fixes #12" becomes "Fixes issue 12"). Only a closing keyword directly before a reference closes an issue on GitHub, so only those are rewritten; "fixed a typo in #12's test" is left alone. Only ard's own `Closes #<issue>` on the worker PR closes an issue.
 - **Committed output is redacted.** Close-out strips known secret values from each log and every `.ard/<issue#>/` file it commits, and runs a secret scan before anything is committed or posted. A hit on a log keeps that log host-local and adds `ard:needs-human`; a hit on a role file or `plan.md` commits only the clean log and adds `ard:needs-human`. Comments never quote text the scan flagged, never forge an `ard:` marker and never `@`-mention anyone. The scan fails closed: if it cannot run, nothing is committed. Once a log's redacted copy is committed, close-out deletes the raw host log; if redaction failed or the scan flagged it, the raw log is kept (and the keep logged) for a human to inspect.
@@ -382,7 +392,7 @@ Thirteen points in the first sketch would break or loop in practice; each has a 
 
 ## Rollout
 
-Start on one repo with the local executor and a human approval gate; humans merge until Gate 2, then the merger takes over. Widen only when the numbers say the loop is trustworthy.
+Start on one repo (albertcbrown/ard itself, dogfooding; decided, #6) with the local executor and a human approval gate; humans merge until Gate 2, then the merger takes over. Widen only when the numbers say the loop is trustworthy.
 
 ```mermaid
 flowchart LR
@@ -390,6 +400,8 @@ flowchart LR
     P1 -->|"Gate 2: 10 merged PRs, failures under 10%"| P2["Phase 2: All roles<br/>all triage roles<br/>all four reviewers<br/>review fix rounds<br/>merger loop<br/>remaining scanners"]
     P2 -->|"Gate 3: 50% merged with no human code edits"| P3["Phase 3: Scale<br/>k8s executor<br/>second repo<br/>shared roles repo<br/>budgets and digest"]
 ```
+
+**Where it runs (decided, #5).** `ard serve` runs first on the owner's Mac with the local executor, including the Gate 1 soak week. In Phase 3 it moves to the "spark" Kubernetes cluster with the k8s executor and a Lease lock in place of the `flock`.
 
 Phase 0 runs in dry-run: the controller logs every issue, label and commit it would make, and does none of them. Dry-run keeps its own state (`~/.ard/state-dryrun/`) and records would-file findings under synthetic negative issue numbers, so repeated scans don't re-propose them and `max_open` is exercised. The ledger is `effects.jsonl` in that directory: every intended effect (issue, label, comment, commit, push, merge) is appended as one JSON line, and Gate 1 counts duplicate issues there by repeated `<!-- ard:fp=... -->` markers in `CreateIssue` bodies. Gate 1 needs only the deterministic path (CLI, config, GitHub client, effects, state, labels, executor, committer, controller, pool and the cve and stale scanners); the agent adapter, close-out and redaction are built during the soak week.
 
@@ -403,15 +415,6 @@ Phase 0 runs in dry-run: the controller logs every issue, label and commit it wo
 
 ## Open questions
 
-Nine decisions shape Phase 0. Each is a GitHub issue with a plan and a recommendation; tick it here when the issue closes.
+Phase 0 decisions #1 to #6, #8 and #9 are recorded above. One remains open.
 
-- [ ] **`.ard/` on `main` or an orphan `ard-state` branch?** ([#1](https://github.com/albertcbrown/ard/issues/1)) Recommended: `main` with `[skip ci]`. Committed logs on PR branches rule out an orphan branch, because a PR cannot carry files from unrelated history.
-- [ ] **Which human issues enter the pipeline?** ([#2](https://github.com/albertcbrown/ard/issues/2)) Recommended: only those a maintainer labels `ard:pending`, with the labeler's access checked and a re-gate on body edits.
-- [ ] **Which paths always need a human before merge?** ([#3](https://github.com/albertcbrown/ard/issues/3)) Recommended: a built-in floor (`.github/`, `.ard/config.yaml`, role directories) plus `merge.protected_paths` globs; CODEOWNERS is not parsed.
-- [ ] **Log size in git.** ([#4](https://github.com/albertcbrown/ard/issues/4)) Recommended: 1 MiB per run as head 32 KiB plus tail, no gzip; revisit Git LFS only if `.git` passes ~500 MB.
-- [ ] **Where does the controller run?** ([#5](https://github.com/albertcbrown/ard/issues/5)) Recommended: the always-on OVH VPS with the local executor; the OVH k3s host in Phase 3.
-- [ ] **Which repo goes first?** ([#6](https://github.com/albertcbrown/ard/issues/6)) Recommended: ard itself, once its own `make test` is meaningful.
 - [ ] **Headless modes for `kimi` and `dsh-tui`.** ([#7](https://github.com/albertcbrown/ard/issues/7)) Found: both are installed and run headless with `-p`; neither has a turn cap, and `kimi` reports no cost. Remaining: record exit codes and output samples for the adapters.
-- [ ] **Models and budget per role.** ([#8](https://github.com/albertcbrown/ard/issues/8)) Recommended: Opus for lead, architect and security review; Sonnet for workers and other reviewers; Haiku for cheap scanner work. Budgets are calibrated from measured cost per job in Phase 1.
-- [ ] **Implementation language for `ard`.** ([#9](https://github.com/albertcbrown/ard/issues/9)) Recommended: Go, one static binary with SQLite; CI already passes on Go 1.27.
-
