@@ -119,8 +119,9 @@ const (
 	OutcomeScanFailed   = "scan_failed"
 	OutcomeTimeout      = "timeout"
 	OutcomeError        = "error"
-	// OutcomeNoSlot and OutcomeSkipped are reported but never recorded.
+	// OutcomeNoSlot, OutcomePaused and OutcomeSkipped are reported but never recorded.
 	OutcomeNoSlot  = "dropped_no_slot"
+	OutcomePaused  = "paused"
 	OutcomeSkipped = "skipped"
 )
 

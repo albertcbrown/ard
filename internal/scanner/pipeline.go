@@ -11,6 +11,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/state/scannerdb"
@@ -26,8 +27,11 @@ type Pipeline struct {
 	Engine    Engine
 	Stores    Stores
 	Repo      string // "owner/name"; lets reconcile notice a transferred issue
-	Log       *slog.Logger
-	Now       func() time.Time
+	// Paused reports whether the controller is paused. It is re-checked after
+	// a scan, which can outlast a pause: a paused run files and closes nothing.
+	Paused func(ctx context.Context) bool
+	Log    *slog.Logger
+	Now    func() time.Time
 }
 
 // RunResult summarises one run.
@@ -169,7 +173,10 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 		log.Warn("scanner.duplicate_fingerprint", "fingerprint", fp)
 	}
 	if err := p.apply(ctx, store, &snap, rec.Batch); err != nil {
+		// A stale snapshot would re-file what reconcile was adopting.
 		errs = append(errs, err)
+		record(OutcomeError)
+		return res, errors.Join(errs...)
 	}
 
 	// Backpressure comes after reconcile, which only refreshes local state, and
@@ -212,7 +219,19 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 			return res, errors.Join(errs...)
 		}
 	}
+	if p.Paused != nil && p.Paused(ctx) {
+		log.Info("scanner.paused_after_scan")
+		res.Outcome = OutcomePaused
+		return res, errors.Join(errs...)
+	}
 	res.Found = len(sr.Findings)
+	if dry {
+		if err := p.adoptLedger(ctx, store, &snap, role, start, sr.SHA); err != nil {
+			errs = append(errs, err)
+			record(OutcomeError)
+			return res, errors.Join(errs...)
+		}
+	}
 
 	// 4. Diff.
 	plan := Diff(snap, sr.Findings, role.Autoclose, start)
@@ -604,6 +623,13 @@ func (e *execution) join(op GroupOp) bool {
 	if len(items) == 0 {
 		return true
 	}
+	if k := fitItems(cur.Body, cur.Parsed.Lines, e.role.Name, op.Group, items); k < len(items) {
+		if k == 0 {
+			return false
+		}
+		e.res.OverBudget += len(items) - k // unrecorded: filed next run
+		items = items[:k]
+	}
 	parsed := cur.Parsed
 	parsed.Lines = append(append([]Line(nil), parsed.Lines...), linesOf(items)...)
 	body := RenderBody(cur.Body, parsed, findingsOf(items))
@@ -640,6 +666,11 @@ func (e *execution) create(op GroupOp) {
 		return
 	}
 	e.budget--
+	if k := fitItems("", nil, e.role.Name, op.Group, op.Items); k < len(op.Items) {
+		k = max(k, 1)
+		e.res.OverBudget += len(op.Items) - k
+		op.Items = op.Items[:k]
+	}
 	parsed := Parsed{Scanner: e.role.Name, Group: op.Group, HasSpan: true, Lines: linesOf(op.Items)}
 	title := IssueTitle(e.role.Name, op.Group, e.p.groupSize(e.role), op.Items)
 	body := RenderBody("", parsed, findingsOf(op.Items))
@@ -661,14 +692,15 @@ func (e *execution) create(op GroupOp) {
 }
 
 // issueMD queues .ard/<n>/issue.md to the committer and waits for the push.
-// A dry-run issue has a negative number, which the committer's guard rejects,
-// so only the would-be file is logged. A committer failure does not undo the
+// Under dry-run nothing is committed (a dry-run issue has a negative number,
+// which the committer's guard rejects, and a join to a real issue would be
+// re-proposed on every run), so only the would-be file is logged. A committer failure does not undo the
 // issue: its body already carries the checklist.
 func (e *execution) issueMD(n int, title string, p Parsed, add []Finding, prevBody string) {
 	md := RenderIssueMD(e.role.Name, e.sha, n, title, p, add, prevBody)
 	path := fmt.Sprintf(".ard/%d/issue.md", n)
-	if n < 0 {
-		e.log.Info("scanner.issue_md", "path", path, "bytes", len(md), "dry_run", true)
+	if n < 0 || e.dry {
+		e.log.Info("scanner.issue_md", "path", path, "bytes", len(md), "dry_run", e.dry)
 		return
 	}
 	_, err := e.p.Committer.Commit(e.ctx, committer.Request{
@@ -698,4 +730,69 @@ func (e *execution) touchSeen(plan Plan) {
 	if len(rows) > 0 {
 		e.save(Batch{PutFindings: rows})
 	}
+}
+
+// ledgerIssues is implemented by the dry-run effect layer, which records
+// every would-be issue in its ledger.
+type ledgerIssues interface {
+	Issues() ([]effects.DryIssue, error)
+}
+
+// adoptLedger is reconcile for dry-run. Synthetic issues are not on GitHub, so
+// a crash or failed save between a synthetic CreateIssue and recording its
+// rows would re-file the finding on the next run, and Gate 1 counts exactly
+// that duplicate in the ledger. Rows are adopted from the ledger's CreateIssue
+// records for this scanner that are negative, not closed later, and not
+// already in the database.
+func (p *Pipeline) adoptLedger(ctx context.Context, store Store, snap *Snapshot, role config.Role, now time.Time, sha string) error {
+	li, ok := p.Effects.(ledgerIssues)
+	if !ok {
+		return nil
+	}
+	issues, err := li.Issues()
+	if err != nil {
+		return fmt.Errorf("read dry-run ledger: %w", err)
+	}
+	var rows []Row
+	for _, is := range issues {
+		if is.Closed || is.Number >= 0 || !hasLabel(is.Labels, labels.Scanner(role.Name)) {
+			continue
+		}
+		parsed := ParseBody(is.Body)
+		for _, l := range parsed.Lines {
+			if _, has := snap.Rows[l.Fingerprint]; has {
+				continue
+			}
+			r := Row{
+				Fingerprint: l.Fingerprint, Issue: is.Number, Status: StatusOpen, Severity: string(l.Severity),
+				Group: parsed.Group, FirstSeen: now, LastSeen: now, LastSHA: sha,
+			}
+			if l.Checked {
+				r.Status = StatusGone
+			}
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	p.log().Info("scanner.adopt_ledger", "scanner", role.Name, "rows", len(rows))
+	return p.apply(ctx, store, snap, Batch{PutFindings: rows})
+}
+
+// fitItems returns how many of items can be added to a body without it
+// passing MaxBodyChars. The checklist is never trimmed, so the lines are what
+// is bounded: a group_size past what fits would make the create or update
+// fail on every run. Details are trimmed by RenderBody and are not counted.
+func fitItems(prevBody string, existing []Line, scanner, group string, items []Item) int {
+	size := len(RenderBody(prevBody, Parsed{Scanner: scanner, Group: group, Lines: existing}, nil))
+	n := 0
+	for _, it := range items {
+		size += len(FormatLine(lineFor(it))) + 1
+		if size > MaxBodyChars {
+			break
+		}
+		n++
+	}
+	return n
 }

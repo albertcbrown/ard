@@ -31,7 +31,8 @@ type DryRun struct {
 	mu     sync.Mutex
 	next   int // next synthetic number, always negative
 	ledger ledgerFile
-	broken error // set when the ledger could not be repaired; fails every later effect
+	path   string // ledger file, "" when in memory
+	broken error  // set when the ledger could not be repaired; fails every later effect
 }
 
 var _ Effects = (*DryRun)(nil)
@@ -50,7 +51,7 @@ func NewDryRun(o DryRunOptions) (*DryRun, error) {
 		if err != nil {
 			return nil, err
 		}
-		d.ledger, d.next = f, next
+		d.ledger, d.next, d.path = f, next, o.LedgerPath
 	}
 	return d, nil
 }
