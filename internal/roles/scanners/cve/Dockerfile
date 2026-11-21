@@ -43,6 +43,7 @@ FROM ${GO_IMAGE}
 COPY --from=govulncheck /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=tools /out/osv-scanner /usr/local/bin/osv-scanner
 COPY --from=tools /out/jq /usr/local/bin/jq
-# Lets a newer `go` directive in a scanned module download its toolchain;
-# scanner jobs have network egress.
-ENV GOTOOLCHAIN=auto
+# A module whose go directive is newer than this image fails govulncheck (fail
+# closed): the executor's /tmp is noexec, so a downloaded toolchain could not
+# run. Bump the base image instead.
+ENV GOTOOLCHAIN=local
