@@ -6,10 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSecretsVariants(t *testing.T) {
@@ -172,4 +175,41 @@ func TestOverlappingSecretsRedactedAsOneSpan(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestSelfOverlappingSecretBoundedAndLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("large input skipped in -short mode")
+	}
+	s := NewSecrets()
+	_ = s.Add("X", "xxxxxxxx")
+	in := io.LimitReader(repeatReader('x'), 64<<20)
+	var out bytes.Buffer
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+	counts, n, err := s.stream(context.Background(), in, &out, defaultChunk)
+	el := time.Since(start)
+	runtime.ReadMemStats(&after)
+	if err != nil || n != 64<<20 {
+		t.Fatalf("n = %d err = %v", n, err)
+	}
+	if out.String() != "[REDACTED:X]" || counts["X"] != 1 {
+		t.Fatalf("out = %.60q counts = %v", out.String(), counts)
+	}
+	d := after.TotalAlloc - before.TotalAlloc
+	t.Logf("elapsed %v, TotalAlloc %d KiB", el, d>>10)
+	if d > 16<<20 || (el > 5*time.Second && !raceEnabled) {
+		t.Errorf("alloc %d MiB, time %v", d>>20, el)
+	}
+}
+
+type repeatReader byte
+
+func (r repeatReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(r)
+	}
+	return len(p), nil
 }
