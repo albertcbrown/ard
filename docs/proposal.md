@@ -73,7 +73,7 @@ stateDiagram-v2
 | `ard:<stage>:<role>:running` | Controller on claim | An executor holds the job |
 | `ard:<stage>:<role>:done` | Controller on close-out | Finished; output is in `.ard/<issue#>/` |
 | `ard:review:<role>:changes` | Controller on close-out | Reviewer found blocking issues; sends the PR back to the worker |
-| `ard:executor:failed` | Reaper | Job died or ran over time; resources kept 24 h |
+| `ard:executor:failed` | Reaper or close-out | Job died or ran over time; resources kept 24 h |
 | `ard:needs-human` | Controller, from the agent's result | Agent reported it is blocked; automation stops |
 | `ard:needs-approval` | Merger | PR touches a protected path; merges after a human approves |
 | `ard:hold` | Human | Controller ignores this issue or PR entirely |
@@ -115,6 +115,7 @@ status: done          # done | blocked | needs-human (both of the last two add a
 attempt: 1
 next: [review:security-review, review:eng-review]   # optional requests
 worker: engineer      # lead only: which worker role implements the plan
+verdict: approve      # reviewers only: approve | changes (required when status is done)
 ---
 Short summary of what was done.
 
@@ -227,7 +228,9 @@ Local-executor details: the job worktree is always detached at a SHA resolved fr
 
 **Agent CLIs plug in through adapters.** Each adapter turns (prompt file, context paths, budget) into a command line and parses the exit code and, where the CLI reports them, turns and cost. For Claude Code that is `claude -p --output-format=stream-json --verbose --bare --restricted --strict-mcp-config --permission-mode=dontAsk --tools=… --allowed-tools=… --model <model> --max-budget-usd <max_budget_usd> --append-system-prompt-file <role prompt> -- <message>` (`--verbose` is required by `stream-json` in print mode). The user message holds only fixed text and the paths of the untrusted input files. The installed CLI accepts an undocumented `--max-turns`; ard does not rely on it, so a per-job dollar cap and the executor's hard timeout bound each run. Agents run with an empty per-job CLI config dir and API-key auth only (`ANTHROPIC_API_KEY`, passed by the executor and never visible to the adapter). `kimi` and `dsh-tui` both run headless with `-p`; neither has a turn cap and `kimi` reports no cost, so turns and cost are optional in the adapter result. `config.yaml` names the default CLI and any per-role override, so a role can move between CLIs without touching its prompt.
 
-**The agent's contract is narrow.** It may edit files in its worktree and must write `.ard/<issue#>/<role>.md` with a `status`. Exit 0 without that file counts as a failure, not a success.
+**The agent's contract is narrow.** It may edit files in its worktree and must write `.ard/<issue#>/<role>.md` with a `status`. Exit 0 without that file counts as a failure, not a success, and so does a malformed file. A non-zero exit fails the job even when a role file exists, and a failed job commits only its redacted log, never a partial `plan.md`.
+
+**Close-out is resumable.** The controller (`internal/closeout`) decides the outcome from the role file, stages the redacted files, then commits, requests the `next` labels, posts one summary comment (tagged `<!-- ard:closeout job=<id> -->` so a replay never posts twice) and finally swaps `:running` for `:done`, `:changes`, `ard:needs-human` or `ard:executor:failed`. It records its phase in local state after each step. `serve` resumes unfinished close-outs at startup, and the Reaper resumes, rather than fails, a job whose close-out has started. `next` entries are applied only for roles that exist; a `review:<role>` the lead requests is applied when the worker opens the PR, not at triage close-out. Only changed files under `.ard/<issue#>/` are committed, so a newer `issue.md` on `main` is never overwritten.
 
 **The Reaper runs every minute and decides failure, not the agent.** It marks a job failed when the process or pod is gone without a close-out, the deadline passes (it kills the job first), the heartbeat goes quiet for 10 minutes, or the job is `:running` with no record in local state (a controller restart). Then it:
 
@@ -276,7 +279,7 @@ Reviewers run like workers against a PR instead of an issue: they read the chang
 | license-review | a manifest or lockfile changes | go-licenses or scancode | a license outside the allowlist |
 | product-manager-review | the issue had PM triage, or UI paths change | none | acceptance criteria not met |
 
-Every directory under `.ard/reviewers/` reviews every PR unless `config.yaml` gives it a `when:` rule (paths, or a triage role that ran). The lead can request extra reviewers through `next`.
+Every directory under `.ard/reviewers/` reviews every PR unless `config.yaml` gives it a `when:` rule (paths, or a triage role that ran). The lead can request extra reviewers through `next`; they are recorded in the triage job's close-out record in local state (`closeout.Deferred` reads them) and the worker loop adds the `ard:review:<role>` labels to the PR when it opens it.
 
 ## Merger loop
 
@@ -350,7 +353,7 @@ Agents with push access read text that strangers can write, so the controls sit 
 - **Untrusted text is passed as data.** Issue bodies, comments and PR text go to the agent as files the prompt labels as untrusted input, never spliced into the instructions.
 - **Role files are human-owned.** The diff guard rejects any worker change to `.ard/config.yaml` or a role directory, and the merger treats those paths as protected, so no agent can rewrite its own prompt.
 - **Merges are gated.** The merger lands a PR only when every review passed and required checks are green on an up-to-date branch; protected paths wait for a human approval. The App may bypass the approval rule, never required checks.
-- **Committed output is redacted.** Close-out strips known secret values from each log and runs a secret scan before it is committed. A hit keeps that log host-local and adds `ard:needs-human`. The scan fails closed: if it cannot run, nothing is committed.
+- **Committed output is redacted.** Close-out strips known secret values from each log and every `.ard/<issue#>/` file it commits, and runs a secret scan before anything is committed or posted. A hit on a log keeps that log host-local and adds `ard:needs-human`; a hit on a role file or `plan.md` commits only the clean log and adds `ard:needs-human`. Comments never quote text the scan flagged, never forge an `ard:` marker and never `@`-mention anyone. The scan fails closed: if it cannot run, nothing is committed. Once a log's redacted copy is committed, close-out deletes the raw host log; if redaction failed or the scan flagged it, the raw log is kept (and the keep logged) for a human to inspect.
 - **Budgets.** Every job has a dollar cap (`max_budget_usd`) and a hard timeout; every role and the whole repo have a daily dollar cap. At the cap the controller stops claiming and posts once on the status issue.
 - **Concurrency.** `max_pods` (default 3) caps every job together, and at most one triage job runs per issue at a time, because triage roles share `plan.md`.
 - **Kill switch.** `paused: true` in `config.yaml`, or `ard:pause` on the pinned status issue, stops new claims, scanner runs (filing and autoclose), stale closes and merges. The delay is at most one loop interval plus 10% jitter, since the check runs before every claiming tick; a tick already running may finish its claims. The gate answers one controller-wide question and has no per-kind checks, so every loop that writes (scanner filing and autoclose, stale closes, merges, claims), except the Reaper and in-flight close-outs, must report `Claims() == true` and is skipped while paused. Running jobs, in-flight close-outs and the Reaper continue. The check fails closed: an unreadable status issue, or a config that fails to reload, counts as paused. Config is re-read from the local checkout before each tick. `ard serve` finds the status issue by the title `ard status`, the `<!-- ard:status -->` body marker and the App as author; it creates and pins the issue at startup if missing. A second `ard serve` on the same repo exits with an error: the leader lock is an `flock` on `~/.ard/locks/<owner>-<repo>.lock` (local filesystem only), shared by live and dry-run.
