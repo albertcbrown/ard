@@ -1,0 +1,93 @@
+#!/bin/sh
+# cve scanner: known vulnerabilities in dependencies, as ard findings.
+#
+# Contract (see docs/proposal.md, Scanners):
+#   - cwd is a read-only worktree of origin/main. This script finds its siblings
+#     (merge.jq, no-govulncheck) from its own path, never from cwd or /role.
+#   - Prints findings as JSON lines on stdout, and only as its very last action:
+#     any failure exits non-zero with nothing on stdout, and the controller
+#     discards the run. It never prints partial results.
+#   - Writes nothing outside a mktemp dir that is removed on exit. HOME may be
+#     unwritable. It holds no GitHub token and needs none.
+#   - stderr is the job log: tool versions, one line per Go module, final count.
+#
+# Tools (pinned in ./Dockerfile): osv-scanner v2 for every ecosystem, govulncheck
+# for Go reachability, jq for merge.jq. Exit codes: 0 success, 1 failure,
+# 2 a required tool is missing.
+#
+# Opt-out: a human-owned file named "no-govulncheck" next to this script skips
+# govulncheck for repos that cannot build; reachability is then "unknown".
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+die() { echo "cve: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || { echo "cve: $1 not found" >&2; exit 2; }; }
+
+need osv-scanner
+need jq
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ard-cve.XXXXXX")
+# Go's module cache is read-only on disk; make it removable first.
+cleanup() { chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Keep Go's caches off an unwritable HOME and out of the worktree.
+for v in GOCACHE GOMODCACHE GOPATH; do
+  eval "cur=\${$v:-}"
+  if [ -z "$cur" ] || [ ! -w "$cur" ]; then
+    eval "$v=\$tmp/$v; export $v"
+  fi
+done
+GOWORK=off GOFLAGS=-mod=readonly
+export GOWORK GOFLAGS
+
+echo "osv-scanner: $(osv-scanner --version 2>&1 | head -n 1 || true)" >&2
+
+# 1. osv-scanner. 0 = clean, 1 = vulnerabilities found, 128 = nothing to scan.
+# Its own Go call analysis is off so govulncheck is the one reachability source.
+rc=0
+osv-scanner scan source --recursive --no-call-analysis=all --format json . \
+  > "$tmp/osv.json" || rc=$?
+case $rc in
+  0|1) ;;
+  128) echo "cve: osv-scanner found no packages" >&2
+       echo '{"results":[]}' > "$tmp/osv.json" ;;
+  *) die "osv-scanner failed with exit status $rc" ;;
+esac
+
+# 2. govulncheck, once per Go module. Fail closed: a module that cannot be
+# analysed fails the run, because silently degrading would flap severity.
+: > "$tmp/govuln.jsonl"
+find . \( -name .git -o -name vendor -o -name node_modules -o -name testdata \) -prune \
+  -o -name go.mod -type f -print > "$tmp/mods.raw" || die "find failed"
+LC_ALL=C sort "$tmp/mods.raw" > "$tmp/mods.txt"
+
+if [ -s "$tmp/mods.txt" ]; then
+  if [ -e "$dir/no-govulncheck" ]; then
+    echo "govulncheck: skipped (no-govulncheck present); reachability unknown" >&2
+  else
+    need go
+    need govulncheck
+    echo "govulncheck: $(govulncheck -version 2>&1 | head -n 1 || true)" >&2
+    while IFS= read -r f; do
+      manifest=${f#./}
+      mdir=$(dirname -- "$manifest")
+      echo "govulncheck: $manifest" >&2
+      (cd -- "$mdir" && govulncheck -format json ./...) > "$tmp/gv.raw" \
+        || die "govulncheck failed in $manifest"
+      jq -c -s --arg manifest "$manifest" '{manifest: $manifest, messages: .}' \
+        "$tmp/gv.raw" >> "$tmp/govuln.jsonl" || die "cannot parse govulncheck output for $manifest"
+    done < "$tmp/mods.txt"
+  fi
+fi
+
+# 3. Merge into findings.
+root=$(pwd -P)
+jq -c -n --arg root "$root" --slurpfile osv "$tmp/osv.json" --slurpfile gv "$tmp/govuln.jsonl" \
+  -f "$dir/merge.jq" > "$tmp/out.jsonl" || die "merge failed"
+
+echo "cve: $(wc -l < "$tmp/out.jsonl" | tr -d ' ') finding(s)" >&2
+cat "$tmp/out.jsonl"

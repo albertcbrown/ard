@@ -1,0 +1,212 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "@ROOT@/testdata/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "t",
+            "version": "1.0.0",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-xxxx-xxxx-xxxx",
+              "aliases": [],
+              "summary": "x",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "t"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "2.0.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-xxxx-xxxx-xxxx"
+              ],
+              "aliases": [],
+              "max_severity": "7.1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": {
+        "path": "@ROOT@/vendor/x/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "v",
+            "version": "1.0.0",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-xxxx-xxxx-xxxx",
+              "aliases": [],
+              "summary": "x",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "v"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "2.0.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-xxxx-xxxx-xxxx"
+              ],
+              "aliases": [],
+              "max_severity": "7.1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": {
+        "path": "@ROOT@/sub/node_modules/y/package-lock.json",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "n",
+            "version": "1.0.0",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-xxxx-xxxx-xxxx",
+              "aliases": [],
+              "summary": "x",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "n"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "2.0.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-xxxx-xxxx-xxxx"
+              ],
+              "aliases": [],
+              "max_severity": "7.1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": {
+        "path": "@ROOT@/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "kept",
+            "version": "1.0.0",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-xxxx-xxxx-xxxx",
+              "aliases": [],
+              "summary": "x",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "kept"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "2.0.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-xxxx-xxxx-xxxx"
+              ],
+              "aliases": [],
+              "max_severity": "7.1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

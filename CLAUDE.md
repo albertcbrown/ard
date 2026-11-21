@@ -31,6 +31,7 @@ Packages are created as their issues land; keep this list current.
 ```
 cmd/ard/            CLI entry point; wire a new subcommand by adding one line to handlers()
 internal/cli/       cobra command tree, global flags, slog logging; Handlers is the plug-in point
+internal/roles/     starter role directories embedded for ard init (scanners/cve)
 internal/           controller, config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```

@@ -1,0 +1,62 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "@ROOT@/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "example.com/m",
+            "version": "1.0.0",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GO-2024-0009",
+              "aliases": [
+                "CVE-2024-0009",
+                "CVE-2024-0002"
+              ],
+              "summary": "cve only",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "example.com/m"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "1.2.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GO-2024-0009"
+              ],
+              "aliases": [
+                "CVE-2024-0009",
+                "CVE-2024-0002"
+              ],
+              "max_severity": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
