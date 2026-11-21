@@ -1,0 +1,47 @@
+ard:approved	bfdadc	ard: human go-ahead for the worker to start
+ard:executor:failed	b60205	ard: job died or ran over time; remove to retry
+ard:hold	f9a03f	ard: controller ignores this issue or PR
+ard:keep	cfd3d7	ard: keep failed-job resources past 24 h
+ard:needs-approval	fbca04	ard: PR touches a protected path; merges after human approval
+ard:needs-human	d93f0b	ard: blocked; automation stops until a human acts
+ard:pause	5c5c5c	ard: on the status issue, stops all new claims
+ard:pending	ededed	ard: ready for triage (the lead's request)
+ard:review:eng-review	0e8a16	ard: review eng-review requested
+ard:review:eng-review:changes	e4a11b	ard: review eng-review requested changes
+ard:review:eng-review:done	c2e0c6	ard: review eng-review done
+ard:review:eng-review:running	0a5c10	ard: review eng-review running
+ard:review:license-review	0e8a16	ard: review license-review requested
+ard:review:license-review:changes	e4a11b	ard: review license-review requested changes
+ard:review:license-review:done	c2e0c6	ard: review license-review done
+ard:review:license-review:running	0a5c10	ard: review license-review running
+ard:review:pm-review	0e8a16	ard: review pm-review requested
+ard:review:pm-review:changes	e4a11b	ard: review pm-review requested changes
+ard:review:pm-review:done	c2e0c6	ard: review pm-review done
+ard:review:pm-review:running	0a5c10	ard: review pm-review running
+ard:review:security-review	0e8a16	ard: review security-review requested
+ard:review:security-review:changes	e4a11b	ard: review security-review requested changes
+ard:review:security-review:done	c2e0c6	ard: review security-review done
+ard:review:security-review:running	0a5c10	ard: review security-review running
+ard:scanner:cve	006b75	ard: filed by scanner cve
+ard:scanner:lint	006b75	ard: filed by scanner lint
+ard:tests:failed	e99695	ard: worker could not get tests green
+ard:triage:architect	1d76db	ard: triage architect requested
+ard:triage:architect:done	c5def5	ard: triage architect done
+ard:triage:architect:running	0b4a8f	ard: triage architect running
+ard:triage:designer	1d76db	ard: triage designer requested
+ard:triage:designer:done	c5def5	ard: triage designer done
+ard:triage:designer:running	0b4a8f	ard: triage designer running
+ard:triage:documentation-planner	1d76db	ard: triage documentation-planner requested
+ard:triage:documentation-planner:done	c5def5	ard: triage documentation-planner done
+ard:triage:documentation-planner:running	0b4a8f	ard: triage documentation-planner running
+ard:triage:engineer	1d76db	ard: triage engineer requested
+ard:triage:engineer:done	c5def5	ard: triage engineer done
+ard:triage:engineer:running	0b4a8f	ard: triage engineer running
+ard:triage:lead:done	c5def5	ard: triage lead done
+ard:triage:lead:running	0b4a8f	ard: triage lead running
+ard:triage:product-manager	1d76db	ard: triage product-manager requested
+ard:triage:product-manager:done	c5def5	ard: triage product-manager done
+ard:triage:product-manager:running	0b4a8f	ard: triage product-manager running
+ard:worker:engineer	5319e7	ard: worker engineer requested
+ard:worker:engineer:done	d4c5f9	ard: worker engineer done
+ard:worker:engineer:running	3b0f9e	ard: worker engineer running
