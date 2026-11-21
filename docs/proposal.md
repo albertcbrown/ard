@@ -415,6 +415,6 @@ Phase 0 runs in dry-run: the controller logs every issue, label and commit it wo
 
 ## Open questions
 
-Phase 0 decisions #1 to #6, #8 and #9 are recorded above. One remains open.
+All Phase 0 decisions (#1 to #9) are recorded above.
 
-- [ ] **Headless modes for `kimi` and `dsh-tui`.** ([#7](https://github.com/albertcbrown/ard/issues/7)) Found: both are installed and run headless with `-p`; neither has a turn cap, and `kimi` reports no cost. Remaining: record exit codes and output samples for the adapters.
+- [x] **Headless modes for `kimi` and `dsh-tui`.** ([#7](https://github.com/albertcbrown/ard/issues/7)) Decided: support `kimi`, defer `dsh-tui`. `kimi -p "<prompt>" --output-format stream-json` runs headless with stdin closed. It has no permission mode, so it runs in Docker only. Its turn cap is the `KIMI_LOOP_MAX_STEPS_PER_TURN` env var, and it reports no cost or tokens, so the adapter treats both as optional. `dsh-tui` waits for a validated engine and headless credentials. Adapter work is #56.
