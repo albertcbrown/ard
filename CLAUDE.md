@@ -39,6 +39,7 @@ internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds
 internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
+internal/roles/     starter role directories embedded for ard init (scanners/cve)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/           controller, config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth

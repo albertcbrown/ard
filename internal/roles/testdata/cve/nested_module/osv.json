@@ -1,0 +1,120 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "@ROOT@/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "golang.org/x/text",
+            "version": "0.3.7",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-69ch-w2m2-3vjp",
+              "aliases": [
+                "CVE-2022-32149",
+                "GO-2022-1059"
+              ],
+              "summary": "Denial of service via crafted Accept-Language header in golang.org/x/text",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.3.8"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-69ch-w2m2-3vjp",
+                "GO-2022-1059"
+              ],
+              "aliases": [
+                "CVE-2022-32149"
+              ],
+              "max_severity": "7.5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": {
+        "path": "@ROOT@/sub/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "golang.org/x/text",
+            "version": "0.3.7",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-69ch-w2m2-3vjp",
+              "aliases": [
+                "CVE-2022-32149",
+                "GO-2022-1059"
+              ],
+              "summary": "Denial of service via crafted Accept-Language header in golang.org/x/text",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/text"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.3.8"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-69ch-w2m2-3vjp",
+                "GO-2022-1059"
+              ],
+              "aliases": [
+                "CVE-2022-32149"
+              ],
+              "max_severity": "7.5"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -167,6 +167,8 @@ A scanner is a directory, `.ard/scanners/<name>/`, holding either an executable 
 | architecture | LLM against ADRs and the sidecar spec repo | 3 d | 1 | no |
 | stale | built-in | 24 h | none | none |
 
+**The cve scanner** (`scanners/cve`, a `sh` script plus one `jq` program, no build step) merges osv-scanner (all ecosystems) and govulncheck (Go reachability). Its fingerprint is `osv:<advisory>:<manifest>:<package>`, where the advisory is the smallest `GHSA-` id of the vulnerability, else the smallest `CVE-` id, else the smallest id, so one vulnerability reported under `GO-`, `GHSA-` and `CVE-` ids is one finding. Severity is `critical|high|medium|low`, from the CVSS score, else the database severity, else `medium`; a vulnerability govulncheck finds unreachable is capped at `medium`. Manifests under `testdata/`, `vendor/` and `node_modules/` are skipped. It fails closed: if a Go module cannot be analysed, the run fails and files nothing, unless a human adds a `no-govulncheck` file to the role directory, which skips govulncheck and reports reachability as unknown. The Dependabot alerts API is not wrapped, because a scanner holds no token.
+
 Intervals and group sizes are starting values to tune, not measurements.
 
 ## Triage loop

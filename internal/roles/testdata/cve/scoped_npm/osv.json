@@ -1,0 +1,56 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "@ROOT@/web/package-lock.json",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "@babel/core",
+            "version": "7.0.0",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-sc0p-ed00-npm0",
+              "aliases": [],
+              "summary": "scoped",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "npm",
+                    "name": "@babel/core"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "7.1.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-sc0p-ed00-npm0"
+              ],
+              "aliases": [],
+              "max_severity": "7.5"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

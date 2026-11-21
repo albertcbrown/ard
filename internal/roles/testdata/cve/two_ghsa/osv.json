@@ -1,0 +1,62 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "@ROOT@/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "example.com/m",
+            "version": "1.0.0",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-bbbb-2222-bbbb",
+              "aliases": [
+                "GHSA-aaaa-1111-aaaa",
+                "CVE-2024-0001"
+              ],
+              "summary": "two ghsa",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "example.com/m"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "1.2.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-bbbb-2222-bbbb"
+              ],
+              "aliases": [
+                "GHSA-aaaa-1111-aaaa",
+                "CVE-2024-0001"
+              ],
+              "max_severity": "5.0"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
