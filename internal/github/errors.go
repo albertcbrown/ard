@@ -20,6 +20,10 @@ var (
 	ErrNotMergeable  = errors.New("github: not mergeable")
 	ErrReadOnly      = errors.New("github: client is read-only (dry-run)")
 	ErrNoCredentials = errors.New("github: no credentials configured")
+
+	// ErrRepoMoved means the configured repository redirects: it was renamed or
+	// transferred. Not transient; point ard at the new name.
+	ErrRepoMoved = errors.New("github: repository has moved")
 )
 
 // RateLimitError means GitHub throttled us and the wait was exhausted or
@@ -49,6 +53,23 @@ type HTTPError struct {
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("github: HTTP %d: %s", e.Status, e.Message)
 }
+
+// RepoMovedError reports a moved repository. To is zero when GitHub's redirect
+// could not be resolved to a name.
+type RepoMovedError struct {
+	Repo     Repo   // as configured
+	To       Repo   // new owner/name, if resolved
+	Location string // redirect target path, query stripped
+}
+
+func (e *RepoMovedError) Error() string {
+	if e.To != (Repo{}) {
+		return fmt.Sprintf("github: repository %s has moved to %s; point ard at the new name", e.Repo, e.To)
+	}
+	return fmt.Sprintf("github: repository %s has moved (redirects to %s); point ard at its new name", e.Repo, e.Location)
+}
+
+func (e *RepoMovedError) Unwrap() error { return ErrRepoMoved }
 
 // IsTransient reports whether retrying later may succeed: rate limits, 5xx
 // responses and network timeouts. Cancellation is never transient.
@@ -80,7 +101,7 @@ func statusError(status int, body []byte) error {
 		return fmt.Errorf("%w: %s", ErrUnauthorized, msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("%w: %s", ErrForbidden, msg)
-	case http.StatusNotFound:
+	case http.StatusNotFound, http.StatusGone:
 		return fmt.Errorf("%w: %s", ErrNotFound, msg)
 	}
 	return &HTTPError{Status: status, Message: msg}
