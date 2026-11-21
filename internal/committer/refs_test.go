@@ -37,7 +37,16 @@ func TestNeutraliseRefs(t *testing.T) {
 		{"pull url http", "Fixes http://github.com/o/r/pull/12", "Fixes o/r issue 12", true, false},
 		{"ghes url", "Closes https://ghe.example.com/o/r/issues/5", "Closes o/r issue 5", true, false},
 		{"angle url", "Closes <https://github.com/o/r/issues/12>", "Closes <o/r issue 12>", true, false},
-		{"markdown link", "Fixes [#12](https://github.com/o/r/issues/12)", "Fixes [issue 12](https://github.com/o/r/issues/12)", true, false},
+		{"markdown link", "Fixes [#12](https://github.com/o/r/issues/12)", "Fixes [issue 12](o/r issue 12)", true, false},
+		{"markdown link text", "Fixes [link](https://github.com/o/r/issues/12)", "Fixes [link](o/r issue 12)", true, false},
+		{"nbsp", "Fixes\u00a0#12", "Fixes\u00a0issue 12", true, false},
+		{"zwsp", "Fixes\u200b#12", "Fixes\u200bissue 12", true, false},
+		{"word joiner", "Fixes\u2060#12", "Fixes\u2060issue 12", true, false},
+		{"ideographic space", "Fixes\u3000#12", "Fixes\u3000issue 12", true, false},
+		{"www url", "Fixes www.github.com/o/r/issues/12", "Fixes o/r issue 12", true, false},
+		{"schemeless url", "Fixes github.com/o/r/issues/12", "Fixes o/r issue 12", true, false},
+		{"fullwidth hash", "Fixes \uff03" + "12", "Fixes issue 12", true, false},
+		{"fullwidth cross", "Fixes o/r\uff03" + "12", "Fixes o/r issue 12", true, false},
 		{"emphasis", "Fixes **#12**", "Fixes **issue 12**", true, false},
 		{"list", "Fixes #12, #13 and #14", "Fixes issue 12, issue 13 and issue 14", true, false},
 		{"two keywords", "fixes #1; closes #2", "fixes issue 1; closes issue 2", true, false},
@@ -58,7 +67,7 @@ func TestNeutraliseRefs(t *testing.T) {
 			if rewritten := got != tc.in; rewritten != (tc.closes || tc.conservative) {
 				t.Errorf("rewritten = %v, but GitHub closes = %v (conservative %v)", rewritten, tc.closes, tc.conservative)
 			}
-			if tc.closes && (strings.Contains(got, "#") && !strings.Contains(tc.in, "](")) {
+			if tc.closes && strings.Contains(got, "#") {
 				t.Errorf("linkable reference remains in %q", got)
 			}
 			if again := NeutraliseRefs(got); again != got {
