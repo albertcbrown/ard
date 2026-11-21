@@ -574,3 +574,29 @@ func TestPrepareCleanupConcurrent(t *testing.T) {
 		t.Errorf("%d worktrees left, want 1", n)
 	}
 }
+
+func TestCleanupRunsWhenCancelled(t *testing.T) {
+	f := newFixture(t)
+	h, err := f.l.Prepare(context.Background(), executor.Job{ID: "CANCEL1", Repo: "o/r", Issue: 9, Stage: "worker", Role: "dev",
+		RepoDir: f.repo, Ref: "HEAD", RoleDir: f.roleDir, Timeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := f.l.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(h.Worktree); !os.IsNotExist(err) {
+		t.Errorf("worktree still there: %v", err)
+	}
+	n := 0
+	for _, l := range strings.Split(sh(t, f.repo, "git", "worktree", "list", "--porcelain"), "\n") {
+		if strings.HasPrefix(l, "worktree ") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d worktrees, want 1", n)
+	}
+}
