@@ -24,6 +24,7 @@ type Options struct {
 	DockerBin    string        // default "docker"
 	PathEnv      string        // PATH for host jobs; default the controller's PATH
 	AllowEnv     []string      // model-key names; default ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+	AllowFixed   []string      // names allowed in Command.Fixed; default CLAUDE_CONFIG_DIR, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
 	KillGrace    time.Duration // default 10s
 	BuildTimeout time.Duration // default 15m
 	Now          func() time.Time
@@ -34,7 +35,7 @@ type Options struct {
 type Local struct {
 	root, dockerBin, pathEnv string
 	git                      gitRunner
-	allowEnv                 map[string]bool
+	allowEnv, allowFixed     map[string]bool
 	grace, buildTimeout      time.Duration
 	now                      func() time.Time
 	log                      *slog.Logger
@@ -76,6 +77,9 @@ func New(o Options) (*Local, error) {
 	if o.AllowEnv == nil {
 		o.AllowEnv = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
 	}
+	if o.AllowFixed == nil {
+		o.AllowFixed = []string{"CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"}
+	}
 	if o.KillGrace <= 0 {
 		o.KillGrace = 10 * time.Second
 	}
@@ -92,7 +96,11 @@ func New(o Options) (*Local, error) {
 	for _, n := range o.AllowEnv {
 		allow[n] = true
 	}
-	return &Local{root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
+	fixed := map[string]bool{}
+	for _, n := range o.AllowFixed {
+		fixed[n] = true
+	}
+	return &Local{allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
 		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log,
 		tracks: map[string]*track{}}, nil
 }
