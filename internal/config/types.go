@@ -125,7 +125,7 @@ type Resolved struct {
 	Paused          bool
 
 	Intervals      Intervals
-	ProtectedPaths []string // merge.protected_paths, normalised
+	ProtectedPaths []string // merge.protected_paths: "dir/" = directory prefix, else doublestar glob; see Protected
 	Stale          Stale
 	Sidecars       map[string]Sidecar
 	Roles          []Role // sorted by Kind then Name

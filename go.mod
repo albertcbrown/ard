@@ -3,6 +3,7 @@ module github.com/albertcbrown/ard
 go 1.27
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
 	github.com/google/go-github/v88 v88.0.0
 	github.com/oklog/ulid/v2 v2.1.2
