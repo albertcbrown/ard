@@ -52,7 +52,7 @@ func (g *Git) Commit(ctx context.Context, op CommitOp) (string, error) {
 
 // Push pushes op.Ref. Typed errors: ErrNonFastForward, ErrStaleLease.
 func (g *Git) Push(ctx context.Context, op PushOp) error {
-	args := []string{"push", "--porcelain"}
+	args := []string{"-c", "core.hooksPath=/dev/null", "push", "--porcelain"}
 	if op.ForceWithLease != "" {
 		dst := op.Ref
 		if i := strings.LastIndex(dst, ":"); i >= 0 {

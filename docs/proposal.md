@@ -126,7 +126,7 @@ Short summary of what was done.
 
 **One writer location per issue directory at a time.** Until the worker branch exists, `main` owns `.ard/<issue#>/`; scanners and triage write there. Once the branch is cut, the branch owns it; workers and reviewers commit to the PR, and a scanner with new findings comments on the issue instead. This keeps the PR merge free of conflicts in `.ard/`.
 
-**One committer for main.** Close-outs never push. They hand a file set to the controller's committer, which keeps its own clean worktree of `main`, commits as `ard[bot]` with `ard(<stage>:<role>): #<issue> <summary> [skip ci]`, rebases, pushes, and retries up to 3 times. It refuses any change outside the `.ard/<issue#>/` directories. Because the bot must bypass branch protection on `main`, a CI check also alerts if a bot commit on `main` touches any other path.
+**One committer for main.** Close-outs never push. They hand a file set to the controller's committer, which keeps its own clean worktree of `main`, commits as `ard[bot]` with `ard(<stage>:<role>): #<issue> <summary> [skip ci]`, re-applies its snapshot on the fetched head, pushes with a lease, and retries up to 3 times (re-applying the whole-file snapshot is the rebase; if upstream changed one of its paths the request fails with a conflict instead of overwriting). A replay of an unchanged tree is a no-op that returns the upstream head. It refuses any change outside the `.ard/<issue#>/` directories. Because the bot must bypass branch protection on `main`, a CI check also alerts if a bot commit on `main` touches any other path.
 
 **Directories outlive their issues as the audit trail.** A monthly janitor deletes `.ard/<issue#>/` for issues closed more than 90 days ago; git history keeps them.
 

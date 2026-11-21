@@ -55,7 +55,10 @@ func (e *runError) Unwrap() error { return e.err }
 func (g *Git) run(ctx context.Context, dir string, env []string, stdin string, secrets []string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, g.bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C",
+		// A human's global config (insteadOf, signing, hooks) must not change
+		// what the controller does.
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	cmd.Env = append(cmd.Env, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
