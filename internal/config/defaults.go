@@ -5,6 +5,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Built-in defaults, applied before the global config and per-role
@@ -17,6 +18,7 @@ const (
 	defaultBudgetUSDPerDay = 50.0
 	defaultMaxBudgetUSD    = 5.0
 	defaultGlobalMaxOpen   = 30
+	defaultIntakeMode      = IntakeLabel
 
 	defaultIntervalScanners  = Duration(4 * time.Hour)
 	defaultIntervalTriage    = Duration(15 * time.Minute)
@@ -61,6 +63,7 @@ func newResolved(repoRoot string) *Resolved {
 			Reviewers: defaultIntervalReviewers,
 			Merger:    defaultIntervalMerger,
 		},
+		Intake: Intake{Mode: defaultIntakeMode},
 		Stale: Stale{
 			InactiveFor: defaultStaleInactiveFor,
 			SuppressFor: defaultStaleSuppressFor,
@@ -143,6 +146,8 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		}
 	}
 
+	errs = append(errs, applyIntake(res, raw.intake, cfgPath)...)
+
 	if raw.haveMerge {
 		for i, p := range raw.protectedPaths {
 			norm, err := normaliseProtectedPath(p)
@@ -179,6 +184,43 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		res.Sidecars[name] = entry
 	}
 
+	return errs
+}
+
+// maxLabelRunes is GitHub's label name limit.
+const maxLabelRunes = 50
+
+// applyIntake merges and validates the intake setting. The prefix check uses
+// the bare "ard:" prefix (invariant 4); the default label itself is spelled
+// by package labels, so an unset Label stays "".
+func applyIntake(res *Resolved, raw rawIntake, cfgPath string) Errors {
+	var errs Errors
+	if raw.mode != nil {
+		res.Intake.Mode = IntakeMode(*raw.mode)
+	}
+	if m := res.Intake.Mode; m != IntakeAll && m != IntakeLabel {
+		errs = append(errs, &Error{File: cfgPath, Key: "intake.mode", Msg: fmt.Sprintf("must be %q or %q, got %q", IntakeAll, IntakeLabel, string(m))})
+	}
+	if raw.label == nil {
+		return errs
+	}
+	label := *raw.label
+	res.Intake.Label = label
+	bad := func(msg string) {
+		errs = append(errs, &Error{File: cfgPath, Key: "intake.label", Msg: msg})
+	}
+	switch {
+	case res.Intake.Mode == IntakeAll:
+		bad("only valid when intake.mode is label")
+	case label == "" || strings.TrimSpace(label) != label:
+		bad("must not be empty or have leading or trailing whitespace")
+	case !strings.HasPrefix(label, "ard:") || label == "ard:":
+		bad(fmt.Sprintf("must start with %q and name a label, got %q", "ard:", label))
+	case utf8.RuneCountInString(label) > maxLabelRunes:
+		bad(fmt.Sprintf("must be at most %d characters (GitHub's limit)", maxLabelRunes))
+	case strings.Contains(label, ","):
+		bad("must not contain a comma")
+	}
 	return errs
 }
 

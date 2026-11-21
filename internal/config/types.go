@@ -50,6 +50,23 @@ type Stale struct {
 	SuppressFor Duration // default 90d
 }
 
+// IntakeMode says which human-filed issues may enter triage (decided, #2).
+type IntakeMode string
+
+const (
+	IntakeAll   IntakeMode = "all"   // every human-filed issue
+	IntakeLabel IntakeMode = "label" // only issues an authorised actor labelled
+)
+
+// Intake is the intake setting. Label is "" unless config.yaml sets it; ""
+// means the lead's request label (ard:pending), which this package cannot
+// spell because package labels owns every ard: literal. Consumers resolve it
+// with intake.Label; nothing else reads Label directly.
+type Intake struct {
+	Mode  IntakeMode // default IntakeLabel
+	Label string     // label mode only; "" = the lead's request label
+}
+
 // Sidecar is a read-only companion repo mounted into a role's job.
 type Sidecar struct {
 	Repo string // "owner/name"
@@ -131,6 +148,7 @@ type Resolved struct {
 	Paused          bool
 
 	Intervals      Intervals
+	Intake         Intake
 	ProtectedPaths []string // merge.protected_paths: "dir/" = directory prefix, else doublestar glob; see Protected
 	Stale          Stale
 	Sidecars       map[string]Sidecar

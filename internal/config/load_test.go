@@ -88,6 +88,9 @@ func TestLoadDefaults(t *testing.T) {
 	if res.Intervals != wantIntervals {
 		t.Errorf("Intervals = %+v, want %+v", res.Intervals, wantIntervals)
 	}
+	if res.Intake != (Intake{Mode: IntakeLabel}) {
+		t.Errorf("Intake = %+v, want label mode with no label override", res.Intake)
+	}
 	if res.Stale.InactiveFor != Duration(30*24*time.Hour) || res.Stale.SuppressFor != Duration(90*24*time.Hour) {
 		t.Errorf("Stale = %+v", res.Stale)
 	}
@@ -153,6 +156,30 @@ func TestLoadDefaults(t *testing.T) {
 	sec, _ := res.Role(KindReviewer, "security-review")
 	if sec.When != nil {
 		t.Errorf("security-review when = %+v, want nil (always)", sec.When)
+	}
+}
+
+func TestLoadIntake(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want Intake
+	}{
+		{"all", "intake: {mode: all}\n", Intake{Mode: IntakeAll}},
+		{"label, no label key", "intake: {mode: label}\n", Intake{Mode: IntakeLabel}},
+		{"label kept verbatim", "intake: {mode: label, label: ard:pending}\n", Intake{Mode: IntakeLabel, Label: "ard:pending"}},
+		{"custom label", "intake: {mode: label, label: ard:intake}\n", Intake{Mode: IntakeLabel, Label: "ard:intake"}},
+		{"label alone defaults the mode", "intake: {label: ard:intake}\n", Intake{Mode: IntakeLabel, Label: "ard:intake"}},
+		{"null", "intake:\n", Intake{Mode: IntakeLabel}},
+		{"empty mapping", "intake: {}\n", Intake{Mode: IntakeLabel}},
+		{"absent", "paused: false\n", Intake{Mode: IntakeLabel}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mustLoad(t, withConfig(t, tt.yaml)).Intake; got != tt.want {
+				t.Errorf("Intake = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -273,6 +300,66 @@ func TestLoadErrors(t *testing.T) {
 				{".ard/config.yaml", "intervals.workers", `invalid duration "1x"`},
 				{".ard/config.yaml", "intervals.reviewers", `invalid duration "0s"`},
 			},
+		},
+		{
+			name: "intake is a scalar",
+			yaml: "intake: all\n",
+			want: []wantErr{{".ard/config.yaml", "intake", "must be a mapping with mode (all or label)"}},
+		},
+		{
+			name: "intake unknown mode",
+			yaml: "intake: {mode: some}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.mode", "must be \"all\" or \"label\", got \"some\""}},
+		},
+		{
+			name: "intake numeric mode",
+			yaml: "intake: {mode: 3}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.mode", "got \"3\""}},
+		},
+		{
+			name: "intake mode wrong type",
+			yaml: "intake: {mode: [a]}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.mode", "cannot unmarshal"}},
+		},
+		{
+			name: "intake label with all mode",
+			yaml: "intake: {mode: all, label: \"ard:x\"}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.label", "only valid when intake.mode is label"}},
+		},
+		{
+			name: "intake empty label",
+			yaml: "intake: {label: \"\"}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.label", "must not be empty"}},
+		},
+		{
+			name: "intake label whitespace",
+			yaml: "intake: {label: \" ard:x\"}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.label", "must not be empty or have leading or trailing whitespace"}},
+		},
+		{
+			name: "intake label without prefix",
+			yaml: "intake: {label: pending}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.label", "must start with \"ard:\""}},
+		},
+		{
+			name: "intake label prefix only",
+			yaml: "intake: {label: \"ard:\"}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.label", "must start with \"ard:\""}},
+		},
+		{
+			name: "intake label too long",
+			yaml: "intake: {label: \"ard:" + strings.Repeat("é", 47) + "\"}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.label", "at most 50 characters"}},
+		},
+		{
+			name: "intake label comma",
+			yaml: "intake: {label: \"ard:a,b\"}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.label", "must not contain a comma"}},
+		},
+		{
+			name: "intake unknown key",
+			yaml: "intake: {nope: 1}\n",
+			want: []wantErr{{".ard/config.yaml", "intake.nope", "unknown key (want mode or label)"}},
 		},
 		{
 			name: "bad executor",
