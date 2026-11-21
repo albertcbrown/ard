@@ -379,7 +379,7 @@ flowchart LR
     P2 -->|"Gate 3: 50% merged with no human code edits"| P3["Phase 3: Scale<br/>k8s executor<br/>second repo<br/>shared roles repo<br/>budgets and digest"]
 ```
 
-Phase 0 runs in dry-run: the controller logs every issue, label and commit it would make, and does none of them. Dry-run keeps its own state (`~/.ard/state-dryrun/`) and records would-file findings under synthetic negative issue numbers, so repeated scans don't re-propose them and `max_open` is exercised. Gate 1 counts duplicates from that ledger. Gate 1 needs only the deterministic path (CLI, config, GitHub client, effects, state, labels, executor, committer, controller, pool and the cve and stale scanners); the agent adapter, close-out and redaction are built during the soak week.
+Phase 0 runs in dry-run: the controller logs every issue, label and commit it would make, and does none of them. Dry-run keeps its own state (`~/.ard/state-dryrun/`) and records would-file findings under synthetic negative issue numbers, so repeated scans don't re-propose them and `max_open` is exercised. The ledger is `effects.jsonl` in that directory: every intended effect (issue, label, comment, commit, push, merge) is appended as one JSON line, and Gate 1 counts duplicate issues there by repeated `<!-- ard:fp=... -->` markers in `CreateIssue` bodies. Gate 1 needs only the deterministic path (CLI, config, GitHub client, effects, state, labels, executor, committer, controller, pool and the cve and stale scanners); the agent adapter, close-out and redaction are built during the soak week.
 
 | Metric | Proposed target |
 | --- | --- |
