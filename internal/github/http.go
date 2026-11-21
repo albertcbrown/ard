@@ -239,12 +239,17 @@ func (h *HTTP) classifyRedirect(ctx context.Context, n int, rerr *gogh.Redirecti
 		if errors.As(err, &probe) {
 			return h.movedError(ctx, probe)
 		}
-		return mapErr("check repository", err)
+		pe := mapErr("check repository", err)
+		if errors.Is(pe, ErrNotFound) {
+			// An outage or permission glitch must not read as "issue gone".
+			return &HTTPError{Status: rerr.StatusCode, Message: "unexpected redirect to " + redirectPath(rerr.Location) + "; repository check: " + pe.Error()}
+		}
+		return pe
 	}
 	if n > 0 {
 		base, _ := url.Parse(h.baseURL)
 		id, to, ok := redirectTarget(rerr.Location, base)
-		other := (id != 0 && id != repo.GetID()) ||
+		other := (id != 0 && repo.GetID() != 0 && id != repo.GetID()) ||
 			(to != (Repo{}) && !strings.EqualFold(to.String(), h.repo.String()))
 		if ok && other {
 			return fmt.Errorf("%w: issue moved to another repository (%s)", ErrNotFound, redirectPath(rerr.Location))
@@ -299,7 +304,11 @@ func redirectTarget(loc, base *url.URL) (repoID int64, repo Repo, ok bool) {
 		}
 		return id, Repo{}, true
 	case len(parts) >= 3 && parts[0] == "repos" && parts[1] != "" && parts[2] != "":
-		return 0, Repo{Owner: parts[1], Name: parts[2]}, true
+		r, err := ParseRepo(parts[1] + "/" + parts[2])
+		if err != nil {
+			return 0, Repo{}, false
+		}
+		return 0, r, true
 	}
 	return 0, Repo{}, false
 }

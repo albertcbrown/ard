@@ -710,6 +710,21 @@ func TestRedirects(t *testing.T) {
 			},
 			"GET /repos/o/r": repoOK,
 		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 9); return err }, httpErr(301), nil},
+		{"probe 404", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repositories/42/issues/3"),
+			"GET /repos/o/r":          respond(404, `{"message":"Not Found"}`),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, func(e error) bool {
+			var he *HTTPError
+			return !errors.Is(e, ErrNotFound) && errors.As(e, &he)
+		}, []string{"/repositories/42/issues/3"}},
+		{"probe without id", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repositories/42/issues/3"),
+			"GET /repos/o/r":          respond(200, `{"full_name":"o/r"}`),
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, httpErr(301), []string{"/repositories/42/issues/3"}},
+		{"invalid repo name in Location", map[string]http.HandlerFunc{
+			"GET /repos/o/r/issues/3": redirect(t, 301, "/repos/x/%20/issues/3"),
+			"GET /repos/o/r":          repoOK,
+		}, func(h *HTTP) error { _, err := h.GetIssue(ctx, 3); return err }, httpErr(301), nil},
 		{"probe 500", map[string]http.HandlerFunc{
 			"GET /repos/o/r/issues/3": redirect(t, 301, "/repositories/42/issues/3"),
 			"GET /repos/o/r":          respond(500, `{"message":"oops"}`),
