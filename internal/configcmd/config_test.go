@@ -12,6 +12,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
 
@@ -61,8 +62,37 @@ func TestCheckValid(t *testing.T) {
 			t.Errorf("stdout missing %q:\n%s", want, out)
 		}
 	}
-	if stderr.Len() != 0 {
-		t.Errorf("stderr = %q, want empty", stderr.String())
+	// The fixture's triage role has no Dockerfile, so the host warning is the
+	// only thing on stderr.
+	if want := local.HostRoleText("triage", "lead"); stderr.String() != want {
+		t.Errorf("stderr = %q, want only the host warning %q", stderr.String(), want)
+	}
+}
+
+func TestCheckWarnsHostUntrusted(t *testing.T) {
+	count := func(root string) (string, string) {
+		e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+		var logs bytes.Buffer
+		e.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
+			t.Fatalf("Check: %v", err)
+		}
+		return logs.String(), stderr.String()
+	}
+	root := writeRepo(t, "max_pods: 5\n")
+	logs, errs := count(root)
+	if n := strings.Count(logs, "executor.host_untrusted"); n != 1 || !strings.Contains(logs, "role=lead") || strings.Contains(logs, "role=cve") {
+		t.Errorf("logs = %q, want one warning for lead only", logs)
+	}
+	if n := strings.Count(errs, "WARNING:"); n != 1 {
+		t.Errorf("stderr = %q, want one warning", errs)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".ard", "triage", "lead", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logs, errs = count(root)
+	if strings.Contains(logs, "executor.host_untrusted") || errs != "" {
+		t.Errorf("Dockerfile role warned: logs %q stderr %q", logs, errs)
 	}
 }
 

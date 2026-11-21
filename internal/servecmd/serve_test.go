@@ -162,6 +162,12 @@ func (s *syncBuf) Write(p []byte) (int, error) {
 	return s.b.Write(p)
 }
 
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 func (s *syncBuf) has(sub string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -568,5 +574,35 @@ func TestServeInvalidRemoteFails(t *testing.T) {
 	}
 	if err := serve(context.Background(), env(t, "o/r", cfg, true), b); err == nil {
 		t.Fatal("want an error for an empty remote URL")
+	}
+}
+
+func TestServeWarnsHostUntrustedOncePerRole(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	bare, clone := gittest.NewRemote(t)
+	_ = bare
+	if err := os.MkdirAll(filepath.Join(clone, ".ard", "triage", "lead"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, ".ard", "triage", "lead", "prompt.txt"), []byte("route"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pushConfig(t, clone, "max_pods: 2\n")
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	buf, errBuf := &syncBuf{}, &syncBuf{}
+	e := env(t, "o/r", filepath.Join(clone, ".ard", "config.yaml"), true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	e.Stderr = errBuf
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(buf.String(), "executor.host_untrusted"); n != 1 {
+		t.Errorf("host_untrusted logged %d times, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "role=lead") {
+		t.Errorf("warning does not name the role:\n%s", buf.String())
+	}
+	if n := strings.Count(errBuf.String(), `role "lead"`); n != 1 {
+		t.Errorf("stderr has the warning %d times, want 1:\n%s", n, errBuf.String())
 	}
 }

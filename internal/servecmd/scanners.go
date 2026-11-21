@@ -8,7 +8,6 @@ import (
 
 	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/controller"
-	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/repopath"
@@ -20,7 +19,7 @@ import (
 // startup hook has run, and a repo with no scanners never needs a committer.
 func scannerLoop(w *wiring) controller.Loop {
 	g := gitx.New("")
-	ex, err := local.New(local.Options{Root: filepath.Join(w.Home, ".ard"), Log: w.Log})
+	ex, err := w.newExecutor()
 	if err != nil {
 		w.Log.Error("scanner.executor_unavailable", "error", err)
 		return nil

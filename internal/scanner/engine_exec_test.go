@@ -159,6 +159,9 @@ func TestExecEngineScan(t *testing.T) {
 		j.RoleDir != "/snap/abc/.ard/scanners/cve" || j.Dockerfile != "/snap/abc/.ard/scanners/cve/Dockerfile" || j.Timeout != 30*time.Minute || j.RepoDir != "/repo" {
 		t.Errorf("job = %+v", j)
 	}
+	if !j.TrustedInput {
+		t.Errorf("a deterministic scan must be marked TrustedInput: %+v", j)
+	}
 	if f.ex.cmd.Path != "/role/scan" || len(f.ex.cmd.Env) != 0 || len(f.ex.cmd.Fixed) != 0 {
 		t.Errorf("command = %+v: no env of any kind may reach a scan", f.ex.cmd)
 	}

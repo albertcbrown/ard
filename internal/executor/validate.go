@@ -35,6 +35,8 @@ func (j Job) Validate() error {
 		return bad("role %q", j.Role)
 	case j.Ref == "" || strings.HasPrefix(j.Ref, "-"):
 		return bad("ref %q", j.Ref)
+	case j.TrustedInput && j.Stage != "scanner":
+		return bad("trusted input is only valid for a scanner job")
 	case j.Timeout <= 0:
 		return bad("timeout %s", j.Timeout)
 	}

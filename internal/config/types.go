@@ -104,6 +104,12 @@ type Role struct {
 	BudgetUSDPerDay float64
 }
 
+// ReadsUntrusted reports whether the role's job reads untrusted input (issue
+// bodies, comments, PR text, diffs): every triage, worker and reviewer role,
+// and an LLM scanner. Only a deterministic scanner (an executable `scan`)
+// does not. A scanner without ScanPath counts as LLM, so the check fails closed.
+func (r Role) ReadsUntrusted() bool { return r.Kind != KindScanner || r.ScanPath == "" }
+
 // Resolved is the fully merged configuration: built-in defaults, then the
 // global config, then per-role overrides.
 type Resolved struct {
@@ -139,6 +145,23 @@ func (r *Resolved) Role(k Kind, name string) (Role, bool) {
 		}
 	}
 	return Role{}, false
+}
+
+// HostUntrusted returns the roles that read untrusted input and have no
+// Dockerfile, so the local executor runs them as a host subprocess under the
+// controller's uid. Canonical order (kind, then name). It returns nothing
+// when Executor is "k8s", where host mode does not exist.
+func (r *Resolved) HostUntrusted() []Role {
+	if r.Executor == "k8s" {
+		return nil
+	}
+	var out []Role
+	for _, role := range r.Roles {
+		if role.ReadsUntrusted() && role.Dockerfile == "" {
+			out = append(out, role)
+		}
+	}
+	return out
 }
 
 // RolesOf returns every role of the given kind, in canonical order.
