@@ -122,22 +122,6 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 	if err != nil {
 		return RunResult{Outcome: OutcomeError}, err
 	}
-	synth := snap.syntheticOpen()
-	if !dry {
-		synth = nil
-	}
-	openCount := len(open) + len(synth)
-	globalOpen := openCount
-	for _, other := range cfg.RolesOf(config.KindScanner) {
-		if other.Name == role.Name {
-			continue
-		}
-		is, err := p.openIssues(ctx, other.Name)
-		if err != nil {
-			return RunResult{Outcome: OutcomeError}, err
-		}
-		globalOpen += len(is)
-	}
 	var errs []error
 	views := make([]IssueView, 0, len(open))
 	openNums := map[int]bool{}
@@ -179,6 +163,30 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 		return res, errors.Join(errs...)
 	}
 
+	if dry {
+		// Before any counting: an adopted synthetic issue counts towards max_open.
+		if err := p.adoptLedger(ctx, store, &snap, role, start, ""); err != nil {
+			errs = append(errs, err)
+			record(OutcomeError)
+			return res, errors.Join(errs...)
+		}
+	}
+	synth := snap.syntheticOpen()
+	if !dry {
+		synth = nil
+	}
+	openCount := len(open) + len(synth)
+	globalOpen := openCount
+	for _, other := range cfg.RolesOf(config.KindScanner) {
+		if other.Name == role.Name {
+			continue
+		}
+		is, err := p.openIssues(ctx, other.Name)
+		if err != nil {
+			return RunResult{Outcome: OutcomeError}, err
+		}
+		globalOpen += len(is)
+	}
 	// Backpressure comes after reconcile, which only refreshes local state, and
 	// before the scanner starts: a dropped run keeps the database current.
 	switch {
@@ -225,13 +233,6 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 		return res, errors.Join(errs...)
 	}
 	res.Found = len(sr.Findings)
-	if dry {
-		if err := p.adoptLedger(ctx, store, &snap, role, start, sr.SHA); err != nil {
-			errs = append(errs, err)
-			record(OutcomeError)
-			return res, errors.Join(errs...)
-		}
-	}
 
 	// 4. Diff.
 	plan := Diff(snap, sr.Findings, role.Autoclose, start)

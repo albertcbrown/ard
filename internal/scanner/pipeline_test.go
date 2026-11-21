@@ -738,3 +738,26 @@ func TestRunCapsAChecklistThatWouldOverflowTheBody(t *testing.T) {
 		}
 	}
 }
+
+func TestDryRunAdoptedLedgerIssueCountsTowardsMaxOpen(t *testing.T) {
+	h := newHarness(t, func(r *config.Role) { r.MaxOpen = 2 })
+	dry, err := effects.NewDryRun(effects.DryRunOptions{Log: quiet, LedgerPath: filepath.Join(t.TempDir(), "effects.jsonl")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dry.Close()
+	h.p.Effects = dry
+	// One real open issue, and one synthetic issue in the ledger whose rows
+	// were never saved (a crash): max_open - 1 real plus one synthetic.
+	h.gh.SeedIssue(github.Issue{Title: "real", Labels: []string{labels.Scanner("cve")}})
+	body := RenderBody("", Parsed{Scanner: "cve", Lines: []Line{{Title: "t", Fingerprint: "ghost", Severity: SevLow}}}, nil)
+	if _, err := dry.CreateIssue(h.ctx, github.NewIssue{Title: "t", Body: body, Labels: []string{labels.Scanner("cve"), labels.Pending}}); err != nil {
+		t.Fatal(err)
+	}
+	h.eng.set(fnd("a", SevHigh))
+	res := h.mustRun()
+	if res.Outcome != OutcomeBackpressure || h.eng.calls != 0 || res.Created != 0 {
+		t.Fatalf("res = %+v, scans %d: the adopted issue must count towards max_open", res, h.eng.calls)
+	}
+	h.wantRow("ghost", -1, StatusOpen)
+}
