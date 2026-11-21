@@ -191,7 +191,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 				if err != nil {
 					return fmt.Errorf("identify github user: %w", err)
 				}
-				n, err := controller.EnsureStatusIssue(ctx, d.Reader, d.Effects, id.Login, log)
+				n, err := controller.EnsureStatusIssue(ctx, d.Reader, d.Effects, store, id.Login, log)
 				if err != nil {
 					return err
 				}

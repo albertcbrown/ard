@@ -204,6 +204,73 @@ func TestServeDryRunWritesNothing(t *testing.T) {
 	if w := f.Writes(); len(w) != 0 {
 		t.Errorf("dry-run reached the fake: %v", w)
 	}
+	home := os.Getenv("HOME")
+	dir, err := state.Dir(filepath.Join(home, ".ard"), "o/r", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := state.Open(context.Background(), dir, state.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.Meta(context.Background(), controller.StatusIssueKey); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("dry-run cached a status issue: %v", err)
+	}
+	live, _ := state.Dir(filepath.Join(home, ".ard"), "o/r", false)
+	if _, err := os.Stat(filepath.Join(live, state.ControllerFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("dry-run created the live controller db: %v", err)
+	}
+}
+
+// lagSearch simulates a search index that has not caught up with creates.
+type lagSearch struct{ github.Reader }
+
+func (lagSearch) SearchIssues(context.Context, string, github.SearchOpts) ([]github.Issue, error) {
+	return nil, nil
+}
+
+func TestServeLiveRestartReusesStatusIssue(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	cfg := repoDir(t)
+	inner := fakeBuilder(f, false)
+	b := func(ctx context.Context, e *cli.Env, r github.Repo, tok string) (deps, error) {
+		d, err := inner(ctx, e, r, tok)
+		d.Reader = lagSearch{d.Reader}
+		return d, err
+	}
+	if err := runUntil(t, env(t, "o/r", cfg, false), b, func() bool { return f.Pinned(1) }); err != nil {
+		t.Fatal(err)
+	}
+	buf := &syncBuf{}
+	e := env(t, "o/r", cfg, false)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e, b, func() bool { return buf.has("name=status-issue") }); err != nil {
+		t.Fatal(err)
+	}
+	creates := 0
+	for _, w := range f.Writes() {
+		if w.Method == "CreateIssue" {
+			creates++
+		}
+	}
+	if creates != 1 {
+		t.Errorf("CreateIssue called %d times, want 1", creates)
+	}
+	dir, err := state.Dir(filepath.Join(home, ".ard"), "o/r", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := state.Open(context.Background(), dir, state.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if v, err := st.Meta(context.Background(), controller.StatusIssueKey); err != nil || v != "1" {
+		t.Errorf("cached status issue = %q, %v; want 1", v, err)
+	}
 }
 
 func TestServeLiveCreatesStatusIssue(t *testing.T) {
