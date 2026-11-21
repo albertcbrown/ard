@@ -345,3 +345,28 @@ func TestEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenCloseouts(t *testing.T) {
+	ctx := tctx(t)
+	s := newStore(t)
+	mk := func(role, phase string) string {
+		j, err := s.CreateJob(ctx, NewJob{Stage: "triage", Role: role, Issue: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if phase != "-" {
+			if err := s.SetCloseout(ctx, j.ID, phase, json.RawMessage(`{}`)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return j.ID
+	}
+	mk("none", "-")
+	mk("empty", "")
+	b := mk("prep", "prepared")
+	mk("closed", "closed")
+	got, err := s.OpenCloseouts(ctx)
+	if err != nil || len(got) != 1 || got[0].ID != b {
+		t.Fatalf("OpenCloseouts = %+v, %v", got, err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -151,4 +152,42 @@ func (g *Git) ChangedPaths(ctx context.Context, dir, from, to string, paths ...s
 		}
 	}
 	return ps, nil
+}
+
+// PathChange is one path whose worktree content differs from a base commit.
+type PathChange struct {
+	Path    string // slash-separated, relative to the worktree root
+	Deleted bool   // present at base, absent in the worktree
+}
+
+// ChangedSince lists the paths under pathspecs (literal, directory prefixes
+// allowed) that differ between commit base and the working tree: tracked
+// changes, deletions and untracked files that are not ignored. It is
+// read-only and sees uncommitted work, which is all an agent leaves behind.
+func (g *Git) ChangedSince(ctx context.Context, dir, base string, paths ...string) ([]PathChange, error) {
+	args := append([]string{"--literal-pathspecs", "diff", "--name-status", "-z", "--no-renames", base, "--"}, paths...)
+	out, _, err := g.run(ctx, dir, nil, "", nil, args...)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: changed since %s: %w", base, err)
+	}
+	var cs []PathChange
+	tok := strings.Split(out, "\x00")
+	for i := 0; i+1 < len(tok); i += 2 {
+		if tok[i] == "" {
+			continue
+		}
+		cs = append(cs, PathChange{Path: tok[i+1], Deleted: tok[i][0] == 'D'})
+	}
+	args = append([]string{"--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "-z", "--"}, paths...)
+	out, _, err = g.run(ctx, dir, nil, "", nil, args...)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: untracked files: %w", err)
+	}
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			cs = append(cs, PathChange{Path: p})
+		}
+	}
+	sort.Slice(cs, func(i, j int) bool { return cs[i].Path < cs[j].Path })
+	return cs, nil
 }

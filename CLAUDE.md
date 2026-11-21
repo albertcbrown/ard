@@ -47,6 +47,7 @@ internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds
 internal/controller/ scheduler, kill switch (pause), leader lock, status issue
 internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, controller
 internal/committer/ the only commit/push path for .ard/<issue#>/ (main lane, per-branch lanes)
+internal/closeout/  job close-out: role file -> labels, comment, commits (resumable)
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
 internal/           config, github, committer, executor, agent, scanner, state, ...

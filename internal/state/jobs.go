@@ -227,6 +227,54 @@ func (s *Store) SetCloseout(ctx context.Context, id, phase string, plan json.Raw
 	return s.update(ctx, "set closeout", id, `closeout_phase = ?, closeout_plan = COALESCE(?, closeout_plan)`, phase, v)
 }
 
+// OpenCloseouts returns the jobs whose close-out has started but not finished
+// (phase set and not "closed"), oldest first. serve startup and the Reaper
+// resume them.
+func (s *Store) OpenCloseouts(ctx context.Context) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs
+		WHERE closeout_phase IS NOT NULL AND closeout_phase NOT IN ('', 'closed') ORDER BY created_at, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list open closeouts: %w", err)
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan open closeout: %w", err)
+		}
+		out = append(out, j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list open closeouts: %w", err)
+	}
+	return out, nil
+}
+
+// CloseoutsOf returns the jobs of an issue and stage that have a stored
+// close-out record, oldest first. The worker loop reads the reviewers the lead
+// deferred from them.
+func (s *Store) CloseoutsOf(ctx context.Context, issue int, stage string) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs
+		WHERE issue = ? AND stage = ? AND closeout_plan IS NOT NULL ORDER BY created_at, id`, issue, stage)
+	if err != nil {
+		return nil, fmt.Errorf("list closeouts of issue %d: %w", issue, err)
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan closeout: %w", err)
+		}
+		out = append(out, j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list closeouts of issue %d: %w", issue, err)
+	}
+	return out, nil
+}
+
 // Attempt is one execution attempt of a job.
 type Attempt struct {
 	JobID     string
