@@ -66,7 +66,7 @@ func (g *Git) run(ctx context.Context, dir string, env []string, stdin string, s
 		stderr := scrub(errb.String(), secrets...)
 		return out.String(), stderr, &runError{args: scrubArgs(args, secrets), stderr: stderr, err: err}
 	}
-	return out.String(), errb.String(), nil
+	return out.String(), scrub(errb.String(), secrets...), nil
 }
 
 func scrubArgs(args []string, secrets []string) []string {
