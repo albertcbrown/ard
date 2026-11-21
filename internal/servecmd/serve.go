@@ -12,18 +12,22 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
+	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state"
+	"github.com/albertcbrown/ard/internal/state/scannerdb"
 )
 
 // deps is what serve needs from the outside world. Tests inject fakes
@@ -31,7 +35,8 @@ import (
 type deps struct {
 	Reader  github.Reader
 	Effects effects.Effects
-	Close   func() error // optional
+	Token   gitx.TokenFunc // mints a push and fetch credential; nil in tests
+	Close   func() error   // optional
 }
 
 // builder constructs deps for repo. stateDir is where a dry-run ledger goes.
@@ -73,6 +78,8 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		return fmt.Errorf("ard serve: %w", err)
 	}
 	defer store.Close()
+	scanners := scannerdb.NewRegistry(stateDir, scannerdb.Options{})
+	defer scanners.Close()
 
 	d, err := build(ctx, e, repo, stateDir)
 	if err != nil {
@@ -84,7 +91,20 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 
 	log := e.Log
 	gate := controller.NewPauseGate(d.Reader, log)
-	w := &wiring{Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: cfg.MaxPods}
+	w := &wiring{
+		Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: cfg.MaxPods,
+		Repo: repo, Root: root, Home: home, Token: d.Token, Scanners: scanners,
+	}
+	defer w.closeAll()
+	// A scan can outlast a pause, so the scanners re-check after it. The
+	// check fails closed, like the gate's own.
+	w.Paused = func(ctx context.Context) bool {
+		c, err := config.Load(root)
+		if err != nil {
+			return true
+		}
+		return gate.Check(ctx, c).Paused
+	}
 
 	cc, err := controller.New(controller.Deps{
 		Log: log,
@@ -103,6 +123,13 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		// and #20's closeout-resume (when it lands) goes first.
 		Startup: []controller.Hook{
 			{Name: "pool-adopt", Fn: func(ctx context.Context) error {
+				var cl workspaceCleaner
+				if ex, err := local.New(local.Options{Root: filepath.Join(home, ".ard"), Log: log}); err == nil {
+					cl = ex
+				}
+				if err := failStaleScannerJobs(ctx, store, cl, log); err != nil {
+					return err
+				}
 				p, err := adoptPool(ctx, store, cfg.MaxPods, log)
 				if err != nil {
 					return err
@@ -137,12 +164,41 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 // pool-adopt startup hook builds it inside Run), so loops must call Pool()
 // at tick time, never in their constructors.
 type wiring struct {
-	Log     *slog.Logger
-	Reader  github.Reader
-	Effects effects.Effects
-	Store   *state.Store
-	MaxPods int
-	pool    atomic.Pointer[pool.Pool]
+	Log      *slog.Logger
+	Reader   github.Reader
+	Effects  effects.Effects
+	Store    *state.Store
+	MaxPods  int
+	Repo     github.Repo
+	Root     string // the local checkout holding .ard/; the object store for scans and commits
+	Home     string // the user's home directory; ~/.ard holds state, logs and worktrees
+	Token    gitx.TokenFunc
+	Scanners *scannerdb.Registry
+	Paused   func(ctx context.Context) bool // nil = never paused
+	pool     atomic.Pointer[pool.Pool]
+
+	mu      sync.Mutex
+	closers []func(context.Context)
+}
+
+// onClose registers fn to run when serve returns (committer worktrees, for
+// example). Closers run in reverse order.
+func (w *wiring) onClose(fn func(context.Context)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closers = append(w.closers, fn)
+}
+
+func (w *wiring) closeAll() {
+	w.mu.Lock()
+	cs := w.closers
+	w.closers = nil
+	w.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for i := len(cs) - 1; i >= 0; i-- {
+		cs[i](ctx)
+	}
 }
 
 // Pool returns the slot pool adopted at startup. It panics if called before
@@ -155,10 +211,16 @@ func (w *wiring) Pool() *pool.Pool {
 	return p
 }
 
-// registerLoops returns the loops to run. None yet: #23 (scanners), #25
-// (stale) and the triage, worker, reviewer, merger and Reaper loops each add
-// one constructor call here. It is a variable so tests can observe wiring.
-var registerLoops = func(*wiring) []controller.Loop { return nil }
+// registerLoops returns the loops to run: the scanners loop (#23) so far.
+// #25 (stale) and the triage, worker, reviewer, merger and Reaper loops each
+// add one constructor call here. It is a variable so tests can observe wiring.
+var registerLoops = func(w *wiring) []controller.Loop {
+	var loops []controller.Loop
+	if l := scannerLoop(w); l != nil {
+		loops = append(loops, l)
+	}
+	return loops
+}
 
 // resolveRepo parses --repo, or falls back to the origin remote of root.
 // Errors never include the remote URL, which may embed a token.
@@ -225,7 +287,7 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 	if err != nil {
 		return deps{}, fmt.Errorf("ard serve: %w", err)
 	}
-	d := deps{Reader: rd, Effects: fx}
+	d := deps{Reader: rd, Effects: fx, Token: auth.Token}
 	if c, ok := fx.(interface{ Close() error }); ok {
 		d.Close = c.Close
 	}

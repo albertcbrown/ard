@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/state/sqlitex"
@@ -102,7 +103,7 @@ func TestApply(t *testing.T) {
 	for name, bad := range map[string]Finding{
 		"empty fp":   fnd("", 1, t0),
 		"no seen":    {Fingerprint: "z", Status: StatusOpen},
-		"bad status": {Fingerprint: "z", Status: "gone", FirstSeen: t0, LastSeen: t0},
+		"bad status": {Fingerprint: "z", Status: "weird", FirstSeen: t0, LastSeen: t0},
 	} {
 		err := d.Apply(ctx, Batch{DeleteFindings: []string{"a"}, PutFindings: []Finding{fnd("new", 9, t0), bad}})
 		if err == nil {
@@ -334,5 +335,97 @@ func TestConcurrentOpenNewFile(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+func TestGoneStatusAndPipelineOutcomes(t *testing.T) {
+	ctx := tctx(t)
+	d := newDB(t)
+	g := fnd("a", 1, t0)
+	g.Status = StatusGone
+	if err := d.Apply(ctx, Batch{PutFindings: []Finding{g}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := d.Finding(ctx, "a"); err != nil || got.Status != StatusGone {
+		t.Errorf("got %+v, %v", got, err)
+	}
+	for _, o := range []string{"ok", "dropped", "dropped_backpressure", "dropped_global_cap", "scan_failed", "timeout", "error"} {
+		if _, err := d.RecordRun(ctx, Run{StartedAt: t0, Outcome: o}); err != nil {
+			t.Errorf("outcome %q rejected: %v", o, err)
+		}
+	}
+}
+
+func TestUpgradeFromV1KeepsData(t *testing.T) {
+	ctx := tctx(t)
+	dir := t.TempDir()
+	path, err := Path(dir, "cve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sqlitex.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1, err := migrationsFS.ReadFile("migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlitex.Migrate(ctx, raw, fstest.MapFS{"0001_init.sql": {Data: v1}}, t0); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO findings VALUES('a',1,'open','high','g',100,200,'sha1')`,
+		`INSERT INTO findings VALUES('b',2,'fixed','low','',100,150,NULL)`,
+		`INSERT INTO findings VALUES('c',-3,'open','low','',100,150,NULL)`,
+		`INSERT INTO suppressions VALUES('s',999,'high',4,'stale')`,
+		`INSERT INTO runs(started_at, finished_at, sha, outcome, found, filed, closed) VALUES(300,310,'sha1','dropped',7,2,1)`,
+		`INSERT INTO runs(started_at, outcome) VALUES(400,'ok')`,
+		`INSERT INTO meta VALUES('k','v')`,
+	} {
+		if _, err := raw.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	raw.Close()
+
+	d, err := Open(ctx, dir, "cve", Options{})
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	defer d.Close()
+	fs, err := d.Findings(ctx)
+	if err != nil || len(fs) != 3 {
+		t.Fatalf("findings = %+v, %v", fs, err)
+	}
+	a, _ := d.Finding(ctx, "a")
+	if a.Issue != 1 || a.Status != StatusOpen || a.Severity != "high" || a.Group != "g" || a.LastSHA != "sha1" || a.LastSeen.Unix() != 200 {
+		t.Errorf("a = %+v", a)
+	}
+	if b, _ := d.Finding(ctx, "b"); b.Status != StatusFixed || b.Issue != 2 {
+		t.Errorf("b = %+v", b)
+	}
+	if s, err := d.Suppression(ctx, "s"); err != nil || s.Issue != 4 || s.Reason != "stale" {
+		t.Errorf("s = %+v, %v", s, err)
+	}
+	if v, _ := d.Meta(ctx, "k"); v != "v" {
+		t.Errorf("meta = %q", v)
+	}
+	// The old 'dropped' run survived; the newest run is the 'ok' one.
+	if r, err := d.LastRun(ctx); err != nil || r.Outcome != "ok" {
+		t.Errorf("last run = %+v, %v", r, err)
+	}
+	var found, filed, closed int
+	if err := d.db.QueryRowContext(ctx, `SELECT found, filed, closed FROM runs WHERE outcome = 'dropped'`).Scan(&found, &filed, &closed); err != nil || found != 7 || filed != 2 || closed != 1 {
+		t.Errorf("dropped run = %d %d %d, %v", found, filed, closed, err)
+	}
+	// The widened constraints are live, and the index is back.
+	g := fnd("d", 5, t0)
+	g.Status = StatusGone
+	if err := d.Apply(ctx, Batch{PutFindings: []Finding{g}}); err != nil {
+		t.Errorf("gone rejected after upgrade: %v", err)
+	}
+	if fs, _ := d.FindingsForIssue(ctx, 1); len(fs) != 1 {
+		t.Errorf("by issue = %+v", fs)
 	}
 }

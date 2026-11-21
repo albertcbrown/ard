@@ -18,7 +18,7 @@ type Run struct {
 	Found, Filed, Closed  int
 }
 
-// RecordRun inserts r and returns its id. Outcome must be ok, dropped, timeout or error.
+// RecordRun inserts r and returns its id. Outcome must be one the runs table allows (see migration 0002).
 func (d *DB) RecordRun(ctx context.Context, r Run) (int64, error) {
 	if r.StartedAt.IsZero() {
 		return 0, fmt.Errorf("scanner %s record run: started_at is required", d.name)

@@ -8,11 +8,15 @@ import (
 	"time"
 )
 
-// Status of a finding. Fixed is a tombstone of a completed close.
+// Status of a finding. Open is listed unchecked on an open issue; Gone is
+// listed checked (a scan no longer reports it, or a human ticked it); Fixed is
+// the tombstone of a completed close. A finding whose issue was closed as not
+// planned or duplicate has no row: it lives only in the suppressions table.
 type Status string
 
 const (
 	StatusOpen  Status = "open"
+	StatusGone  Status = "gone"
 	StatusFixed Status = "fixed"
 )
 
@@ -151,7 +155,7 @@ func validateFinding(f Finding) error {
 	if f.Fingerprint == "" {
 		return errors.New("finding with empty fingerprint")
 	}
-	if f.Status != StatusOpen && f.Status != StatusFixed {
+	if f.Status != StatusOpen && f.Status != StatusGone && f.Status != StatusFixed {
 		return fmt.Errorf("finding %s: unknown status %q", f.Fingerprint, f.Status)
 	}
 	if f.FirstSeen.IsZero() || f.LastSeen.IsZero() {

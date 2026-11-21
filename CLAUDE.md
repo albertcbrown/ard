@@ -39,6 +39,8 @@ internal/executor/local/  git worktree + host subprocess or docker run, watchdog
 internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
 internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
+internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
+internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
 internal/roles/     starter role directories embedded for ard init (scanners/cve)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap

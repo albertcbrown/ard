@@ -2,6 +2,7 @@ package servecmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/state"
 )
@@ -35,8 +37,6 @@ func TestHeldJobs(t *testing.T) {
 			{ID: "b", Stage: "triage", Role: "t", Issue: 6, CreatedAt: at}},
 			[]pool.Candidate{{Class: pool.ClassWorker, Role: "w", Number: 5, Since: at},
 				{Class: pool.ClassTriage, Role: "t", Number: 6, Since: at}}, ""},
-		{"scanner uses 0", []state.Job{{ID: "a", Stage: "scanner", Role: "cve", CreatedAt: at}},
-			[]pool.Candidate{{Class: pool.ClassScanner, Role: "cve", Since: at}}, ""},
 		{"unknown stage", []state.Job{{ID: "job-x", Stage: "merge", Role: "m", Issue: 1}}, nil, "job-x"},
 		{"review without PR", []state.Job{{ID: "job-y", Stage: "review", Role: "r", Issue: 1}}, nil, "job-y"},
 	}
@@ -76,5 +76,53 @@ func TestAdoptPoolHoldsRunningJobs(t *testing.T) {
 	}
 	if _, err := adoptPool(context.Background(), lister{err: errors.New("db")}, 2, nil); err == nil {
 		t.Error("want lister error")
+	}
+}
+
+type failRecorder struct {
+	lister
+	failed   []string
+	reasons  []string
+	cleaned  []string
+	cleanErr error
+}
+
+func (f *failRecorder) Fail(_ context.Context, id, reason string, _ time.Time) error {
+	f.failed, f.reasons = append(f.failed, id), append(f.reasons, reason)
+	return nil
+}
+
+func (f *failRecorder) Cleanup(_ context.Context, h executor.Handle, _ executor.CleanupOptions) error {
+	f.cleaned = append(f.cleaned, h.JobID)
+	return f.cleanErr
+}
+
+func TestStaleScannerJobsAreFailedNotHeld(t *testing.T) {
+	at := time.Now()
+	h, _ := json.Marshal(executor.Handle{JobID: "s1", Worktree: "/w/s1"})
+	r := &failRecorder{lister: lister{jobs: []state.Job{
+		{ID: "s1", Stage: "scanner", Role: "cve", CreatedAt: at, Handle: h},
+		{ID: "s2", Stage: "scanner", Role: "lint", CreatedAt: at}, // no handle: nothing to clean
+		{ID: "w1", Stage: "worker", Role: "w", Issue: 1, CreatedAt: at},
+	}}, cleanErr: errors.New("already gone")}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := failStaleScannerJobs(context.Background(), r, r, log); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.failed) != 2 || r.failed[0] != "s1" || r.failed[1] != "s2" || r.reasons[0] != "controller restarted" {
+		t.Errorf("failed %v %v", r.failed, r.reasons)
+	}
+	if len(r.cleaned) != 1 || r.cleaned[0] != "s1" {
+		t.Errorf("cleaned %v (a cleanup error must not stop the retirement)", r.cleaned)
+	}
+	held, err := heldJobs(context.Background(), r)
+	if err != nil || len(held) != 1 || held[0].Candidate.Class != pool.ClassWorker {
+		t.Errorf("held = %+v, %v: a scanner job must never be held", held, err)
+	}
+	// With the stale job out of the way the scanner can be offered a slot.
+	p, _ := adoptPool(context.Background(), r, 2, log)
+	d := p.Offer("scanners", time.Minute, []pool.Candidate{{Class: pool.ClassScanner, Role: "cve", Since: at}})
+	if d[0].Verdict != pool.Granted {
+		t.Errorf("verdict = %v", d[0].Verdict)
 	}
 }

@@ -1,6 +1,7 @@
 package effects
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -108,4 +109,81 @@ func appendRecord(f ledgerFile, r record) (err, broken error) {
 		return werr, fmt.Errorf("effects: ledger unusable, truncate failed: %w", terr)
 	}
 	return werr, nil
+}
+
+// DryIssue is an issue the dry-run ledger records as (virtually) filed,
+// replayed from its CreateIssue, UpdateIssue records.
+type DryIssue struct {
+	Number      int // negative
+	Title, Body string
+	Labels      []string
+	Closed      bool
+}
+
+// Issues replays the ledger into the issues dry-run has created, oldest first.
+// It only reads. A dry-run without a ledger file returns nil: callers then
+// have only their own state to go on. Bodies are as recorded, so they are
+// redacted when a Redact hook is set.
+func (d *DryRun) Issues() ([]DryIssue, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.path == "" {
+		return nil, nil
+	}
+	f, err := os.Open(d.path)
+	if err != nil {
+		return nil, fmt.Errorf("effects: read ledger %s: %w", d.path, err)
+	}
+	defer f.Close()
+	var out []DryIssue
+	idx := map[int]int{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(nil, 64<<20)
+	for sc.Scan() {
+		var r record
+		if len(sc.Bytes()) == 0 || json.Unmarshal(sc.Bytes(), &r) != nil {
+			continue // a torn final line is repaired when the ledger is opened
+		}
+		switch r.Op {
+		case "CreateIssue":
+			n, ok := r.Result["number"].(float64)
+			if !ok || int(n) >= 0 {
+				continue
+			}
+			is := DryIssue{Number: int(n)}
+			is.Title, _ = r.Payload["title"].(string)
+			is.Body, _ = r.Payload["body"].(string)
+			if ls, ok := r.Payload["labels"].([]any); ok {
+				for _, l := range ls {
+					if s, ok := l.(string); ok {
+						is.Labels = append(is.Labels, s)
+					}
+				}
+			}
+			idx[is.Number] = len(out)
+			out = append(out, is)
+		case "UpdateIssue":
+			var n int
+			if _, err := fmt.Sscanf(r.Target, "#%d", &n); err != nil {
+				continue
+			}
+			i, ok := idx[n]
+			if !ok {
+				continue
+			}
+			if b, ok := r.Payload["body"].(string); ok {
+				out[i].Body = b
+			}
+			switch r.Payload["state"] {
+			case "closed":
+				out[i].Closed = true
+			case "open":
+				out[i].Closed = false
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("effects: read ledger %s: %w", d.path, err)
+	}
+	return out, nil
 }
