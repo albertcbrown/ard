@@ -45,9 +45,10 @@ func (l *Live) done(ctx context.Context, op string, n int, err error, attrs ...a
 	return nil
 }
 
-func guard(n int) error {
+// bad rejects synthetic or zero targets before anything is sent.
+func bad(op string, n int) error {
 	if n <= 0 {
-		return ErrSyntheticTarget
+		return fmt.Errorf("effects: %s #%d: %w", op, n, ErrSyntheticTarget)
 	}
 	return nil
 }
@@ -58,10 +59,11 @@ func (l *Live) CreateIssue(ctx context.Context, in github.NewIssue) (github.Issu
 }
 
 func (l *Live) UpdateIssue(ctx context.Context, n int, u github.IssueUpdate) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: UpdateIssue #%d: %w", n, err)
+	if err := bad("UpdateIssue", n); err != nil {
+		return err
 	}
-	return l.done(ctx, "UpdateIssue", n, l.w.UpdateIssue(ctx, n, u), "body_set", u.Body != nil, "state", ptrStr(u.State), "reason", ptrStr(u.StateReason))
+	return l.done(ctx, "UpdateIssue", n, l.w.UpdateIssue(ctx, n, u),
+		"body_set", u.Body != nil, "state", ptrStr(u.State), "reason", ptrStr(u.StateReason))
 }
 
 func (l *Live) UpdateIssueBody(ctx context.Context, n int, body string) error {
@@ -69,22 +71,22 @@ func (l *Live) UpdateIssueBody(ctx context.Context, n int, body string) error {
 }
 
 func (l *Live) PinIssue(ctx context.Context, n int) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: PinIssue #%d: %w", n, err)
+	if err := bad("PinIssue", n); err != nil {
+		return err
 	}
 	return l.done(ctx, "PinIssue", n, l.w.PinIssue(ctx, n))
 }
 
 func (l *Live) AddLabels(ctx context.Context, n int, labels ...string) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: AddLabels #%d: %w", n, err)
+	if err := bad("AddLabels", n); err != nil {
+		return err
 	}
 	return l.done(ctx, "AddLabels", n, l.w.AddLabels(ctx, n, labels...), "labels", labels)
 }
 
 func (l *Live) RemoveLabel(ctx context.Context, n int, label string) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: RemoveLabel #%d: %w", n, err)
+	if err := bad("RemoveLabel", n); err != nil {
+		return err
 	}
 	return l.done(ctx, "RemoveLabel", n, l.w.RemoveLabel(ctx, n, label), "label", label)
 }
@@ -98,8 +100,8 @@ func (l *Live) UpdateLabel(ctx context.Context, name string, lb github.Label) er
 }
 
 func (l *Live) CreateComment(ctx context.Context, n int, body string) (github.Comment, error) {
-	if err := guard(n); err != nil {
-		return github.Comment{}, fmt.Errorf("effects: CreateComment #%d: %w", n, err)
+	if err := bad("CreateComment", n); err != nil {
+		return github.Comment{}, err
 	}
 	c, err := l.w.CreateComment(ctx, n, body)
 	return c, l.done(ctx, "CreateComment", n, err, "body_len", len(body))
@@ -111,36 +113,37 @@ func (l *Live) CreatePR(ctx context.Context, in github.NewPR) (github.PullReques
 }
 
 func (l *Live) UpdatePR(ctx context.Context, n int, u github.PRUpdate) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: UpdatePR #%d: %w", n, err)
+	if err := bad("UpdatePR", n); err != nil {
+		return err
 	}
 	return l.done(ctx, "UpdatePR", n, l.w.UpdatePR(ctx, n, u), "title_set", u.Title != nil, "body_set", u.Body != nil)
 }
 
 func (l *Live) MarkReady(ctx context.Context, n int) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: MarkReady #%d: %w", n, err)
+	if err := bad("MarkReady", n); err != nil {
+		return err
 	}
 	return l.done(ctx, "MarkReady", n, l.w.MarkReady(ctx, n))
 }
 
 func (l *Live) CreateReview(ctx context.Context, n int, in github.ReviewInput) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: CreateReview #%d: %w", n, err)
+	if err := bad("CreateReview", n); err != nil {
+		return err
 	}
-	return l.done(ctx, "CreateReview", n, l.w.CreateReview(ctx, n, in), "commit", in.CommitSHA, "body_len", len(in.Body), "inline", len(in.Comments))
+	return l.done(ctx, "CreateReview", n, l.w.CreateReview(ctx, n, in),
+		"commit", in.CommitSHA, "body_len", len(in.Body), "inline", len(in.Comments))
 }
 
 func (l *Live) UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) error {
-	if err := guard(n); err != nil {
-		return fmt.Errorf("effects: UpdateBranch #%d: %w", n, err)
+	if err := bad("UpdateBranch", n); err != nil {
+		return err
 	}
 	return l.done(ctx, "UpdateBranch", n, l.w.UpdateBranch(ctx, n, expectedHeadSHA), "expected_head", expectedHeadSHA)
 }
 
 func (l *Live) MergePR(ctx context.Context, n int, in github.MergeInput) (github.MergeResult, error) {
-	if err := guard(n); err != nil {
-		return github.MergeResult{}, fmt.Errorf("effects: MergePR #%d: %w", n, err)
+	if err := bad("MergePR", n); err != nil {
+		return github.MergeResult{}, err
 	}
 	r, err := l.w.MergePR(ctx, n, in)
 	return r, l.done(ctx, "MergePR", n, err, "sha", in.SHA, "merge_sha", r.SHA)
