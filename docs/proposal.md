@@ -336,7 +336,7 @@ Anything unset takes its default: scanners every 4 h with `max_open` 5 and `grou
 
 Agents with push access read text that strangers can write, so the controls sit in code and permissions, not in prompts.
 
-- **Identity: a GitHub App, not a PAT.** Installation tokens expire hourly and are scoped to contents, issues and pull requests (read and write), plus checks (read) so the merger can see required checks. Leaving out the `workflows` permission makes GitHub itself reject any push that edits `.github/workflows/`, a backstop to the diff guard.
+- **Identity: a GitHub App, not a PAT.** Installation tokens expire hourly and are scoped to contents, issues and pull requests (read and write), plus checks (read) so the merger can see required checks. Leaving out the `workflows` permission makes GitHub itself reject any push that edits `.github/workflows/`, a backstop to the diff guard. A personal token (`ARD_GITHUB_TOKEN`) is accepted only for local `--dry-run` development, and the client is then made read-only so no write can reach GitHub.
 - **Agents hold no GitHub token.** The executor does. The agent's environment has only its model API key; in Kubernetes a network policy limits egress to the model API and package registries.
 - **Only labels start work.** GitHub lets only triage-level collaborators add labels, so an outsider's issue or comment cannot start a job. A human issue enters the pipeline when a maintainer adds `ard:pending`; the triage loop checks from the issue timeline that whoever added it has triage access, and re-gates the issue if its body is edited afterwards.
 - **Untrusted text is passed as data.** Issue bodies, comments and PR text go to the agent as files the prompt labels as untrusted input, never spliced into the instructions.
