@@ -78,6 +78,9 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 	if err := l.checkEnv(c.Env); err != nil {
 		return h, err
 	}
+	if err := l.checkFixed(c.Fixed); err != nil {
+		return h, err
+	}
 	var cmd *exec.Cmd
 	if h.Kind == "docker" {
 		cmd = exec.Command(l.dockerBin, l.runArgv(h, c, c.Stdin != nil)...)
@@ -90,7 +93,7 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 		cmd.Dir = h.Worktree
 	} else {
 		cmd = exec.Command(c.Path, c.Args...)
-		cmd.Env = append(l.hostEnv(h), c.Env...)
+		cmd.Env = append(append(l.hostEnv(h), c.Fixed...), c.Env...)
 		cmd.Dir = h.Worktree
 	}
 	cmd.Stdin = c.Stdin // nil = /dev/null

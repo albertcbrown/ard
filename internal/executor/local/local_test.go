@@ -237,6 +237,18 @@ func TestForbiddenEnv(t *testing.T) {
 	}
 }
 
+func TestFixedEnv(t *testing.T) {
+	f := newFixture(t)
+	for _, e := range []string{"GITHUB_TOKEN=x", "HOME=/x", "ARD_X=1", "MY_API_KEY=x", "FOO"} {
+		if err := f.l.checkFixed([]string{e}); !errors.Is(err, executor.ErrForbiddenEnv) {
+			t.Errorf("%q: %v", e, err)
+		}
+	}
+	if err := f.l.checkFixed([]string{"CLAUDE_CONFIG_DIR=/cfg", "DISABLE_AUTOUPDATER=1"}); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestLastOutputAdvances(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

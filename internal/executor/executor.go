@@ -54,9 +54,14 @@ type Paths struct{ Work, Role, Sidecar string }
 
 // Command is what to run. Paths must come from Handle.View.
 type Command struct {
-	Path  string
-	Args  []string
-	Env   []string // "NAME=value"; only names the executor allows
+	Path string
+	Args []string
+	Env  []string // "NAME=value" secrets; only names the executor allows (AllowEnv)
+	// Fixed holds non-secret "NAME=value" settings the CLI needs (for example
+	// an agent adapter's config dir). Any name is accepted except the
+	// executor's own (PATH, HOME, ARD_*, ...), GitHub credentials and names
+	// that look like secrets.
+	Fixed []string
 	Stdin io.Reader
 }
 

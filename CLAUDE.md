@@ -35,6 +35,8 @@ internal/config/    .ard/config.yaml + role directory loading into a Resolved va
 internal/configcmd/ `ard config check` handler: prints the resolved config, returns validation errors
 internal/executor/    Executor interface and plain-data job types
 internal/executor/local/  git worktree + host subprocess or docker run, watchdog, logs
+internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
+internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
 internal/           controller, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```

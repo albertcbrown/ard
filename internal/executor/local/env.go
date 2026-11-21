@@ -61,3 +61,20 @@ func (l *Local) checkEnv(env []string) error {
 	}
 	return nil
 }
+
+var secretRE = regexp.MustCompile(`(?i)TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL`)
+
+// checkFixed validates Command.Fixed: non-secret settings with any name the
+// executor does not own.
+func (l *Local) checkFixed(env []string) error {
+	for _, kv := range env {
+		name, _, ok := strings.Cut(kv, "=")
+		switch {
+		case !ok || name == "":
+			return fmt.Errorf("%w: entry without name=value", executor.ErrForbiddenEnv)
+		case ghRE.MatchString(name), baseNames[name], strings.HasPrefix(name, "ARD_"), name == "SSH_AUTH_SOCK", secretRE.MatchString(name):
+			return fmt.Errorf("%w: %s", executor.ErrForbiddenEnv, name)
+		}
+	}
+	return nil
+}
