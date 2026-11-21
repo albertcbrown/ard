@@ -22,6 +22,7 @@ func TestNormaliseProtectedPath(t *testing.T) {
 		{in: ".github/ ", errSub: "whitespace"},
 		{in: " ", errSub: "whitespace"},
 		{in: "\t", errSub: "whitespace"},
+		{in: ".git\u200bhub/", errSub: "control"},
 		{in: "/etc/", errSub: "must be relative"},
 		{in: "../x/", errSub: "escapes the repo"},
 		{in: "a/../../x", errSub: "escapes the repo"},

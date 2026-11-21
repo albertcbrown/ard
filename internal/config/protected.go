@@ -14,7 +14,7 @@ import (
 // prefix and keeps exactly one trailing "/"; any other entry is a doublestar
 // glob, path-cleaned.
 func normaliseProtectedPath(p string) (string, error) {
-	if strings.TrimSpace(p) != p || strings.IndexFunc(p, unicode.IsControl) >= 0 {
+	if strings.TrimSpace(p) != p || strings.IndexFunc(p, badRune) >= 0 {
 		return "", fmt.Errorf("path %q has leading/trailing whitespace or control characters", p)
 	}
 	prefix := strings.HasSuffix(p, "/")
@@ -81,3 +81,7 @@ func matchProtected(entry, q string) bool {
 	m, err := doublestar.Match(entry, q)
 	return err != nil || m // an invalid pattern fails closed
 }
+
+// badRune reports control and format characters (such as zero-width
+// spaces), which make an entry look right but match nothing.
+func badRune(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }
