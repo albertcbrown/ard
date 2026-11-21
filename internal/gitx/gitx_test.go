@@ -143,9 +143,9 @@ func TestPush(t *testing.T) {
 }
 
 func TestPushEnv(t *testing.T) {
-	env := pushEnv("tok")
+	env := pushEnv("tok", "https://github.com/o/r.git")
 	b64 := base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
-	want := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.extraheader", "GIT_CONFIG_VALUE_0=Authorization: Basic " + b64}
+	want := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader", "GIT_CONFIG_VALUE_0=Authorization: Basic " + b64}
 	if strings.Join(env, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("env = %v", env)
 	}
@@ -216,5 +216,61 @@ func TestChangedSince(t *testing.T) {
 	}
 	if _, err := g.ChangedSince(ctx, clone, "deadbeef", ".ard/5/"); err == nil {
 		t.Fatal("bad base: want error")
+	}
+}
+
+func TestRemoteURL(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	gittest.Run(t, clone, "remote", "set-url", "origin", "git@github.com:o/r.git")
+
+	got, err := g.RemoteURL(ctx, clone, "origin")
+	if err != nil || got != "git@github.com:o/r.git" {
+		t.Errorf("RemoteURL = %q, %v", got, err)
+	}
+	if _, err := g.RemoteURL(ctx, clone, "nope"); err == nil {
+		t.Error("missing remote: want error")
+	}
+}
+
+func TestHooksNeverRun(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	bare, clone := gittest.NewRemote(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	for _, h := range []string{"reference-transaction", "pre-commit", "pre-push", "post-checkout", "post-commit"} {
+		script := "#!/bin/sh\ntouch " + marker + "\n"
+		if err := os.WriteFile(filepath.Join(clone, ".git", "hooks", h), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stage(t, clone, "h.txt", "h")
+	// GIT_DIR in the parent must not redirect anything either.
+	t.Setenv("GIT_DIR", filepath.Join(bare))
+	if err := g.FetchRef(ctx, clone, "file://"+bare, "+refs/heads/main:refs/ard/up/main", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Commit(ctx, CommitOp{Dir: clone, Message: "m", Author: author}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Push(ctx, PushOp{Dir: clone, Remote: "file://" + bare, Ref: "HEAD:refs/heads/hooked"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a hook ran")
+	}
+}
+
+func TestHeaderKey(t *testing.T) {
+	tests := map[string]string{
+		"https://github.com/o/r.git": "http.https://github.com/.extraheader",
+		"file:///tmp/x.git":          "http.extraheader",
+		"/tmp/x.git":                 "http.extraheader",
+	}
+	for in, want := range tests {
+		if got := headerKey(in); got != want {
+			t.Errorf("headerKey(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

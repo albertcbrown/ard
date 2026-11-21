@@ -395,3 +395,80 @@ func TestBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRemoteURLValidation(t *testing.T) {
+	tok := func(context.Context) (string, error) { return "t", nil }
+	tests := []struct {
+		url   string
+		token gitx.TokenFunc
+		ok    bool
+	}{
+		{"https://github.com/o/r.git", tok, true},
+		{"file:///tmp/x.git", nil, true},
+		{"file:///tmp/x.git", tok, false},
+		{"http://github.com/o/r.git", nil, false},
+		{"ssh://git@github.com/o/r.git", nil, false},
+		{"git@github.com:o/r.git", nil, false},
+		{"/tmp/x.git", nil, false},
+	}
+	for _, tc := range tests {
+		e := newEnv(t)
+		e.cfg.RemoteURL, e.cfg.Token = tc.url, tc.token
+		_, err := newCore(e.cfg, e.live(), e.g, true)
+		if (err == nil) != tc.ok || (err != nil && !errors.Is(err, ErrInvalid)) {
+			t.Errorf("%s token=%v: err = %v", tc.url, tc.token != nil, err)
+		}
+	}
+}
+
+func TestSkipCIDefaults(t *testing.T) {
+	e := newEnv(t)
+	m, err := newCore(e.cfg, e.live(), e.g, true)
+	b, err2 := newCore(e.cfg, e.live(), e.g, false)
+	if err != nil || err2 != nil || !m.skipCI || b.skipCI {
+		t.Fatalf("main %v branch %v (%v %v)", m.skipCI, b.skipCI, err, err2)
+	}
+	on := true
+	e.cfg.SkipCI = &on
+	if b, _ := newCore(e.cfg, e.live(), e.g, false); !b.skipCI {
+		t.Fatal("explicit SkipCI ignored")
+	}
+}
+
+func TestSymlinkedParents(t *testing.T) {
+	tests := []struct {
+		name, link, target, escaped string // escaped: path relative to the worktree's parent that must stay absent
+	}{
+		{"dir", ".ard/12", "../.github", ""},
+		{"file", ".ard/12/issue.md", "../../../outside.txt", "outside.txt"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			full := filepath.Join(e.clone, filepath.FromSlash(tc.link))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.target, full); err != nil {
+				t.Fatal(err)
+			}
+			gittest.Run(t, e.clone, "add", "-A")
+			gittest.Run(t, e.clone, "commit", "-q", "-m", "evil symlink")
+			gittest.Run(t, e.clone, "push", "-q", "origin", "main")
+			before := e.head(t, "main")
+			c := e.main(t, e.live())
+			_, err := c.Commit(context.Background(), req(12, "issue.md", "secret"))
+			if !errors.Is(err, ErrGuard) {
+				t.Fatalf("err = %v", err)
+			}
+			if e.head(t, "main") != before {
+				t.Fatal("remote moved")
+			}
+			for _, p := range []string{filepath.Join(e.work, "outside.txt"), filepath.Join(c.l.wt, ".github", "issue.md")} {
+				if _, err := os.Stat(p); err == nil {
+					t.Fatalf("%s was written", p)
+				}
+			}
+		})
+	}
+}

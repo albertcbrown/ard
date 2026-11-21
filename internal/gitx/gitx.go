@@ -53,9 +53,19 @@ func (e *runError) Unwrap() error { return e.err }
 // run executes git in dir with extra env entries and optional stdin. Stderr
 // is scrubbed of secrets before it appears in an error.
 func (g *Git) run(ctx context.Context, dir string, env []string, stdin string, secrets []string, args ...string) (string, string, error) {
+	// Hooks and fsmonitor are off for every command: RepoDir is shared with
+	// executor worktrees and must not get to run code with our credentials.
+	args = append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)
 	cmd := exec.CommandContext(ctx, g.bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C",
+	// Inherit nothing git-specific (GIT_DIR, GIT_INDEX_FILE, GIT_CONFIG_PARAMETERS ...).
+	var base []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			base = append(base, kv)
+		}
+	}
+	cmd.Env = append(base, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C",
 		// A human's global config (insteadOf, signing, hooks) must not change
 		// what the controller does.
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
@@ -107,4 +117,13 @@ func (g *Git) RevParse(ctx context.Context, dir, ref string) (string, error) {
 func isExit(err error, code int) bool {
 	var ee *exec.ExitError
 	return errors.As(err, &ee) && ee.ExitCode() == code
+}
+
+// RemoteURL returns the fetch URL of the named remote in dir.
+func (g *Git) RemoteURL(ctx context.Context, dir, remote string) (string, error) {
+	out, _, err := g.run(ctx, dir, nil, "", nil, "remote", "get-url", remote)
+	if err != nil {
+		return "", fmt.Errorf("gitx: remote url %s: %w", remote, err)
+	}
+	return strings.TrimSpace(out), nil
 }

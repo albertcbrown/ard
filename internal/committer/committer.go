@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,9 +50,13 @@ type Config struct {
 	Branch    string          // NewMain only; default "main"
 	Bot       github.Identity // author and committer; Login is "<slug>[bot]", ID the bot user id
 	Token     gitx.TokenFunc  // nil = no auth header (file remotes in tests)
-	SkipCI    *bool           // nil = true
-	Backoff   func(attempt int) time.Duration
-	Log       *slog.Logger
+	// SkipCI appends " [skip ci]" to commit messages. Decided on #17: main
+	// `.ard/<n>/` commits skip CI; PR-branch commits never do, so required
+	// checks run and report on the head the merger needs. nil selects that
+	// default for the lane; set it only to override (tests).
+	SkipCI  *bool
+	Backoff func(attempt int) time.Duration
+	Log     *slog.Logger
 }
 
 type core struct {
@@ -63,14 +68,27 @@ type core struct {
 	log    *slog.Logger
 }
 
-func newCore(cfg Config, fx Effects, g *gitx.Git) (*core, error) {
+func newCore(cfg Config, fx Effects, g *gitx.Git, defaultSkipCI bool) (*core, error) {
 	if cfg.RepoDir == "" || cfg.WorkDir == "" || cfg.RemoteURL == "" {
 		return nil, fmt.Errorf("%w: RepoDir, WorkDir and RemoteURL are required", ErrInvalid)
+	}
+	u, err := url.Parse(cfg.RemoteURL)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("%w: RemoteURL: %v", ErrInvalid, err)
+	case u.Scheme == "https" && u.Host != "":
+	case u.Scheme == "file" && cfg.Token == nil: // local test remotes only; never with a credential
+	default:
+		return nil, fmt.Errorf("%w: RemoteURL must be https (file only without a Token)", ErrInvalid)
 	}
 	if g == nil {
 		g = gitx.New("")
 	}
-	c := &core{cfg: cfg, fx: fx, g: g, skipCI: cfg.SkipCI == nil || *cfg.SkipCI, log: cfg.Log}
+	skip := defaultSkipCI
+	if cfg.SkipCI != nil {
+		skip = *cfg.SkipCI
+	}
+	c := &core{cfg: cfg, fx: fx, g: g, skipCI: skip, log: cfg.Log}
 	if c.log == nil {
 		c.log = slog.Default()
 	}
@@ -376,7 +394,7 @@ type Committer struct{ l *lane }
 // NewMain prepares the persistent main worktree. A leftover or dirty
 // directory from a crash is replaced.
 func NewMain(ctx context.Context, cfg Config, fx Effects, g *gitx.Git) (*Committer, error) {
-	c, err := newCore(cfg, fx, g)
+	c, err := newCore(cfg, fx, g, true)
 	if err != nil {
 		return nil, err
 	}

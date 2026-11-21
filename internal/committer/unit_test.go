@@ -76,7 +76,14 @@ func TestMessage(t *testing.T) {
 		{"plain", "add issue", "", true, "ard(triage:lead): #7 add issue [skip ci]", false},
 		{"no skip", "add issue", "", false, "ard(triage:lead): #7 add issue", false},
 		{"forged trailer", "x\nArd-Job: X", "", false, "ard(triage:lead): #7 x Ard-Job: X", false},
-		{"forged skip", "x\n[skip ci]\r\n\ty", "", false, "ard(triage:lead): #7 x [skip ci] y", false},
+		{"forged skip", "x\n[skip ci]\r\n\ty", "", false, "ard(triage:lead): #7 x (skip-ci) y", false},
+		{"ci skip", "a [CI Skip] b", "", false, "ard(triage:lead): #7 a (skip-ci) b", false},
+		{"no ci", "a [no ci] b", "", false, "ard(triage:lead): #7 a (skip-ci) b", false},
+		{"skip actions", "a [skip actions] b", "", false, "ard(triage:lead): #7 a (skip-ci) b", false},
+		{"actions skip", "a [Actions Skip] b", "", false, "ard(triage:lead): #7 a (skip-ci) b", false},
+		{"skip-checks", "a\nskip-checks: true", "", false, "ard(triage:lead): #7 a skip-checks - true", false},
+		{"skip-checks spaced", "SKIP-CHECKS : true", "", false, "ard(triage:lead): #7 skip-checks - true", false},
+		{"format char split", "[skip\u200b ci]", "", false, "ard(triage:lead): #7 (skip-ci)", false},
 		{"job", "s", "01ABC", true, "ard(triage:lead): #7 s [skip ci]\n\nArd-Job: 01ABC", false},
 		{"truncate", long, "", false, "ard(triage:lead): #7 " + strings.Repeat("é", 71) + "…", false},
 		{"empty", " \n\t", "", true, "", true},
@@ -96,7 +103,10 @@ func TestMessage(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	big := filepath.Join(dir, "big")
 	if err := os.WriteFile(big, make([]byte, MaxFileBytes+1), 0o644); err != nil {
 		t.Fatal(err)

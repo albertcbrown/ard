@@ -1,9 +1,13 @@
 package committer
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"syscall"
 )
 
 // File is one change in a Request. Exactly one of Data, Src or Delete is set.
@@ -88,23 +92,15 @@ func snapshot(req Request, issue int) (Request, error) {
 		case len(f.Data) > MaxFileBytes:
 			ge.add(f.Path, "larger than 1 MiB")
 		case f.Src != "":
-			fi, err := os.Lstat(f.Src)
+			b, err := readSrc(f.Src)
+			var pe *guardReason
 			switch {
+			case errors.As(err, &pe):
+				ge.add(f.Path, pe.msg)
 			case err != nil:
 				return req, fmt.Errorf("%w: src %q: %v", ErrInvalid, f.Src, err)
-			case !fi.Mode().IsRegular():
-				ge.add(f.Path, "src is not a regular file")
-			case fi.Size() > MaxFileBytes:
-				ge.add(f.Path, "larger than 1 MiB")
 			default:
-				b, err := os.ReadFile(f.Src)
-				if err != nil {
-					return req, fmt.Errorf("%w: src %q: %v", ErrInvalid, f.Src, err)
-				}
 				out.Files[i].Data, out.Files[i].Src = b, ""
-				if b == nil {
-					out.Files[i].Data = []byte{}
-				}
 			}
 		}
 	}
@@ -112,4 +108,46 @@ func snapshot(req Request, issue int) (Request, error) {
 		return req, ge
 	}
 	return out, nil
+}
+
+type guardReason struct{ msg string }
+
+func (g *guardReason) Error() string { return g.msg }
+
+// readSrc reads a host file without following symlinks, in the path or at the
+// end of it, and without trusting an earlier Lstat.
+func readSrc(src string) ([]byte, error) {
+	real, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return nil, err
+	}
+	if real != filepath.Clean(src) {
+		return nil, &guardReason{"src path involves a symlink"}
+	}
+	f, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, &guardReason{"src is a symlink"}
+		}
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, &guardReason{"src is not a regular file"}
+	}
+	b, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > MaxFileBytes {
+		return nil, &guardReason{"larger than 1 MiB"}
+	}
+	if b == nil {
+		b = []byte{}
+	}
+	return b, nil
 }

@@ -78,7 +78,7 @@ stateDiagram-v2
 | `ard:needs-approval` | Merger | PR touches a protected path; merges after a human approves |
 | `ard:hold` | Human | Controller ignores this issue or PR entirely |
 
-Four more labels sit outside the grammar: `ard:approved` (human go-ahead before a worker starts), `ard:tests:failed` (worker could not get tests green), `ard:keep` (hold failed-job resources past 24 h) and `ard:pause` (on the pinned status issue, stops all new claims).
+Four more labels sit outside the grammar: `ard:approved` (human go-ahead before a worker starts), `ard:tests:failed` (worker could not get tests green), `ard:keep` (hold failed-job resources past 24 h) and `ard:pause` (on the pinned status issue, stops all new claims). `ard labels sync` creates and updates the full set from the resolved config, idempotently, and never deletes a label: stale `ard:` labels are only reported. `--repo owner/name` names the repository; when omitted, it is read from the `origin` remote. Role names are at most 31 characters and scanner names at most 38, because GitHub caps a label at 50 characters.
 
 **One query per role per poll.** For example: `is:open label:"ard:triage:architect" -label:"ard:triage:architect:running" -label:"ard:triage:architect:done" -label:ard:executor:failed -label:ard:needs-human -label:ard:hold`. Six triage roles every 15 minutes, plus four reviewers, a worker and the merger every 5, is about 100 searches an hour, well under GitHub's limits.
 
@@ -258,7 +258,7 @@ Reviewers run like workers against a PR instead of an issue: they read the chang
 2. **Pin the head SHA** and make a worktree there, so the review describes exactly one commit even if the branch moves.
 3. **Run the agent** with `.ard/reviewers/<role>/prompt.txt`, the diff against the merge base, `issue.md`, `plan.md`, the worker log, and the sidecar (security policy, license allowlist). In round 2 and later it also gets its previous findings and must say which are resolved.
 4. **The agent writes `<role>.md`** with `verdict: approve | changes` and findings as `file:line`, severity, blocking or not.
-5. **Close-out.** The controller posts the findings as one PR review with inline comments, commits `<role>.md` and the run's redacted output to the PR branch through the per-branch committer (`[skip ci]`), and swaps `:running` for `:done` or `:changes`.
+5. **Close-out.** The controller posts the findings as one PR review with inline comments, commits `<role>.md` and the run's redacted output to the PR branch through the per-branch committer (no `[skip ci]`: PR-branch commits always run CI so required checks report on the head), and swaps `:running` for `:done` or `:changes`.
 
 **The label is the gate, not GitHub's "request changes".** A bot's request-changes review blocks merge until someone dismisses it, even after the fix. Reviews post as comments; `ard:review:<role>:changes` is what sends the PR back to the worker.
 
