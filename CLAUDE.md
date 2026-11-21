@@ -40,6 +40,7 @@ internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds
 internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
+internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues
 internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
 internal/roles/     starter role directories embedded for ard init (scanners/cve)
