@@ -13,6 +13,11 @@
 // and pushes again, and fails with ErrConflict if upstream touched one of the
 // request's paths. That is what `git rebase` would produce, without ever
 // leaving rebase state behind.
+//
+// Commit messages, PR titles and PR bodies that embed untrusted text must pass
+// it through NeutraliseRefs so it cannot close an issue. ard's own
+// "Closes #<issue>" line in a worker PR body is written by the caller after
+// neutralising, never fed through it.
 package committer
 
 import (
