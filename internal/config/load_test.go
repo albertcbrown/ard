@@ -348,6 +348,11 @@ func TestLoadErrors(t *testing.T) {
 			},
 		},
 		{
+			name: "protected path has leading whitespace",
+			yaml: "merge: {protected_paths: [\" .github/\"]}\n",
+			want: []wantErr{{".ard/config.yaml", "merge.protected_paths[0]", "whitespace"}},
+		},
+		{
 			name: "protected path must be relative",
 			yaml: "merge: {protected_paths: [/etc/passwd]}\n",
 			want: []wantErr{{".ard/config.yaml", "merge.protected_paths[0]", "must be relative"}},

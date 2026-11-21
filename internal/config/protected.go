@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -13,6 +14,9 @@ import (
 // prefix and keeps exactly one trailing "/"; any other entry is a doublestar
 // glob, path-cleaned.
 func normaliseProtectedPath(p string) (string, error) {
+	if strings.TrimSpace(p) != p || strings.IndexFunc(p, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("path %q has leading/trailing whitespace or control characters", p)
+	}
 	prefix := strings.HasSuffix(p, "/")
 	clean, err := normaliseRelPath(p)
 	if err != nil {
@@ -54,12 +58,15 @@ func (r *Resolved) ProtectedBy(p string) (pattern string, ok bool) {
 	if p == "" || strings.HasPrefix(p, "/") {
 		return "", true
 	}
-	q := path.Clean(p)
-	if q == "." || q == ".." || strings.HasPrefix(q, "../") {
+	// GitHub only reports canonical paths; anything else is malformed.
+	if path.Clean(p) != p || strings.Contains(p, "\\") || strings.IndexFunc(p, unicode.IsControl) >= 0 {
+		return "", true
+	}
+	if p == "." || p == ".." || strings.HasPrefix(p, "../") {
 		return "", true
 	}
 	for _, e := range r.ProtectedPaths {
-		if matchProtected(e, q) {
+		if matchProtected(e, p) {
 			return e, true
 		}
 	}
