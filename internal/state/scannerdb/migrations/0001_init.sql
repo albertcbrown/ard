@@ -1,0 +1,16 @@
+CREATE TABLE findings(
+  fingerprint TEXT PRIMARY KEY,
+  issue INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('open','fixed')),
+  severity TEXT NOT NULL, group_key TEXT NOT NULL,
+  first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, last_sha TEXT);
+CREATE INDEX findings_issue ON findings(issue);
+CREATE TABLE suppressions(
+  fingerprint TEXT PRIMARY KEY,
+  until INTEGER NOT NULL, severity TEXT NOT NULL,
+  issue INTEGER, reason TEXT);
+CREATE TABLE runs(
+  id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, finished_at INTEGER,
+  sha TEXT, outcome TEXT NOT NULL CHECK(outcome IN ('ok','dropped','timeout','error')),
+  found INTEGER NOT NULL DEFAULT 0, filed INTEGER NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
