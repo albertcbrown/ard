@@ -1,6 +1,7 @@
 package stale
 
 import (
+	"strings"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/github"
@@ -49,7 +50,8 @@ func scannerOf(is github.Issue, scanners map[string]bool) (string, bool) {
 
 func running(is github.Issue) bool {
 	for _, l := range is.Labels {
-		if p, ok := labels.Parse(l); ok && p.Kind == labels.KindRole && p.State == labels.StateRunning {
+		l = strings.ToLower(l)
+		if strings.HasPrefix(l, labels.Prefix) && strings.HasSuffix(l, ":"+string(labels.StateRunning)) {
 			return true
 		}
 	}

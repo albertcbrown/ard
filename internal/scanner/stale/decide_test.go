@@ -33,6 +33,7 @@ func TestDecide(t *testing.T) {
 		{"running triage", old(labels.Running(labels.StageTriage, "lead")), nil, nil, reasonRunning},
 		{"running worker", old(labels.Running(labels.StageWorker, "engineer")), nil, nil, reasonRunning},
 		{"running review", old(labels.Running(labels.StageReview, "eng-review")), nil, nil, reasonRunning},
+		{"running, unparsed label", old(labels.Prefix + "merger:x:" + string(labels.StateRunning)), nil, nil, reasonRunning},
 		{"human author", mod(func(i *github.Issue) { i.Author = "alice" }), nil, nil, reasonHumanAuthor},
 		{"other bot author", mod(func(i *github.Issue) { i.Author = "dependabot[bot]" }), nil, nil, reasonHumanAuthor},
 		{"not pending", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve")} }), nil, nil, reasonNotCand},
