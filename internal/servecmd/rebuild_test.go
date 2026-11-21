@@ -185,8 +185,8 @@ func TestDefaultLoopsIncludeTheScannersLoop(t *testing.T) {
 	}
 	defer w.Scanners.Close()
 	loops := registerLoops(w)
-	if len(loops) != 1 || loops[0].Name() != "scanners" || !loops[0].Claims() {
-		t.Fatalf("loops = %v: the scanners loop must exist and be skipped while paused", loops)
+	if len(loops) != 2 || loops[0].Name() != "scanners" || loops[1].Name() != "stale" || !loops[0].Claims() || !loops[1].Claims() {
+		t.Fatalf("loops = %v: the scanners and stale loops must exist and be skipped while paused", loops)
 	}
 	if _, ok := loops[0].(controller.TickTimeouter); !ok {
 		t.Error("the scanners loop must set its own tick timeout")
