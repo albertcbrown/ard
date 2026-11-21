@@ -69,6 +69,23 @@ func TestCheckValid(t *testing.T) {
 	}
 }
 
+func TestCheckWarnsHostUntrustedAtErrorLevel(t *testing.T) {
+	root := writeRepo(t, "max_pods: 5\n")
+	e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+	var logs bytes.Buffer
+	e.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if strings.Contains(logs.String(), "executor.host_untrusted") {
+		t.Errorf("logs = %q, want no warning at error level", logs.String())
+	}
+	out := stderr.String()
+	if n := strings.Count(out, "WARNING:"); n != 1 || !strings.Contains(out, `role "lead"`) {
+		t.Errorf("stderr = %q, want exactly one WARNING for role lead", out)
+	}
+}
+
 func TestCheckWarnsHostUntrusted(t *testing.T) {
 	count := func(root string) (string, string) {
 		e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))

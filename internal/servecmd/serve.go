@@ -267,12 +267,18 @@ func (w *wiring) closeAll() {
 func (w *wiring) newExecutor() (*local.Local, error) {
 	return local.New(local.Options{
 		Root: filepath.Join(w.Home, ".ard"), Log: w.Log,
-		OnHostUntrusted: func(ctx context.Context, h executor.Handle) error {
-			return w.Store.AppendEvent(ctx, state.Event{
-				Kind: state.EventHostUntrusted, JobID: h.JobID, Issue: h.Issue, Stage: h.Stage, Role: h.Role,
-			})
-		},
+		OnHostUntrusted: recordHostUntrusted(w.Store),
 	})
+}
+
+// recordHostUntrusted returns the executor hook that appends a
+// state.EventHostUntrusted row for a host-mode job.
+func recordHostUntrusted(store *state.Store) func(context.Context, executor.Handle) error {
+	return func(ctx context.Context, h executor.Handle) error {
+		return store.AppendEvent(ctx, state.Event{
+			Kind: state.EventHostUntrusted, JobID: h.JobID, Issue: h.Issue, Stage: h.Stage, Role: h.Role,
+		})
+	}
 }
 
 // Pool returns the slot pool adopted at startup. It panics if called before

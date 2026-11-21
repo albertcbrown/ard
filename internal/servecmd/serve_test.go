@@ -18,6 +18,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
+	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
 	"github.com/albertcbrown/ard/internal/gitx"
@@ -579,8 +580,7 @@ func TestServeInvalidRemoteFails(t *testing.T) {
 
 func TestServeWarnsHostUntrustedOncePerRole(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	bare, clone := gittest.NewRemote(t)
-	_ = bare
+	_, clone := gittest.NewRemote(t)
 	if err := os.MkdirAll(filepath.Join(clone, ".ard", "triage", "lead"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +593,20 @@ func TestServeWarnsHostUntrustedOncePerRole(t *testing.T) {
 	e := env(t, "o/r", filepath.Join(clone, ".ard", "config.yaml"), true)
 	e.Log = slog.New(slog.NewTextHandler(buf, nil))
 	e.Stderr = errBuf
-	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
+	// A probe loop ticks once the scheduler has reloaded config after the
+	// startup load, so the loader has run at least twice.
+	probe := &probeLoop{ticked: make(chan struct{})}
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { return append(orig(x), probe) }
+	defer func() { registerLoops = orig }()
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool {
+		select {
+		case <-probe.ticked:
+			return buf.has("controller.start")
+		default:
+			return false
+		}
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(buf.String(), "executor.host_untrusted"); n != 1 {
@@ -604,5 +617,53 @@ func TestServeWarnsHostUntrustedOncePerRole(t *testing.T) {
 	}
 	if n := strings.Count(errBuf.String(), `role "lead"`); n != 1 {
 		t.Errorf("stderr has the warning %d times, want 1:\n%s", n, errBuf.String())
+	}
+}
+
+// probeLoop closes ticked on its first tick.
+type probeLoop struct {
+	once   sync.Once
+	ticked chan struct{}
+}
+
+func (*probeLoop) Name() string                            { return "probe" }
+func (*probeLoop) Interval(*config.Resolved) time.Duration { return time.Minute }
+func (*probeLoop) Claims() bool                            { return false }
+func (p *probeLoop) Tick(context.Context, controller.Env) error {
+	p.once.Do(func() { close(p.ticked) })
+	return nil
+}
+
+func TestRecordHostUntrusted(t *testing.T) {
+	tests := []struct {
+		name string
+		h    executor.Handle
+	}{
+		{"triage job", executor.Handle{JobID: "J1", Issue: 7, Stage: "triage", Role: "lead"}},
+		{"issue-less scanner job", executor.Handle{JobID: "J2", Stage: "scanner", Role: "lint"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, err := state.Open(ctx, t.TempDir(), state.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			if err := recordHostUntrusted(st)(ctx, tc.h); err != nil {
+				t.Fatal(err)
+			}
+			evs, err := st.Events(ctx, state.EventFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(evs) != 1 {
+				t.Fatalf("%d events, want 1: %+v", len(evs), evs)
+			}
+			e := evs[0]
+			if e.Kind != state.EventHostUntrusted || e.JobID != tc.h.JobID || e.Issue != tc.h.Issue || e.Stage != tc.h.Stage || e.Role != tc.h.Role {
+				t.Errorf("event = %+v, want handle %+v", e, tc.h)
+			}
+		})
 	}
 }
