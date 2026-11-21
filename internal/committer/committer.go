@@ -50,13 +50,11 @@ type Config struct {
 	Branch    string          // NewMain only; default "main"
 	Bot       github.Identity // author and committer; Login is "<slug>[bot]", ID the bot user id
 	Token     gitx.TokenFunc  // nil = no auth header (file remotes in tests)
-	// SkipCI appends " [skip ci]" to commit messages. nil means true for the
-	// main lane and false for PR branches. UNRESOLVED, tracked on #17: a
-	// [skip ci] head commit on a PR branch runs no workflows, so required checks
-	// never report and the merger could never merge; the proposal's Reviewer
-	// loop still says [skip ci]. Branches therefore default to false until
-	// that is settled.
-	SkipCI  *bool // nil = default above
+	// SkipCI appends " [skip ci]" to commit messages. Decided on #17: main
+	// `.ard/<n>/` commits skip CI; PR-branch commits never do, so required
+	// checks run and report on the head the merger needs. nil selects that
+	// default for the lane; set it only to override (tests).
+	SkipCI  *bool
 	Backoff func(attempt int) time.Duration
 	Log     *slog.Logger
 }
