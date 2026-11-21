@@ -174,6 +174,7 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 	reserved := 0
 	triageGranted := map[int]bool{}
 	var denied []Candidate
+	capDenied := 0
 	for _, it := range items {
 		if it.idx < 0 {
 			if free > 0 {
@@ -198,11 +199,13 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 			p.starved[c.Class] = false
 			d.Verdict, d.Slot = Granted, s
 			p.log.Debug("pool.grant", "loop", loop, "key", c.Key(), "class", c.Class.String(), "role", c.Role, "number", c.Number)
-		case reserved == 0:
-			d.Verdict, d.Reason = DeniedFull, "no free slot"
+		case capDenied < reserved:
+			capDenied++
+			d.Verdict, d.Reason = DeniedOutranked, fmt.Sprintf("outranked by %d higher-ranked waiting job(s)", reserved)
 			denied = append(denied, c)
 		default:
-			d.Verdict, d.Reason = DeniedOutranked, fmt.Sprintf("outranked by %d higher-ranked waiting job(s)", reserved)
+			capDenied++
+			d.Verdict, d.Reason = DeniedFull, "no free slot"
 			denied = append(denied, c)
 		}
 	}

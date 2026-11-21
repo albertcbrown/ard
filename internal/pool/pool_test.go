@@ -390,15 +390,39 @@ func TestCrossLoop(t *testing.T) {
 		}
 	})
 	t.Run("reserved triage issue already held", func(t *testing.T) {
-		p, _ := newPool(1)
-		s := p.Offer("a", 0, []Candidate{cand(ClassScanner, "s", 0, 0)})[0].Slot
-		p.Offer("triage", time.Hour, []Candidate{cand(ClassTriage, "a", 7, 0)})
-		s.Release()
-		// A held triage job on 7 appears; the waiting triage entry must not reserve.
-		p2, _ := newPool(2, Held{Candidate: cand(ClassTriage, "b", 7, 0)})
-		p2.Offer("triage", time.Hour, []Candidate{cand(ClassTriage, "a", 7, 0)})
-		if ds := p2.Offer("scan", time.Hour, []Candidate{scan}); ds[0].Verdict != Granted {
+		p, _ := newPool(2)
+		ws := p.Offer("w", 0, []Candidate{cand(ClassWorker, "w", 1, 0), cand(ClassWorker, "w", 2, 0)})
+		if ds := p.Offer("triage", time.Hour, []Candidate{cand(ClassTriage, "a", 7, 0)}); ds[0].Verdict != DeniedFull {
 			t.Fatalf("%v", ds[0].Verdict)
+		}
+		ws[0].Slot.Release()
+		if ds := p.Offer("other", 0, []Candidate{cand(ClassTriage, "b", 7, -1)}); ds[0].Verdict != Granted {
+			t.Fatalf("%v", ds[0].Verdict)
+		}
+		ws[1].Slot.Release()
+		if ds := p.Offer("scan", time.Hour, []Candidate{scan}); ds[0].Verdict != Granted {
+			t.Fatalf("%v", ds[0].Verdict)
+		}
+	})
+	t.Run("one reservation per triage issue", func(t *testing.T) {
+		p, _ := newPool(2)
+		ws := p.Offer("w", 0, []Candidate{cand(ClassWorker, "w", 1, 0), cand(ClassWorker, "w", 2, 0)})
+		p.Offer("triage", time.Hour, []Candidate{cand(ClassTriage, "a", 7, 0), cand(ClassTriage, "b", 7, 1)})
+		ws[0].Slot.Release()
+		ws[1].Slot.Release()
+		if ds := p.Offer("work", time.Hour, []Candidate{cand(ClassWorker, "w", 3, 0)}); ds[0].Verdict != Granted {
+			t.Fatalf("%v", ds[0].Verdict)
+		}
+	})
+	t.Run("full vs outranked split", func(t *testing.T) {
+		p, _ := newPool(2)
+		ws := p.Offer("w", 0, []Candidate{cand(ClassWorker, "w", 1, 0), cand(ClassWorker, "w", 2, 0)})
+		p.Offer("review", time.Hour, []Candidate{rev})
+		ws[0].Slot.Release()
+		ws[1].Slot.Release()
+		ds := p.Offer("work", time.Hour, []Candidate{cand(ClassWorker, "w", 3, 0), cand(ClassWorker, "w", 4, 1), cand(ClassWorker, "w", 5, 2)})
+		if !eq(verdicts(ds), []Verdict{Granted, DeniedOutranked, DeniedFull}) {
+			t.Fatalf("%v", verdicts(ds))
 		}
 	})
 }

@@ -45,7 +45,24 @@ func (p *Pool) foreignLocked(loop string, now time.Time, batch map[string]bool, 
 			out = append(out, c)
 		}
 	}
-	return out
+	// Only one triage job per issue can run, so only the best-ranked waiting
+	// triage candidate on an issue reserves a slot.
+	best := map[int]Candidate{}
+	for _, c := range out {
+		if c.Class == ClassTriage {
+			if b, ok := best[c.Number]; !ok || less(c, b) {
+				best[c.Number] = c
+			}
+		}
+	}
+	kept := out[:0]
+	for _, c := range out {
+		if c.Class == ClassTriage && best[c.Number] != c {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept
 }
 
 // setDemandLocked replaces loop's demand entry with denied (empty clears it).
