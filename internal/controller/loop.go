@@ -24,8 +24,9 @@ type Loop interface {
 	Name() string
 	// Interval is read before every wait, so reloaded config applies.
 	Interval(cfg *config.Resolved) time.Duration
-	// Claims reports whether the loop starts new work. Claiming loops are
-	// skipped while the controller is paused.
+	// Claims reports whether the loop starts work or writes to GitHub (claims,
+	// scanner filing and autoclose, stale closes, merges); such loops are
+	// skipped while the controller is paused. Only the Reaper returns false.
 	Claims() bool
 	// Tick runs one poll. It must return promptly once ctx is done.
 	Tick(ctx context.Context, env Env) error
