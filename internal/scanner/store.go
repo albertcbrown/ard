@@ -71,10 +71,11 @@ type Committer interface {
 	Commit(ctx context.Context, req committer.Request) (committer.Result, error)
 }
 
-// Engine runs a scanner and returns its findings. since is when the run
-// became due, for the pool's oldest-first ranking.
+// Engine runs a scanner and returns its findings. cfg is the tick's config:
+// the scan runs at cfg.SHA with the role directory under cfg.Repo. since is
+// when the run became due, for the pool's oldest-first ranking.
 type Engine interface {
-	Scan(ctx context.Context, role config.Role, since time.Time) (ScanResult, error)
+	Scan(ctx context.Context, cfg *config.Resolved, role config.Role, since time.Time) (ScanResult, error)
 }
 
 // ScanResult is one scan: the commit scanned and its findings.

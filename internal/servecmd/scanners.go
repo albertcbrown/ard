@@ -25,15 +25,13 @@ func scannerLoop(w *wiring) controller.Loop {
 		w.Log.Error("scanner.executor_unavailable", "error", err)
 		return nil
 	}
-	remote := fmt.Sprintf("https://github.com/%s.git", w.Repo)
-	lc := &lazyCommitter{w: w, g: g, remote: remote}
+	lc := &lazyCommitter{w: w, g: g, remote: w.RemoteURL}
 	w.onClose(lc.close)
 	eng := scanner.NewExecEngine(scanner.ExecDeps{
-		Git:      g,
 		Pool:     func() scanner.Offerer { return w.Pool() },
 		Executor: ex,
 		Jobs:     w.Store,
-		Repo:     w.Repo.String(), Root: w.Root, RepoDir: w.Root, RemoteURL: remote, Token: w.Token,
+		Repo:     w.Repo.String(), RepoDir: w.Root,
 		Log: w.Log,
 	})
 	return scanner.NewLoop(&scanner.Pipeline{

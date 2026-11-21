@@ -12,16 +12,9 @@ import (
 
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/executor"
-	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/state"
 )
-
-// Git is the slice of gitx the engine needs. *gitx.Git satisfies it.
-type Git interface {
-	FetchRef(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error
-	RevParse(ctx context.Context, dir, ref string) (string, error)
-}
 
 // Offerer grants job slots. *pool.Pool satisfies it.
 type Offerer interface {
@@ -39,17 +32,12 @@ type Jobs interface {
 
 // ExecDeps are the collaborators of ExecEngine.
 type ExecDeps struct {
-	Git      Git
 	Pool     func() Offerer // called at scan time: the pool does not exist when loops are built
 	Executor executor.Executor
 	Jobs     Jobs
 
-	Repo      string // "owner/name"
-	Root      string // abs path of the checkout holding .ard/ (role directories are read from here)
-	RepoDir   string // abs path of the clone the job worktree is cut from
-	RemoteURL string
-	Token     gitx.TokenFunc
-	Branch    string // default "main"
+	Repo    string // "owner/name"
+	RepoDir string // abs path of the clone the job worktree is cut from
 
 	OfferTTL time.Duration // how long a denied run's demand is remembered; default 10m
 	Poll     time.Duration // Status poll interval; default 2s
@@ -58,7 +46,9 @@ type ExecDeps struct {
 }
 
 // ExecEngine runs a scanner's executable through the local executor in a pool
-// slot of the scanner class, on a read-only worktree of origin/main. It is
+// slot of the scanner class, on a read-only worktree detached at the commit
+// the tick's config was loaded from (Resolved.SHA), with the role directory
+// taken from that commit's snapshot (Resolved.Repo). It does not fetch. It is
 // the only engine in phase 0; the LLM engine arrives in phase 2.
 type ExecEngine struct{ d ExecDeps }
 
@@ -66,9 +56,6 @@ var _ Engine = (*ExecEngine)(nil)
 
 // NewExecEngine applies defaults to d.
 func NewExecEngine(d ExecDeps) *ExecEngine {
-	if d.Branch == "" {
-		d.Branch = "main"
-	}
 	if d.OfferTTL <= 0 {
 		d.OfferTTL = 10 * time.Minute
 	}
@@ -85,12 +72,16 @@ func NewExecEngine(d ExecDeps) *ExecEngine {
 }
 
 // Scan asks the pool for a slot (ErrNoSlot when denied: the run is dropped,
-// not queued), scans origin/main and decodes stdout. The slot is released on
+// not queued), scans cfg.SHA and decodes stdout. The slot is released on
 // every path. A non-zero exit, a timeout, a vanished process or any decode
 // error is a *ScanError and its stdout is discarded.
-func (x *ExecEngine) Scan(ctx context.Context, role config.Role, since time.Time) (res ScanResult, err error) {
+func (x *ExecEngine) Scan(ctx context.Context, cfg *config.Resolved, role config.Role, since time.Time) (res ScanResult, err error) {
 	d := x.d
 	log := d.Log.With("scanner", role.Name)
+	if cfg == nil || cfg.SHA == "" {
+		return ScanResult{}, fmt.Errorf("scan %s: config has no commit to pin the scan to", role.Name)
+	}
+	sha := cfg.SHA
 	if since.IsZero() {
 		since = d.Now()
 	}
@@ -105,14 +96,6 @@ func (x *ExecEngine) Scan(ctx context.Context, role config.Role, since time.Time
 	slot := decs[0].Slot
 	defer slot.Release()
 
-	ref := "refs/ard/scan/" + d.Branch
-	if err := d.Git.FetchRef(ctx, d.RepoDir, d.RemoteURL, "+refs/heads/"+d.Branch+":"+ref, d.Token); err != nil {
-		return ScanResult{}, fmt.Errorf("fetch %s: %w", d.Branch, err)
-	}
-	sha, err := d.Git.RevParse(ctx, d.RepoDir, ref)
-	if err != nil {
-		return ScanResult{}, fmt.Errorf("resolve %s: %w", d.Branch, err)
-	}
 	res.SHA = sha
 
 	job, err := d.Jobs.CreateJob(ctx, state.NewJob{Stage: "scanner", Role: role.Name})
@@ -136,10 +119,10 @@ func (x *ExecEngine) Scan(ctx context.Context, role config.Role, since time.Time
 	ej := executor.Job{
 		ID: job.ID, Repo: d.Repo, Stage: "scanner", Role: role.Name,
 		RepoDir: d.RepoDir, Ref: sha, ReadOnly: true, Timeout: role.Timeout,
-		RoleDir: filepath.Join(d.Root, filepath.FromSlash(role.Dir)),
+		RoleDir: filepath.Join(cfg.Repo, filepath.FromSlash(role.Dir)),
 	}
 	if role.Dockerfile != "" {
-		ej.Dockerfile = filepath.Join(d.Root, filepath.FromSlash(role.Dockerfile))
+		ej.Dockerfile = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dockerfile))
 	}
 	h, err := d.Executor.Prepare(ctx, ej)
 	if err != nil {

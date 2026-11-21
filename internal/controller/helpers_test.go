@@ -101,7 +101,7 @@ func (f pauseFunc) Check(context.Context, *config.Resolved) PauseState { return 
 
 var never = pauseFunc(func() PauseState { return PauseState{} })
 
-func staticCfg() (*config.Resolved, error) { return &config.Resolved{}, nil }
+func staticCfg(context.Context) (*config.Resolved, error) { return &config.Resolved{}, nil }
 
 func fixedRand(r float64) func() float64 { return func() float64 { return r } }
 

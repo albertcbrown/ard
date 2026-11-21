@@ -15,6 +15,9 @@ import (
 const (
 	backoffAfter = 3 // consecutive errors before backoff starts
 	backoffCap   = 15 * time.Minute
+
+	// configTimeout bounds one config load, which fetches from the remote.
+	configTimeout = 2 * time.Minute
 )
 
 // runner drives one Loop. Ticks of one loop never overlap and a slow tick
@@ -24,7 +27,7 @@ type runner struct {
 	loop Loop
 	log  *slog.Logger
 
-	cfg       *config.Resolved // last good config
+	cfg       *config.Resolved // last good config; nil until one has loaded
 	cfgBroken bool             // last reload failed
 	paused    PauseState       // last pause state, for transition logs
 	clamped   bool
@@ -37,6 +40,9 @@ func jitter(r float64) float64 { return 0.9 + 0.2*r }
 
 // interval returns the loop's interval clamped to MinInterval.
 func (r *runner) interval() time.Duration {
+	if r.cfg == nil { // no config yet: retry at the floor
+		return MinInterval
+	}
 	d := r.loop.Interval(r.cfg)
 	if d < MinInterval {
 		if !r.clamped {
@@ -72,7 +78,14 @@ func (r *runner) run(workCtx context.Context, stopping <-chan struct{}) {
 func (r *runner) tick(workCtx context.Context, stopping <-chan struct{}) time.Duration {
 	r.n++
 	log := r.log.With("tick", r.n)
-	r.reload(log)
+	r.reload(workCtx, log)
+
+	if r.cfg == nil { // never loaded: nothing can run, and claiming loops are paused
+		if r.loop.Claims() {
+			r.transition(log, PauseState{Paused: true, Reason: ReasonConfigInvalid})
+		}
+		return r.nextWait(nil)
+	}
 
 	if r.loop.Claims() {
 		st := r.c.deps.Pause.Check(workCtx, r.cfg)
@@ -111,8 +124,10 @@ func (r *runner) tick(workCtx context.Context, stopping <-chan struct{}) time.Du
 }
 
 // reload refreshes the config snapshot, keeping the last good one on error.
-func (r *runner) reload(log *slog.Logger) {
-	cfg, err := r.c.deps.Config()
+func (r *runner) reload(ctx context.Context, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, configTimeout)
+	defer cancel()
+	cfg, err := r.c.deps.Config(ctx)
 	switch {
 	case err != nil:
 		if !r.cfgBroken {

@@ -10,7 +10,7 @@ import (
 // Built-in defaults, applied before the global config and per-role
 // overrides. Anything unset in .ard/config.yaml resolves to these values.
 const (
-	defaultMaxPods         = 3
+	defaultMaxPods         = 3 // exported as DefaultMaxPods
 	defaultExecutor        = "local"
 	defaultAgent           = "claude"
 	defaultRequireApproval = true
@@ -204,3 +204,6 @@ func normaliseRelPath(p string) (string, error) {
 	}
 	return clean, nil
 }
+
+// DefaultMaxPods is the job slot count when no config has loaded yet.
+const DefaultMaxPods = defaultMaxPods

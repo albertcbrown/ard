@@ -107,7 +107,14 @@ type Role struct {
 // Resolved is the fully merged configuration: built-in defaults, then the
 // global config, then per-role overrides.
 type Resolved struct {
-	Repo            string  // repo root
+	Repo string // repo root: a working tree, or the snapshot directory of SHA
+	// SHA is the commit the config and role directories were read from; empty
+	// when loaded from a working tree. Job builders (#29, #33, #35, #37) use
+	// Ref = SHA and resolve Role.Dir, Role.Dockerfile and Role.PromptPath
+	// against Repo. The loader's caller sets it right after loading; Resolved
+	// is read-only after that.
+	SHA string
+
 	MaxPods         int     // job slots shared by every loop; default 3
 	Executor        string  // "local" or "k8s"
 	Agent           string  // default agent CLI

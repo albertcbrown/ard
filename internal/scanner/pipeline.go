@@ -201,7 +201,7 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 	}
 
 	// 3. Scan.
-	sr, err := p.Engine.Scan(ctx, role, due)
+	sr, err := p.Engine.Scan(ctx, cfg, role, due)
 	res.SHA = sr.SHA
 	if err != nil {
 		var se *ScanError

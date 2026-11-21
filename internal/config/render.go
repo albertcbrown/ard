@@ -20,6 +20,7 @@ func (r *Resolved) WriteYAML(w io.Writer) error {
 
 type resolvedYAML struct {
 	Repo            string                 `yaml:"repo"`
+	SHA             string                 `yaml:"sha,omitempty"`
 	MaxPods         int                    `yaml:"max_pods"`
 	Executor        string                 `yaml:"executor"`
 	Agent           string                 `yaml:"agent"`
@@ -93,6 +94,7 @@ type whenYAML struct {
 func (r *Resolved) render() resolvedYAML {
 	out := resolvedYAML{
 		Repo:            r.Repo,
+		SHA:             r.SHA,
 		MaxPods:         r.MaxPods,
 		Executor:        r.Executor,
 		Agent:           r.Agent,

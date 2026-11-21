@@ -191,7 +191,7 @@ func TestConfigReloadFailureFailsClosed(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		log, buf := newLog()
 		var broken atomic.Bool
-		cfgFn := func() (*config.Resolved, error) {
+		cfgFn := func(context.Context) (*config.Resolved, error) {
 			if broken.Load() {
 				return nil, errors.New("bad yaml")
 			}
@@ -230,7 +230,7 @@ func TestIntervalChangeAppliesOnNextWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		log, _ := newLog()
 		var fast atomic.Bool
-		cfgFn := func() (*config.Resolved, error) {
+		cfgFn := func(context.Context) (*config.Resolved, error) {
 			r := &config.Resolved{}
 			if fast.Load() {
 				r.Intervals.Workers = config.Duration(2 * time.Minute)

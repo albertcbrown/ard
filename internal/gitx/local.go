@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -190,4 +194,156 @@ func (g *Git) ChangedSince(ctx context.Context, dir, base string, paths ...strin
 	}
 	sort.Slice(cs, func(i, j int) bool { return cs[i].Path < cs[j].Path })
 	return cs, nil
+}
+
+// maxExportBytes caps the total size ExportPaths will write.
+const maxExportBytes = 64 << 20
+
+// ExportPaths writes the files under paths at commit sha in repoDir into
+// dest, which must not exist; it is created 0o755. Paths missing at sha are
+// skipped (none present yields an empty dest). Regular files are written
+// 0o644, or 0o755 when git records mode 100755; directories 0o755. A
+// symlink (120000) or submodule (160000) under paths is an error, as is a
+// total size over 64 MiB. On error dest is removed.
+//
+// It reads blobs straight from the object store rather than through git
+// archive, which applies export-ignore and export-subst from .gitattributes
+// and could drop or rewrite role files.
+func (g *Git) ExportPaths(ctx context.Context, repoDir, sha, dest string, paths ...string) (err error) {
+	if _, serr := os.Lstat(dest); serr == nil {
+		return fmt.Errorf("gitx: export to %s: already exists", dest)
+	} else if !errors.Is(serr, fs.ErrNotExist) {
+		return fmt.Errorf("gitx: export to %s: %w", dest, serr)
+	}
+	for _, p := range paths {
+		if p == "" || strings.HasPrefix(p, "/") || slices.Contains(strings.Split(p, "/"), "..") {
+			return fmt.Errorf("gitx: export: bad path %q", p)
+		}
+	}
+	args := append([]string{"--literal-pathspecs", "ls-tree", "-r", "-l", "-z", "--full-tree", sha, "--"}, paths...)
+	out, _, err := g.run(ctx, repoDir, nil, "", nil, args...)
+	if err != nil {
+		return fmt.Errorf("gitx: export %.12s: %w", sha, err)
+	}
+	type entry struct {
+		path, obj string
+		exec      bool
+	}
+	var entries []entry
+	var total int64
+	for _, rec := range strings.Split(out, "\x00") {
+		if rec == "" {
+			continue
+		}
+		meta, path, ok := strings.Cut(rec, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 4 {
+			return fmt.Errorf("gitx: export %.12s: bad ls-tree record %q", sha, rec)
+		}
+		mode, typ, obj := f[0], f[1], f[2]
+		if !underAny(path, paths) {
+			return fmt.Errorf("gitx: export %.12s: %q is outside the requested paths", sha, path)
+		}
+		switch {
+		case mode == "120000":
+			return fmt.Errorf("gitx: export %.12s: %s is a symlink; symlinks are not allowed", sha, path)
+		case mode == "160000" || typ == "commit":
+			return fmt.Errorf("gitx: export %.12s: %s is a submodule; submodules are not allowed", sha, path)
+		case typ != "blob" || (mode != "100644" && mode != "100755"):
+			return fmt.Errorf("gitx: export %.12s: %s has unsupported mode %s", sha, path, mode)
+		}
+		size, perr := strconv.ParseInt(f[3], 10, 64)
+		if perr != nil {
+			return fmt.Errorf("gitx: export %.12s: bad size in %q", sha, rec)
+		}
+		if total += size; total > maxExportBytes {
+			return fmt.Errorf("gitx: export %.12s: more than %d MiB under %v", sha, maxExportBytes>>20, paths)
+		}
+		entries = append(entries, entry{path: path, obj: obj, exec: mode == "100755"})
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("gitx: export: %w", err)
+	}
+	if err := os.Mkdir(dest, 0o755); err != nil {
+		return fmt.Errorf("gitx: export: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dest)
+		}
+	}()
+	if err := os.Chmod(dest, 0o755); err != nil { // not subject to the umask
+		return fmt.Errorf("gitx: export: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	var in strings.Builder
+	for _, e := range entries {
+		in.WriteString(e.obj + "\n")
+	}
+	blobs, _, err := g.run(ctx, repoDir, nil, in.String(), nil, "cat-file", "--batch")
+	if err != nil {
+		return fmt.Errorf("gitx: export %.12s: read blobs: %w", sha, err)
+	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return fmt.Errorf("gitx: export: %w", err)
+	}
+	defer root.Close()
+	for _, e := range entries {
+		hdr, rest, ok := strings.Cut(blobs, "\n")
+		hf := strings.Fields(hdr)
+		if !ok || len(hf) != 3 || hf[0] != e.obj || hf[1] != "blob" {
+			return fmt.Errorf("gitx: export %.12s: unexpected cat-file header %q for %s", sha, hdr, e.path)
+		}
+		n, perr := strconv.Atoi(hf[2])
+		if perr != nil || n < 0 || len(rest) < n+1 {
+			return fmt.Errorf("gitx: export %.12s: truncated cat-file output for %s", sha, e.path)
+		}
+		content := rest[:n]
+		blobs = rest[n+1:]
+		if err := writeExported(root, e.path, content, e.exec); err != nil {
+			return fmt.Errorf("gitx: export %s: %w", e.path, err)
+		}
+	}
+	return nil
+}
+
+func writeExported(root *os.Root, rel, content string, exec bool) error {
+	if dir := path.Dir(rel); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	mode := os.FileMode(0o644)
+	if exec {
+		mode = 0o755
+	}
+	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// underAny reports whether p equals one of paths or lies beneath it.
+func underAny(p string, paths []string) bool {
+	for _, q := range paths {
+		q = strings.TrimSuffix(q, "/")
+		if p == q || strings.HasPrefix(p, q+"/") {
+			return true
+		}
+	}
+	return false
 }
