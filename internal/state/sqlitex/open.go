@@ -5,12 +5,15 @@ package sqlitex
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
-	_ "modernc.org/sqlite" // pure-Go driver, registers "sqlite"
+	"modernc.org/sqlite" // pure-Go driver, registers "sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Open creates path (mode 0600) if missing and opens it with WAL, a 5 s busy
@@ -29,7 +32,6 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("close %s: %w", path, err)
 	}
 	q := url.Values{}
-	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "synchronous(NORMAL)")
@@ -45,12 +47,28 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping %s: %w", path, err)
 	}
+	// Switching to WAL needs a lock that busy_timeout does not cover when
+	// several handles open a new file at once, so retry on SQLITE_BUSY.
 	var mode string
-	var fk int
-	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("read journal_mode of %s: %w", path, err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := db.QueryRowContext(ctx, `PRAGMA journal_mode=WAL`).Scan(&mode)
+		if err == nil {
+			break
+		}
+		var se *sqlite.Error
+		if !errors.As(err, &se) || se.Code()&0xff != sqlite3.SQLITE_BUSY || time.Now().After(deadline) {
+			db.Close()
+			return nil, fmt.Errorf("set journal_mode of %s: %w", path, err)
+		}
+		select {
+		case <-ctx.Done():
+			db.Close()
+			return nil, fmt.Errorf("set journal_mode of %s: %w", path, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
+	var fk int
 	if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("read foreign_keys of %s: %w", path, err)

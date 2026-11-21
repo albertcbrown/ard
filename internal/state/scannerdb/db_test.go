@@ -312,3 +312,27 @@ func TestConcurrentWrites(t *testing.T) {
 		t.Errorf("lint findings = %d, want 100", len(fs))
 	}
 }
+
+func TestConcurrentOpenNewFile(t *testing.T) {
+	ctx := tctx(t)
+	dir := t.TempDir()
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d, err := Open(ctx, dir, "cve", Options{})
+			if err != nil {
+				errs <- err
+				return
+			}
+			d.Close()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}

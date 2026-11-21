@@ -122,6 +122,15 @@ func apply(ctx context.Context, db *sql.DB, m migration, now time.Time) error {
 		return fmt.Errorf("begin migration %s: %w", m.name, err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+	// Another process may have applied this version since we read it; the
+	// immediate transaction serialises this check.
+	var cur int
+	if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(version), 0) FROM schema_version`).Scan(&cur); err != nil {
+		return fmt.Errorf("recheck schema_version before %s: %w", m.name, err)
+	}
+	if cur >= m.version {
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, m.sql); err != nil {
 		return fmt.Errorf("apply migration %s: %w", m.name, err)
 	}

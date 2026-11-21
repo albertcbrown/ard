@@ -9,11 +9,12 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/albertcbrown/ard/internal/state/sqlitex"
 )
@@ -105,5 +106,6 @@ func (s *Store) SetMeta(ctx context.Context, key, value string) error {
 }
 
 func isUnique(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
 }

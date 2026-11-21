@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -114,4 +115,32 @@ func TestMigrate(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+func TestConcurrentOpenMigrate(t *testing.T) {
+	ctx := tctx(t)
+	path := filepath.Join(t.TempDir(), "c.db")
+	files := fsOf(map[string]string{"0001_a.sql": `CREATE TABLE a(x);`})
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			db, err := Open(ctx, path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer db.Close()
+			if _, err := Migrate(ctx, db, files, time.Unix(1, 0)); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }
