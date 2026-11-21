@@ -40,7 +40,7 @@ func runMerge(t *testing.T, osvJSON, gvJSONL []byte) []byte {
 	if err := os.WriteFile(gvPath, gvJSONL, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("jq", "-c", "-n", "--arg", "root", "/R",
+	cmd := exec.Command("jq", "-c", "-n", "--arg", "root", "/R", "--arg", "lroot", "/L",
 		"--slurpfile", "osv", osvPath, "--slurpfile", "gv", gvPath,
 		"-f", "scanners/cve/merge.jq")
 	var stderr bytes.Buffer
@@ -55,7 +55,7 @@ func runMerge(t *testing.T, osvJSON, gvJSONL []byte) []byte {
 var cases = []string{
 	"both_tools", "osv_only", "gv_only", "module_level_only", "symbol_called",
 	"severity_fallbacks", "two_ghsa", "cve_only", "excluded_manifests",
-	"nested_module", "untrusted_summary", "empty",
+	"nested_module", "untrusted_summary", "scoped_npm", "empty",
 }
 
 func TestMergeGolden(t *testing.T) {
@@ -296,7 +296,10 @@ func TestFingerprintIgnoresScoreAndSummary(t *testing.T) {
 const osvShim = `#!/bin/sh
 [ "${1:-}" = "--version" ] && { echo "osv-scanner shim"; exit 0; }
 echo "osv-scanner $*" >> "$SHIM_LOG"
-[ -n "${OSV_FIXTURE:-}" ] && sed "s#@ROOT@#$(pwd -P)#g" "$OSV_FIXTURE"
+root=$(pwd -P)
+[ -n "${OSV_LOGICAL:-}" ] && root=$PWD
+[ -n "${OSV_ROOT:-}" ] && root=$OSV_ROOT
+[ -n "${OSV_FIXTURE:-}" ] && sed "s#@ROOT@#$root#g" "$OSV_FIXTURE"
 exit "${OSV_RC:-0}"
 `
 
@@ -578,5 +581,39 @@ func TestScanOsvOnlyNoGoModule(t *testing.T) {
 	}
 	if fs := decode(t, []byte(out)); len(fs) != 1 || !strings.Contains(fs[0].Body, "Reachable: unknown") {
 		t.Fatalf("got %s", out)
+	}
+}
+
+// osv-scanner builds absolute paths from the logical cwd; under a symlinked
+// directory they must still be made repo-relative.
+func TestScanSymlinkedCwd(t *testing.T) {
+	e := setup(t)
+	e.bothToolsRepo(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(e.repo, link); err != nil {
+		t.Fatal(err)
+	}
+	fix := filepath.Join(mustAbs(t, "testdata/cve/both_tools"), "osv.json")
+	cmd := exec.Command(filepath.Join(e.role, "scan"))
+	cmd.Dir = link
+	cmd.Env = []string{"PATH=" + e.bin, "HOME=/nonexistent", "TMPDIR=" + e.tmp, "SHIM_LOG=" + e.log,
+		"GV_DIR=" + e.gvDir, "OSV_FIXTURE=" + fix, "OSV_LOGICAL=1", "PWD=" + link}
+	var so, se bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &so, &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("%v\n%s", err, se.String())
+	}
+	want, _ := os.ReadFile("testdata/cve/both_tools/want.jsonl")
+	if so.String() != string(want) {
+		t.Fatalf("stdout mismatch (host path leaked?)\n got: %s\nwant: %s", so.String(), want)
+	}
+}
+
+func TestScanAbsoluteManifestFailsClosed(t *testing.T) {
+	e := setup(t)
+	e.shim(t, "osv-scanner", osvShim)
+	out, errOut, code := e.run(t, "OSV_ROOT=/somewhere/else", "OSV_FIXTURE="+filepath.Join(mustAbs(t, "testdata/cve/osv_only"), "osv.json"))
+	if code == 0 || out != "" || !strings.Contains(errOut, "absolute manifest") {
+		t.Fatalf("exit %d stdout %q stderr %s", code, out, errOut)
 	}
 }

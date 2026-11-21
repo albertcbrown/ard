@@ -1,15 +1,19 @@
 # merge.jq: map osv-scanner and govulncheck output to ard findings (JSONL).
 #
 # Inputs (all via scan, see its header):
-#   --arg root <abs path of the scanned repo>
+#   --arg root <physical abs path of the scanned repo> --arg lroot <logical one>
 #   --slurpfile osv <osv-scanner --format json output>     ([] or [{"results":[...]}])
 #   --slurpfile gv  <JSONL, one {manifest, messages} per Go module> ([] when absent)
 # Output: one compact JSON object per finding, sorted by fingerprint, keys in
 # the order fingerprint,title,severity,group,files,body. Pure and deterministic:
 # no timestamps, no tool versions. Written for jq 1.6+.
 
+# osv-scanner builds absolute paths from the logical cwd ($lroot), while $root
+# is the physical one; strip whichever matches.
 def rel:
-  (if startswith($root + "/") then .[($root | length) + 1:] else . end)
+  (if startswith($root + "/") then .[($root | length) + 1:]
+   elif startswith($lroot + "/") then .[($lroot | length) + 1:]
+   else . end)
   | sub("^\\./"; "");
 
 def excluded:
@@ -34,6 +38,7 @@ def firstnn: map(select(. != null and . != "")) | .[0];
 def osv_cands:
   [ $osv[] | (.results // [])[]
     | ((.source.path // "") | rel) as $m
+    | (if ($m | startswith("/")) then error("cve: absolute manifest " + $m) else . end)
     | (.packages // [])[]
     | .package as $p
     | (.vulnerabilities // []) as $vs
@@ -134,7 +139,7 @@ def render:
   | . as $v
   | {
       fingerprint: ("osv:" + $canon + ":" + $m + ":" + $pkg),
-      title: (($pkg | gsub("[\\r\\n]"; " ")) + ": " + $canon + " (" + $sev + ")" | .[:200]),
+      title: ("`" + ($pkg | gsub("[`\\r\\n]"; "")) + "`: " + $canon + " (" + $sev + ")" | .[:200]),
       severity: $sev,
       group: $m,
       files: [$m],
@@ -144,15 +149,15 @@ def render:
         "Reachable: " + (if $v.reach == "no" then "no (severity capped at medium)" else $v.reach end),
         "Reported by: " + ($v.tools | join(", ")),
         "",
-        "Advisories:",
-        ($v.ids | map(safeid) | .[]
-          | "- [" + . + "](https://osv.dev/vulnerability/" + . + ")"
-            + (if startswith("GHSA-") then " ([GitHub](https://github.com/advisories/" + . + "))" else "" end)),
-        "",
         "Advisory summary (untrusted text from the advisory database):",
         "```text",
         (($v.summary // "(none)") | gsub("`{3,}"; "'''") | .[:500]),
-        "```"
+        "```",
+        "",
+        "Advisories:",
+        ($v.ids | map(safeid) | .[]
+          | "- [" + . + "](https://osv.dev/vulnerability/" + . + ")"
+            + (if startswith("GHSA-") then " ([GitHub](https://github.com/advisories/" + . + "))" else "" end))
       ] | join("\n") | .[:8192])
     };
 

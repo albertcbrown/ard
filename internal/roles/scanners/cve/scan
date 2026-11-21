@@ -85,8 +85,10 @@ if [ -s "$tmp/mods.txt" ]; then
 fi
 
 # 3. Merge into findings.
+# osv-scanner uses the logical cwd for its absolute paths; strip either form.
 root=$(pwd -P)
-jq -c -n --arg root "$root" --slurpfile osv "$tmp/osv.json" --slurpfile gv "$tmp/govuln.jsonl" \
+lroot=$(pwd)
+jq -c -n --arg root "$root" --arg lroot "$lroot" --slurpfile osv "$tmp/osv.json" --slurpfile gv "$tmp/govuln.jsonl" \
   -f "$dir/merge.jq" > "$tmp/out.jsonl" || die "merge failed"
 
 echo "cve: $(wc -l < "$tmp/out.jsonl" | tr -d ' ') finding(s)" >&2
