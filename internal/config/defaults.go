@@ -145,7 +145,7 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 
 	if raw.haveMerge {
 		for i, p := range raw.protectedPaths {
-			norm, err := normaliseRelPath(p)
+			norm, err := normaliseProtectedPath(p)
 			if err != nil {
 				errs = append(errs, &Error{File: cfgPath, Key: fmt.Sprintf("merge.protected_paths[%d]", i), Msg: err.Error()})
 				continue

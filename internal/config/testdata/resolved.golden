@@ -14,7 +14,7 @@ intervals:
   reviewers: 5m
   merger: 5m
 protected_paths:
-  - infra
+  - infra/
 stale:
   inactive_for: 30d
   suppress_for: 90d
