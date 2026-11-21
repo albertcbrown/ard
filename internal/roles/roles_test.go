@@ -3,9 +3,14 @@ package roles
 import (
 	"io/fs"
 	"os"
+	"path"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
+
+	"github.com/albertcbrown/ard/internal/config"
 )
 
 func TestFSContents(t *testing.T) {
@@ -52,6 +57,57 @@ func TestExecutableNames(t *testing.T) {
 	}
 }
 
-// TODO(#27): once internal/config (#11) lands, copy FS into an fstest.MapFS
-// under .ard/ with scan at 0o755 and check config.LoadFS yields a scanner role
-// "cve" with ScanPath set.
+// This is what #27's writer must do: embed.FS drops modes (everything is 0444),
+// so files named in ExecutableNames are written 0755.
+func TestEmbeddedCveRoleLoadsAsScanner(t *testing.T) {
+	asArdDir := func(chmod bool) fstest.MapFS {
+		m := fstest.MapFS{}
+		err := fs.WalkDir(FS, ".", func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			b, err := FS.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			mode := fs.FileMode(0o644)
+			if chmod && slices.Contains(ExecutableNames, path.Base(p)) {
+				mode = 0o755
+			}
+			m[".ard/"+p] = &fstest.MapFile{Data: b, Mode: mode}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	// Without the chmod, config rejects the role: the exec bit really is needed.
+	if _, err := config.LoadFS(asArdDir(false), "/repo"); err == nil || !strings.Contains(err.Error(), "executable") {
+		t.Fatalf("want an 'executable' error without chmod, got %v", err)
+	}
+
+	res, err := config.LoadFS(asArdDir(true), "/repo")
+	if err != nil {
+		t.Fatalf("LoadFS: %v", err)
+	}
+	var found *config.Role
+	for i := range res.Roles {
+		if res.Roles[i].Kind == config.KindScanner && res.Roles[i].Name == "cve" {
+			found = &res.Roles[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no scanner role cve in %+v", res.Roles)
+	}
+	if found.ScanPath != ".ard/scanners/cve/scan" || found.PromptPath != "" || !found.Autoclose {
+		t.Errorf("unexpected role: %+v", found)
+	}
+	if found.Dockerfile != ".ard/scanners/cve/Dockerfile" {
+		t.Errorf("Dockerfile = %q", found.Dockerfile)
+	}
+	if !slices.Equal(found.Extra, []string{"merge.jq"}) {
+		t.Errorf("Extra = %v, want [merge.jq]", found.Extra)
+	}
+}

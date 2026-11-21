@@ -1,0 +1,102 @@
+repo: /repo
+max_pods: 3
+executor: local
+agent: kimi
+require_approval: true
+budget_usd_per_day: 50
+max_budget_usd: 5
+global_max_open: 30
+paused: false
+intervals:
+  scanners: 6h
+  triage: 15m
+  workers: 5m
+  reviewers: 5m
+  merger: 5m
+protected_paths:
+  - infra
+stale:
+  inactive_for: 30d
+  suppress_for: 90d
+sidecars:
+  vpe-specs:
+    repo: acme/specs
+    ref: v1
+roles:
+  - name: cve
+    kind: scanner
+    dir: .ard/scanners/cve
+    scan: .ard/scanners/cve/scan
+    extra:
+      - osv.toml
+    agent: kimi
+    timeout: 30m
+    every: 12h
+    max_open: 10
+    group_size: 1
+    autoclose: true
+  - name: lint
+    kind: scanner
+    dir: .ard/scanners/lint
+    prompt: .ard/scanners/lint/prompt.txt
+    agent: kimi
+    timeout: 30m
+    every: 6h
+    max_open: 5
+    group_size: 10
+  - name: architect
+    kind: triage
+    dir: .ard/triage/architect
+    prompt: .ard/triage/architect/prompt.txt
+    agent: kimi
+    timeout: 30m
+  - name: engineer
+    kind: triage
+    dir: .ard/triage/engineer
+    prompt: .ard/triage/engineer/prompt.txt
+    agent: kimi
+    timeout: 30m
+  - name: lead
+    kind: triage
+    dir: .ard/triage/lead
+    prompt: .ard/triage/lead/prompt.txt
+    agent: kimi
+    timeout: 30m
+    sidecar: vpe-specs
+    after:
+      - architect
+  - name: engineer
+    kind: worker
+    dir: .ard/workers/engineer
+    prompt: .ard/workers/engineer/prompt.txt
+    extra:
+      - allowlist.txt
+      - scripts/test.sh
+    agent: kimi
+    timeout: 30m
+    tests: make test
+    max_test_fixes: 2
+    max_review_rounds: 3
+    reviewers:
+      - security-review
+  - name: eng-review
+    kind: reviewer
+    dir: .ard/reviewers/eng-review
+    prompt: .ard/reviewers/eng-review/prompt.txt
+    agent: kimi
+    timeout: 30m
+  - name: license-review
+    kind: reviewer
+    dir: .ard/reviewers/license-review
+    prompt: .ard/reviewers/license-review/prompt.txt
+    agent: kimi
+    timeout: 30m
+    when:
+      paths:
+        - go.mod
+  - name: security-review
+    kind: reviewer
+    dir: .ard/reviewers/security-review
+    prompt: .ard/reviewers/security-review/prompt.txt
+    agent: kimi
+    timeout: 30m
