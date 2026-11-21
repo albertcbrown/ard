@@ -35,7 +35,7 @@ flowchart TD
         A["Agent adapters: claude, kimi, dsh-tui"]
         C["Committer: sole writer to main"]
         X["Reaper: ard:executor:failed, keep 24 h"]
-        D["State: one SQLite db per scanner"]
+        D["State: controller db plus one SQLite db per scanner"]
     end
 ```
 
@@ -148,7 +148,7 @@ A scanner is a directory, `.ard/scanners/<name>/`, holding either an executable 
 5. **Group.** Findings that share a `group` key join one issue, up to `group_size` (N), as a checklist with one line per finding. New findings join an open group issue that has room and is not yet claimed; otherwise they start a new one.
 6. **File.** Create the issue with `ard:scanner:<name>` and `ard:pending`, then queue `.ard/<issue#>/issue.md` to the committer. The issue comes first because its number names the directory.
 
-**Each scanner has its own state, and GitHub is the truth.** Every scanner keeps a separate SQLite file, `~/.ard/state/<owner>-<repo>/<scanner>.db`: fingerprint to issue, first and last seen, suppressions, last run. Scanners never share or lock each other's state, and one can be reset without touching the rest. Every issue body carries hidden markers (`<!-- ard:fp=<fingerprint> -->`), so `ard rebuild-state <scanner>` restores a database from GitHub after a lost disk or a host move.
+**Each scanner has its own state, and GitHub is the truth.** Every scanner keeps a separate SQLite file, `~/.ard/state/<owner>-<repo>/<scanner>.db`: fingerprint to issue, first and last seen, suppressions, last run. Scanners never share or lock each other's state, and one can be reset without touching the rest. The controller keeps its own jobs, attempts and events in `_controller.db` in the same directory, and dry-run uses `~/.ard/state-dryrun/<owner>-<repo>/`. Every issue body carries hidden markers (`<!-- ard:fp=<fingerprint> -->`), so `ard rebuild-state <scanner>` restores a database from GitHub after a lost disk or a host move.
 
 **Closed is not always "forget".** Removing a fingerprint on every close, as first sketched, refiles a won't-fix issue on the next run. Completed closes stop tracking the finding but keep a `fixed` tombstone, so a finding that comes back is filed as a regression of the old issue. Not-planned closes suppress, and re-raise early if severity rises.
 
