@@ -25,6 +25,7 @@ import (
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/redact"
+	"github.com/albertcbrown/ard/internal/scanner/stale"
 	"github.com/albertcbrown/ard/internal/state"
 	"github.com/albertcbrown/ard/internal/state/scannerdb"
 )
@@ -193,14 +194,15 @@ func (w *wiring) Pool() *pool.Pool {
 	return p
 }
 
-// registerLoops returns the loops to run: the scanners loop (#23) so far.
-// #25 (stale) and the triage, worker, reviewer, merger and Reaper loops each
+// registerLoops returns the loops to run: the scanners loop (#23) and the
+// stale closer (#25) so far. The triage, worker, reviewer, merger and Reaper loops each
 // add one constructor call here. It is a variable so tests can observe wiring.
 var registerLoops = func(w *wiring) []controller.Loop {
 	var loops []controller.Loop
 	if l := scannerLoop(w); l != nil {
 		loops = append(loops, l)
 	}
+	loops = append(loops, stale.New(w.Reader, w.Effects, nil))
 	return loops
 }
 
