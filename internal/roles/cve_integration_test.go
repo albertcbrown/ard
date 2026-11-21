@@ -53,19 +53,61 @@ func main() { _, _, _ = language.ParseAcceptLanguage("en") }
 	if err != nil {
 		t.Fatalf("scan: %v\n%s", err, stderr.String())
 	}
-	var hits []finding
+	const want = "osv:GHSA-69ch-w2m2-3vjp:go.mod:golang.org/x/text"
+	hits := map[string]finding{}
 	for _, f := range decode(t, out) { // stdlib advisories come and go: ignore them
 		if !strings.HasSuffix(f.Fingerprint, ":stdlib") {
-			hits = append(hits, f)
+			hits[f.Fingerprint] = f
 		}
 	}
-	if len(hits) != 1 {
-		t.Fatalf("want exactly one non-stdlib finding, got %d:\n%s", len(hits), out)
+	// x/text v0.3.7 collects advisories over time: require the called one, and
+	// that anything else on x/text is module-level only.
+	g, ok := hits[want]
+	if !ok {
+		t.Fatalf("missing %s:\n%s", want, out)
 	}
-	if want := "osv:GHSA-69ch-w2m2-3vjp:go.mod:golang.org/x/text"; hits[0].Fingerprint != want {
-		t.Errorf("fingerprint = %s, want %s", hits[0].Fingerprint, want)
+	if g.Severity != "high" || !strings.Contains(g.Body, "Reachable: yes") ||
+		!strings.Contains(g.Body, "Reported by: govulncheck, osv-scanner") {
+		t.Errorf("unexpected finding:\n%+v", g)
 	}
-	if !strings.Contains(hits[0].Body, "Reachable: yes") {
-		t.Errorf("want reachable yes:\n%s", hits[0].Body)
+	for fp, f := range hits {
+		if !strings.HasSuffix(fp, ":go.mod:golang.org/x/text") {
+			t.Errorf("finding on an unexpected module: %s", fp)
+		}
+		if fp != want && !strings.Contains(f.Body, "Reachable: no") {
+			t.Errorf("%s should be unreachable:\n%s", fp, f.Body)
+		}
 	}
+}
+
+// ard's own checkout, exported from git so untracked worktrees and modules are
+// not scanned. Logs the finding count; a new advisory must not fail the test.
+func TestIntegrationScansRepoClean(t *testing.T) {
+	for _, n := range []string{"osv-scanner", "govulncheck", "go", "jq", "git", "tar"} {
+		if _, err := exec.LookPath(n); err != nil {
+			t.Skipf("%s not on PATH", n)
+		}
+	}
+	top, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Skipf("not in a git checkout: %v", err)
+	}
+	dir := t.TempDir()
+	arch := exec.Command("sh", "-c", `git -C "$1" archive HEAD | tar -x -C "$2"`, "sh", strings.TrimSpace(string(top)), dir)
+	if out, err := arch.CombinedOutput(); err != nil {
+		t.Fatalf("export: %v\n%s", err, out)
+	}
+	scan, err := filepath.Abs("scanners/cve/scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(scan)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("scan: %v\n%s", err, stderr.String())
+	}
+	t.Logf("%d finding(s)\n%s", len(decode(t, out)), stderr.String())
 }

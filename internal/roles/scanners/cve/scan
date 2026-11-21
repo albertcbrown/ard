@@ -71,7 +71,7 @@ if [ -s "$tmp/mods.txt" ]; then
   else
     need go
     need govulncheck
-    echo "govulncheck: $(govulncheck -version 2>&1 | head -n 1 || true)" >&2
+    echo "govulncheck: $(govulncheck -version 2>&1 | grep -m 1 '^Scanner:' || true)" >&2
     while IFS= read -r f; do
       manifest=${f#./}
       mdir=$(dirname -- "$manifest")

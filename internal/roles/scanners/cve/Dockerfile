@@ -2,15 +2,16 @@
 #   govulncheck v1.10.0 (golang.org/x/vuln), osv-scanner v2.7.1, jq 1.8.2.
 # The osv-scanner and jq checksums below come from the projects' own published
 # checksum files (osv-scanner_SHA256SUMS, sha256sum.txt) for those releases.
-# The base image is pinned by tag only.
-# TODO: pin golang:1.27-bookworm by digest (`docker buildx imagetools inspect`)
-# once Docker is available to verify it; no digest is recorded here on purpose.
+# The base image (golang:1.27.4-bookworm) is pinned by multi-arch index digest,
+# verified 2026-11-21 with:
+#   docker buildx imagetools inspect golang:1.27-bookworm
+# Docker ignores the tag when a digest is present; it is there for readers.
 #
 # The image does NOT copy `scan` or `merge.jq`: the executor mounts this role
 # directory read-only, so the mounted script is always the one that runs.
 # Run:  docker run --rm -v "$PWD":/repo:ro -v <role dir>:/role:ro -w /repo IMAGE /role/scan
 
-ARG GO_IMAGE=golang:1.27-bookworm
+ARG GO_IMAGE=golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
 
 FROM ${GO_IMAGE} AS govulncheck
 ARG GOVULNCHECK_VERSION=v1.10.0
