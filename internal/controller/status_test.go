@@ -193,6 +193,8 @@ func TestEnsureStatusIssueCache(t *testing.T) {
 	closed.State = github.StateClosed
 	noMarker := statusIssue(bot)
 	noMarker.Body = "no marker"
+	retitled := statusIssue(bot)
+	retitled.Title = "renamed"
 	tests := []struct {
 		name       string
 		seed       func(f *fake.Fake)
@@ -219,6 +221,9 @@ func TestEnsureStatusIssueCache(t *testing.T) {
 		{name: "cached missing marker", seed: func(f *fake.Fake) { f.SeedIssue(noMarker); f.SeedIssue(own) },
 			cache: &memCache{m: map[string]string{StatusIssueKey: "1"}}, wantNum: 2, wantSearch: 1,
 			wantCache: "2", wantSets: 1, wantLog: "status.cache_stale"},
+		{name: "cached retitled", seed: func(f *fake.Fake) { f.SeedIssue(retitled); f.SeedIssue(own) },
+			cache: &memCache{m: map[string]string{StatusIssueKey: "1"}}, wantNum: 2, wantSearch: 1,
+			wantCache: "2", wantSets: 1, wantLog: "reason=foreign"},
 		{name: "cached number is a PR", seed: func(f *fake.Fake) {
 			f.SeedPR(github.PullRequest{Title: StatusTitle, Body: StatusMarker, Author: bot, State: github.StateOpen})
 			f.SeedIssue(own)
