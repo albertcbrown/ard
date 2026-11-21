@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -134,8 +135,18 @@ func variantsOf(v string) []string {
 		out = append(out, enc.EncodeToString(b))
 	}
 	out = append(out, url.QueryEscape(v), url.PathEscape(v))
+	// JSON-escaped forms: encoding/json escapes <, > and & by default, while
+	// JavaScript's JSON.stringify (stream-json logs) does not. Keep both.
 	if j, err := json.Marshal(v); err == nil && len(j) >= 2 {
 		out = append(out, string(j[1:len(j)-1]))
+	}
+	var jb bytes.Buffer
+	enc := json.NewEncoder(&jb)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err == nil {
+		if j := bytes.TrimSuffix(jb.Bytes(), []byte("\n")); len(j) >= 2 {
+			out = append(out, string(j[1:len(j)-1]))
+		}
 	}
 	if strings.Contains(v, "\n") {
 		for _, l := range strings.Split(v, "\n") {

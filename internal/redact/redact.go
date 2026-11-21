@@ -36,6 +36,7 @@ type Redactor struct {
 	secrets *Secrets
 	opts    Options
 	chunk   int
+	open    func(string) (io.ReadCloser, error) // test hook; default os.Open
 }
 
 // New returns a Redactor for the given known values.
@@ -55,10 +56,13 @@ func New(s *Secrets, o Options) (*Redactor, error) {
 	if o.MaxFindings == 0 {
 		o.MaxFindings = defaultFindings
 	}
+	if o.MaxFindings < 0 {
+		return nil, fmt.Errorf("max findings %d: %w", o.MaxFindings, ErrBadOptions)
+	}
 	if o.HeadBytes < 0 || o.MaxBytes < o.HeadBytes+markerReserve+1024 {
 		return nil, fmt.Errorf("max %d, head %d: %w", o.MaxBytes, o.HeadBytes, ErrBadOptions)
 	}
-	return &Redactor{secrets: s, opts: o, chunk: defaultChunk}, nil
+	return &Redactor{secrets: s, opts: o, chunk: defaultChunk, open: func(p string) (io.ReadCloser, error) { return os.Open(p) }}, nil
 }
 
 // LogResult is the verdict for one log.
@@ -66,7 +70,7 @@ type LogResult struct {
 	Clean        []byte         // capped, redacted, scanned; nil unless the verdict is clean
 	Flagged      bool           // a scan hit: commit nothing, add ard:needs-human
 	Findings     []Finding      // from the full scan plus the re-scan, de-duplicated
-	FindingCount int            // total, including findings beyond MaxFindings
+	FindingCount int            // total, including findings beyond MaxFindings; saturates at the scanner cap (10000)
 	Replaced     map[string]int // name -> count; for logging only
 	Truncated    bool
 	OrigBytes    int64  // raw size
@@ -80,7 +84,7 @@ type LogResult struct {
 // no dst or temp file is left behind.
 func (r *Redactor) Log(ctx context.Context, src, dst string) (LogResult, error) {
 	start := time.Now()
-	in, err := os.Open(src)
+	in, err := r.open(src)
 	if err != nil {
 		return LogResult{}, fmt.Errorf("redact %s: %w", src, err)
 	}

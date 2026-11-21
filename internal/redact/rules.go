@@ -37,7 +37,7 @@ var rules = []rule{
 	{id: "gcp-api-key", re: regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`), kw: kws("AIza")},
 	{id: "stripe-live", re: regexp.MustCompile(`\b[rs]k_live_[A-Za-z0-9]{20,250}`), kw: kws("_live_")},
 	{id: "generic-assignment", generic: true,
-		re: regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|passw(?:or)?d|auth)["']?\s*[:=]\s*["']?([A-Za-z0-9_\-+/=.]{16,250})`)},
+		re: regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|passw(?:or)?d|auth)["']?\s{0,16}[:=]\s{0,16}["']?([A-Za-z0-9_\-+/=.]{16,250})`)},
 }
 
 const entropyThreshold = 3.5

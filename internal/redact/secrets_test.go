@@ -16,6 +16,7 @@ func TestSecretsVariants(t *testing.T) {
 	pem := "-----BEGIN TEST-----\n" + randStr(20, 40) + "\n" + randStr(21, 40) + "\r\n-----END TEST-----"
 	jsonQ := "pa\"ss/wo+rd=" + randStr(22, 20)
 	tests := map[string]string{
+		"html":   "ab<cd>ef&gh\"ij",
 		"plain":  randStr(23, 24),
 		"slashy": jsonQ,
 		"pem":    pem,
@@ -28,7 +29,13 @@ func TestSecretsVariants(t *testing.T) {
 			}
 			b := []byte(val)
 			j, _ := json.Marshal(val)
+			var jb bytes.Buffer
+			enc := json.NewEncoder(&jb)
+			enc.SetEscapeHTML(false)
+			_ = enc.Encode(val)
+			jsq := strings.TrimSuffix(jb.String(), "\n")
 			vs := []string{
+				jsq[1 : len(jsq)-1],
 				val,
 				base64.StdEncoding.EncodeToString(b), base64.URLEncoding.EncodeToString(b),
 				base64.RawStdEncoding.EncodeToString(b), base64.RawURLEncoding.EncodeToString(b),
@@ -146,5 +153,23 @@ func TestFromEnvironAndAddEnvAndMerge(t *testing.T) {
 	}
 	if err := e.AddEnv(map[string]string{"bad name": model}); !errors.Is(err, ErrBadName) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestOverlappingSecretsRedactedAsOneSpan(t *testing.T) {
+	s := NewSecrets()
+	_ = s.Add("A", "aaaaaaaabbbb")
+	_ = s.Add("B", "bbbbcccc")
+	for chunk := 1; chunk <= 7; chunk++ {
+		for off := 0; off < 14; off++ {
+			in := strings.Repeat("x", off) + "aaaaaaaabbbbcccc" + "yy"
+			var out bytes.Buffer
+			if _, _, err := s.stream(context.Background(), strings.NewReader(in), &out, chunk); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(out.String(), "cccc") || strings.Contains(out.String(), "bbbb") || !strings.HasSuffix(out.String(), "yy") {
+				t.Fatalf("chunk %d off %d: %q", chunk, off, out.String())
+			}
+		}
 	}
 }

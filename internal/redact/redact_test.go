@@ -46,6 +46,9 @@ func TestNewOptions(t *testing.T) {
 	if _, err := New(nil, Options{MaxBytes: 1000, HeadBytes: 900}); !errors.Is(err, ErrBadOptions) {
 		t.Errorf("err = %v", err)
 	}
+	if _, err := New(nil, Options{MaxFindings: -1}); !errors.Is(err, ErrBadOptions) {
+		t.Errorf("negative MaxFindings err = %v", err)
+	}
 	if _, err := New(nil, Options{}); err != nil {
 		t.Errorf("defaults: %v", err)
 	}
@@ -262,8 +265,14 @@ func TestLogFailsClosed(t *testing.T) {
 		dir := t.TempDir()
 		src := writeFile(t, dir, "raw.log", strings.Repeat("some line\n", 1000))
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		res, err := newR(t, nil, Options{}).Log(ctx, src, filepath.Join(dir, "o.log"))
+		defer cancel()
+		r := newR(t, nil, Options{})
+		r.chunk = 1
+		r.open = func(p string) (io.ReadCloser, error) {
+			f, err := os.Open(p)
+			return &cancelAfterFirst{f, cancel}, err
+		}
+		res, err := r.Log(ctx, src, filepath.Join(dir, "o.log"))
 		if err == nil || res.Clean != nil {
 			t.Fatalf("res = %+v err = %v", res, err)
 		}
@@ -321,4 +330,16 @@ func TestLogStreamsInBoundedMemory(t *testing.T) {
 	if d := after.TotalAlloc - before.TotalAlloc; d > 16<<20 {
 		t.Errorf("allocated %d MiB for a 64 MiB log", d>>20)
 	}
+}
+
+// cancelAfterFirst cancels the context once the first chunk has been read.
+type cancelAfterFirst struct {
+	*os.File
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfterFirst) Read(p []byte) (int, error) {
+	n, err := c.File.Read(p)
+	c.cancel()
+	return n, err
 }
