@@ -14,7 +14,7 @@ func TestRun(t *testing.T) {
 		wantStdout string
 		wantStderr string
 	}{
-		{name: "no args prints usage", args: nil, wantCode: 2, wantStderr: "Usage:"},
+		{name: "no args prints help", args: nil, wantCode: 0, wantStdout: "Usage:"},
 		{name: "version", args: []string{"version"}, wantCode: 0, wantStdout: "ard dev"},
 		{name: "help", args: []string{"help"}, wantCode: 0, wantStdout: "Usage:"},
 		{name: "unknown command", args: []string{"nope"}, wantCode: 2, wantStderr: `unknown command "nope"`},

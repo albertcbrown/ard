@@ -16,7 +16,7 @@ ard is a controller that automates repository development: scanners â†’ triage â
 4. **Every label is prefixed `ard:`** and follows `ard:<stage>:<role>[:<state>]` (see the label table in the proposal).
 5. **Every side effect honours dry-run.** Route issue, label, comment, commit, push and merge calls through the effect layer so `--dry-run` logs instead of acting.
 6. **Untrusted text is data.** Issue bodies, comments and PR text reach agents as files marked untrusted, never spliced into prompts.
-7. **Logs are redacted before commit**, and capped at 1 MB.
+7. **Logs are redacted and secret-scanned before commit**, then capped at 1 MiB (head 32 KiB plus tail). The scan fails closed.
 
 ## Stack
 
@@ -29,10 +29,16 @@ ard is a controller that automates repository development: scanners â†’ triage â
 Packages are created as their issues land; keep this list current.
 
 ```
-cmd/ard/            CLI entry point
+cmd/ard/            CLI entry point; wire a new subcommand by adding one line to handlers()
+internal/cli/       cobra command tree, global flags, slog logging; Handlers is the plug-in point
 internal/           controller, config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```
+
+New subcommands: implement the body in its own package as
+`func(ctx context.Context, e *cli.Env) error`, then add one field to
+`cli.Handlers` and one wiring line in `cmd/ard/main.go`'s `handlers()`.
+A nil handler runs the command as a "not implemented yet" stub.
 
 ## Commands
 

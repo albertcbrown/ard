@@ -111,9 +111,10 @@ Every `<name>.md` starts with frontmatter the controller reads, so the agent rep
 ```
 ---
 role: engineer
-status: done          # done | blocked | needs-human
+status: done          # done | blocked | needs-human (both of the last two add ard:needs-human)
 attempt: 1
 next: [review:security-review, review:eng-review]   # optional requests
+worker: engineer      # lead only: which worker role implements the plan
 ---
 Short summary of what was done.
 
@@ -121,7 +122,7 @@ Short summary of what was done.
 - ...
 ```
 
-**All agent output is committed too.** Each run's full output lands in `.ard/<issue#>/logs/<stage>-<role>-<ts>.log`, redacted and capped at 1 MB. Scanner and triage output goes to `main` through the committer; worker and reviewer output goes on the branch and ships in the PR. A scanner run that files or updates no issue keeps its log host-local. Never committed: scanner state databases, and any log the secret scan flags.
+**All agent output is committed too.** Each run's full output lands in `.ard/<issue#>/logs/<stage>-<role>-<ts>.log`. Close-out redacts known secret values from the whole stream, secret-scans the whole redacted log, then caps it at 1 MiB: the first 32 KiB plus the last ~992 KiB, cut on line boundaries and joined by one truncation marker line. The full redacted log stays host-local for 7 days. Scanner and triage output goes to `main` through the committer; worker and reviewer output goes on the branch and ships in the PR. A scanner run that files or updates no issue keeps its log host-local. Never committed: scanner state databases, and any log the secret scan flags.
 
 **One writer location per issue directory at a time.** Until the worker branch exists, `main` owns `.ard/<issue#>/`; scanners and triage write there. Once the branch is cut, the branch owns it; workers and reviewers commit to the PR, and a scanner with new findings comments on the issue instead. This keeps the PR merge free of conflicts in `.ard/`.
 
@@ -141,7 +142,7 @@ A scanner is a directory, `.ard/scanners/<name>/`, holding either an executable 
 **Each run, in order:**
 
 1. **Backpressure, in code, before the scanner starts.** The controller counts open issues with `ard:scanner:<name>`; at or above `max_open` it drops the run and logs it. A dropped run is not queued: the next scheduled run checks again. A global cap across all scanners stops a bad day from burying the queue.
-2. **Reconcile.** Fetch the scanner's issues, open and recently closed, and update its state. Closed as completed: drop the fingerprints. Closed as not planned (including stale): suppress them for 90 days. Deleted or transferred: drop.
+2. **Reconcile.** Fetch the scanner's issues, open and recently closed, and update its state. Closed as completed: mark the fingerprints fixed, keeping a tombstone so a return can link the old issue. Closed as not planned (including stale): suppress them for `stale.suppress_for` (default 90 days). Deleted or transferred: drop.
 3. **Scan.** Run the scanner on a read-only worktree of `origin/main`, with a timeout. It needs a free job slot, and scanners rank last for one.
 4. **Diff.** A new, unsuppressed fingerprint is queued for filing. A fingerprint that returns after being fixed files a new issue that links the old one as a regression. An open issue whose fingerprints are all gone gets "no longer detected at `<sha>`" and is closed, but only for scanners marked `autoclose` (deterministic ones).
 5. **Group.** Findings that share a `group` key join one issue, up to `group_size` (N), as a checklist with one line per finding. New findings join an open group issue that has room and is not yet claimed; otherwise they start a new one.
@@ -149,15 +150,15 @@ A scanner is a directory, `.ard/scanners/<name>/`, holding either an executable 
 
 **Each scanner has its own state, and GitHub is the truth.** Every scanner keeps a separate SQLite file, `~/.ard/state/<owner>-<repo>/<scanner>.db`: fingerprint to issue, first and last seen, suppressions, last run. Scanners never share or lock each other's state, and one can be reset without touching the rest. Every issue body carries hidden markers (`<!-- ard:fp=<fingerprint> -->`), so `ard rebuild-state <scanner>` restores a database from GitHub after a lost disk or a host move.
 
-**Closed is not always "forget".** Removing a fingerprint on every close, as first sketched, refiles a won't-fix issue on the next run. Only completed closes forget; not-planned closes suppress, and re-raise early if severity rises.
+**Closed is not always "forget".** Removing a fingerprint on every close, as first sketched, refiles a won't-fix issue on the next run. Completed closes stop tracking the finding but keep a `fixed` tombstone, so a finding that comes back is filed as a regression of the old issue. Not-planned closes suppress, and re-raise early if severity rises.
 
 **LLM scanners need stable fingerprints.** Their prose changes run to run, so they fingerprint on rule, file and symbol, never on wording. Before filing, the controller also compares the title against the scanner's open issues and skips near-duplicates.
 
-**The stale closer is a built-in scanner.** Daily, it closes scanner issues still at `ard:pending` with no activity for 30 days, as not planned, with a comment. It never closes an issue that has a `:running` label, a linked open PR, `ard:needs-human`, or a human author.
+**The stale closer is a built-in scanner.** It has no role directory and needs no job slot, executor or worktree; its settings live in the top-level `stale:` block of `config.yaml`. Daily, it closes scanner issues still at `ard:pending` with no activity for `stale.inactive_for` (default 30 days), as not planned, with a comment. It never closes an issue that has a `:running` label, a linked open PR, `ard:needs-human`, or a human author.
 
 | Scanner | Engine | Every | Group size | Auto-close |
 | --- | --- | --- | --- | --- |
-| cve | osv-scanner, govulncheck, trivy (or Dependabot alerts API) | 6 h | 1 | yes |
+| cve | osv-scanner and govulncheck (trivy and the Dependabot alerts API later) | 6 h | 1 | yes |
 | lts | endoflife.date + manifests: go.mod, package.json, Dockerfile `FROM`, Helm charts | 7 d | 1 per component | yes |
 | lint | repo linters, findings beyond a committed baseline | 24 h | 20 per rule and directory | yes |
 | error-codes | codes duplicated, undocumented, or missing from the registry | 24 h | 20 | yes |
@@ -199,7 +200,7 @@ Triage turns an issue into a `plan.md` a worker can execute, one role at a time,
 
 ## Executors and the Reaper
 
-An executor runs one agent job somewhere and reports back; the controller does not care where. Both executors implement the same five calls: `prepare`, `start`, `status`, `logs`, `cleanup`.
+An executor runs one agent job somewhere and reports back; the controller does not care where. Both executors implement the same five calls: `prepare`, `start`, `status`, `logs`, `cleanup`. Job IDs are ULIDs minted at claim time; they name the worktree and the logs and appear as the `Ard-Job` commit trailer. The executor captures the job's stdout separately from its combined log, because the adapter parses one and the committed log comes from the other. Scanner jobs get network egress for advisory databases; agent jobs get only their model key.
 
 **One pool of job slots, drained from the end.** At most `max_pods` jobs (default 3) run at once, shared by every loop. When a slot frees, the controller fills it in this order: reviewers, then workers, then triage, then scanners, oldest first within each. Finishing work in flight beats starting new work, so a busy day grows the scanner backlog, not the pile of half-done PRs. The merger and the Reaper are controller code and take no slot.
 
@@ -212,7 +213,7 @@ An executor runs one agent job somewhere and reports back; the controller does n
 | Labels on resources | job id in the directory name | `ard/issue`, `ard/stage`, `ard/role`, `ard/job` |
 | Good for | Phase 1, one host, fast iteration | parallelism, isolation, untrusted inputs |
 
-**Agent CLIs plug in through adapters.** Each adapter turns (prompt file, context paths, budget) into a command line and parses the exit code and cost. For Claude Code that is roughly `claude -p "$(cat prompt.txt)" --output-format stream-json --max-turns N`; `kimi` and `dsh-tui` get their own adapters once their headless modes are confirmed. `config.yaml` names the default CLI and any per-role override, so a role can move between CLIs without touching its prompt.
+**Agent CLIs plug in through adapters.** Each adapter turns (prompt file, context paths, budget) into a command line and parses the exit code and, where the CLI reports them, turns and cost. For Claude Code that is roughly `claude -p --output-format stream-json --model <model> --max-budget-usd <max_budget_usd>`; the installed CLI has no turn cap, so a per-job dollar cap and the executor's hard timeout bound each run. `kimi` and `dsh-tui` both run headless with `-p`; neither has a turn cap and `kimi` reports no cost, so turns and cost are optional in the adapter result. `config.yaml` names the default CLI and any per-role override, so a role can move between CLIs without touching its prompt.
 
 **The agent's contract is narrow.** It may edit files in its worktree and must write `.ard/<issue#>/<role>.md` with a `status`. Exit 0 without that file counts as a failure, not a success.
 
@@ -304,38 +305,41 @@ max_pods: 3                  # job slots shared by every loop
 executor: local              # local | k8s
 agent: claude                # default CLI for agent roles
 require_approval: true       # human adds ard:approved before a worker starts
-budget_usd_per_day: 50
+budget_usd_per_day: 50       # whole repo; roles can set their own
+max_budget_usd: 5            # per job
+global_max_open: 30          # open scanner issues across all scanners
 paused: false
 intervals: { scanners: 4h, triage: 15m, workers: 5m, reviewers: 5m, merger: 5m }
 merge: { protected_paths: [infra/, migrations/] }
+stale: { inactive_for: 30d, suppress_for: 90d }
 
 sidecars:
   vpe-specs: { repo: <owner>/specs, ref: main }
 
 overrides:                   # only what differs from convention
-  scanners/cve:             { every: 6h, max_open: 10, group_size: 1 }
-  scanners/lint:            { every: 24h, max_open: 3, group_size: 20 }
-  triage/lead:              { sidecar: vpe-specs, timeout: 15m }
+  scanners/cve:             { every: 6h, max_open: 10, group_size: 1, autoclose: true }
+  scanners/lint:            { every: 24h, max_open: 3, group_size: 20, autoclose: true }
+  triage/lead:              { sidecar: vpe-specs, timeout: 15m, model: claude-opus-5-5 }
   triage/architect:         { sidecar: vpe-specs }
   triage/engineer:          { after: [architect, product-manager, designer, documentation-planner] }
   workers/engineer:         { tests: make test, timeout: 60m, reviewers: [security-review, eng-review] }
   reviewers/license-review: { agent: kimi, when: { paths: [go.mod, go.sum, "package*.json"] } }
 ```
 
-Anything unset takes its default: scanners every 4 h with `max_open` 5 and `group_size` 10, triage every 15 min, a 30-minute job timeout, `make test`, 2 test-fix attempts and 3 review rounds. Once a second repo adopts ard, role directories can move to a shared roles repo pinned by ref, like a sidecar; a repo's own directory of the same name wins.
+Anything unset takes its default: scanners every 4 h with `max_open` 5 and `group_size` 10, triage every 15 min, a 30-minute job timeout, `make test`, 2 test-fix attempts and 3 review rounds. Durations accept `m`, `h` and `d`. Per-role keys are `every`, `max_open`, `group_size`, `autoclose`, `timeout`, `agent`, `model`, `max_budget_usd`, `budget_usd_per_day`, `sidecar`, `after`, `tests`, `reviewers` and `when` (`paths`, or `triage` roles that ran). There are no per-role config files: `ard init` writes a role's starting overrides into `config.yaml`. Once a second repo adopts ard, role directories can move to a shared roles repo pinned by ref, like a sidecar; a repo's own directory of the same name wins.
 
 ## Guardrails
 
 Agents with push access read text that strangers can write, so the controls sit in code and permissions, not in prompts.
 
-- **Identity: a GitHub App, not a PAT.** Installation tokens expire hourly and are scoped to contents, issues and pull requests. Leaving out the `workflows` permission makes GitHub itself reject any push that edits `.github/workflows/`, a backstop to the diff guard.
+- **Identity: a GitHub App, not a PAT.** Installation tokens expire hourly and are scoped to contents, issues and pull requests (read and write), plus checks (read) so the merger can see required checks. Leaving out the `workflows` permission makes GitHub itself reject any push that edits `.github/workflows/`, a backstop to the diff guard.
 - **Agents hold no GitHub token.** The executor does. The agent's environment has only its model API key; in Kubernetes a network policy limits egress to the model API and package registries.
-- **Only labels start work.** GitHub lets only triage-level collaborators add labels, so an outsider's issue or comment cannot start a job. A human issue enters the pipeline when a maintainer adds `ard:pending`.
+- **Only labels start work.** GitHub lets only triage-level collaborators add labels, so an outsider's issue or comment cannot start a job. A human issue enters the pipeline when a maintainer adds `ard:pending`; the triage loop checks from the issue timeline that whoever added it has triage access, and re-gates the issue if its body is edited afterwards.
 - **Untrusted text is passed as data.** Issue bodies, comments and PR text go to the agent as files the prompt labels as untrusted input, never spliced into the instructions.
 - **Role files are human-owned.** The diff guard rejects any worker change to `.ard/config.yaml` or a role directory, and the merger treats those paths as protected, so no agent can rewrite its own prompt.
 - **Merges are gated.** The merger lands a PR only when every review passed and required checks are green on an up-to-date branch; protected paths wait for a human approval. The App may bypass the approval rule, never required checks.
-- **Committed output is redacted.** Close-out strips known secret values from each log and runs a secret scan before it is committed. A hit keeps that log host-local and adds `ard:needs-human`.
-- **Budgets.** Every job has a turn cap and a timeout; every role and the whole repo have a daily dollar cap. At the cap the controller stops claiming and posts once on the status issue.
+- **Committed output is redacted.** Close-out strips known secret values from each log and runs a secret scan before it is committed. A hit keeps that log host-local and adds `ard:needs-human`. The scan fails closed: if it cannot run, nothing is committed.
+- **Budgets.** Every job has a dollar cap (`max_budget_usd`) and a hard timeout; every role and the whole repo have a daily dollar cap. At the cap the controller stops claiming and posts once on the status issue.
 - **Concurrency.** `max_pods` (default 3) caps every job together, and at most one triage job runs per issue at a time, because triage roles share `plan.md`.
 - **Kill switch.** `paused: true` in `config.yaml`, or `ard:pause` on the pinned status issue, stops new claims within one poll; running jobs finish.
 - **Observability.** Every claim, close-out and failure is an event in local state. A daily digest on the pinned status issue shows queue depth by label, jobs run, failures and spend.
@@ -356,7 +360,7 @@ Thirteen points in the first sketch would break or loop in practice; each has a 
 | Reviewers update the PR, then nothing | No path back to the worker, no merge step | Fix rounds with a cap, then the merger lands it |
 | Triage roles run independently | Nothing knows when triage is finished | Deterministic gate plus `after:` ordering |
 | Parallel triage roles share `plan.md` | Lost sections, conflicting commits | One triage job per issue at a time |
-| "git push with log" | Raw logs are large and may hold secrets | Full output committed to `.ard/<issue#>/logs/`, redacted and capped at 1 MB |
+| "git push with log" | Raw logs are large and may hold secrets | Full output committed to `.ard/<issue#>/logs/`, redacted, scanned and capped at 1 MiB |
 | Close issues "older than a month" | Closes active or human issues | Scanner issues at `ard:pending`, no activity for 30 days |
 | Skip a scanner over X open issues | One noisy scanner still floods the queue; no cost ceiling | Per-scanner cap, plus a global cap and a daily spend cap |
 
@@ -371,7 +375,7 @@ flowchart LR
     P2 -->|"Gate 3: 50% merged with no human code edits"| P3["Phase 3: Scale<br/>k8s executor<br/>second repo<br/>shared roles repo<br/>budgets and digest"]
 ```
 
-Phase 0 runs in dry-run: the controller logs every issue, label and commit it would make, and does none of them.
+Phase 0 runs in dry-run: the controller logs every issue, label and commit it would make, and does none of them. Dry-run keeps its own state (`~/.ard/state-dryrun/`) and records would-file findings under synthetic negative issue numbers, so repeated scans don't re-propose them and `max_open` is exercised. Gate 1 counts duplicates from that ledger. Gate 1 needs only the deterministic path (CLI, config, GitHub client, effects, state, labels, executor, committer, controller, pool and the cve and stale scanners); the agent adapter, close-out and redaction are built during the soak week.
 
 | Metric | Proposed target |
 | --- | --- |
@@ -383,15 +387,15 @@ Phase 0 runs in dry-run: the controller logs every issue, label and commit it wo
 
 ## Open questions
 
-Nine decisions shape Phase 0; each has a recommended default so work can start.
+Nine decisions shape Phase 0. Each is a GitHub issue with a plan and a recommendation; tick it here when the issue closes.
 
-- [ ] **`.ard/` on `main` or an orphan `ard-state` branch?** `main` keeps context next to the code; an orphan branch avoids a commit per scan and needs no protection bypass. Default: `main` with `[skip ci]`, revisit if history noise hurts.
-- [ ] **Which human issues enter the pipeline?** Default: only those a maintainer labels `ard:pending`.
-- [ ] **Which paths always need a human before merge?** Default: `.github/`, `.ard/config.yaml` and role directories; add infra and migrations if the repo has them.
-- [ ] **Log size in git.** Full agent output can reach megabytes per job. Default: commit the last 1 MB of each run; move logs to Git LFS if clone size hurts.
-- [ ] **Where does the controller run?** The Mac, the OVH box, or in-cluster on the OVH k3s host. Default: one always-on host with the local executor, k3s in Phase 3.
-- [ ] **Which repo goes first?** It needs a fast, reliable `make test`.
-- [ ] **Headless modes for `kimi` and `dsh-tui`.** Do both run non-interactively from a prompt file, and what do they print on exit?
-- [ ] **Models and budget per role.** Default: the strongest model for lead, architect and security review, a cheaper one for lint and docs.
-- [ ] **Implementation language for `ard`.** Default: Go, one static binary with SQLite.
+- [ ] **`.ard/` on `main` or an orphan `ard-state` branch?** ([#1](https://github.com/albertcbrown/ard/issues/1)) Recommended: `main` with `[skip ci]`. Committed logs on PR branches rule out an orphan branch, because a PR cannot carry files from unrelated history.
+- [ ] **Which human issues enter the pipeline?** ([#2](https://github.com/albertcbrown/ard/issues/2)) Recommended: only those a maintainer labels `ard:pending`, with the labeler's access checked and a re-gate on body edits.
+- [ ] **Which paths always need a human before merge?** ([#3](https://github.com/albertcbrown/ard/issues/3)) Recommended: a built-in floor (`.github/`, `.ard/config.yaml`, role directories) plus `merge.protected_paths` globs; CODEOWNERS is not parsed.
+- [ ] **Log size in git.** ([#4](https://github.com/albertcbrown/ard/issues/4)) Recommended: 1 MiB per run as head 32 KiB plus tail, no gzip; revisit Git LFS only if `.git` passes ~500 MB.
+- [ ] **Where does the controller run?** ([#5](https://github.com/albertcbrown/ard/issues/5)) Recommended: the always-on OVH VPS with the local executor; the OVH k3s host in Phase 3.
+- [ ] **Which repo goes first?** ([#6](https://github.com/albertcbrown/ard/issues/6)) Recommended: ard itself, once its own `make test` is meaningful.
+- [ ] **Headless modes for `kimi` and `dsh-tui`.** ([#7](https://github.com/albertcbrown/ard/issues/7)) Found: both are installed and run headless with `-p`; neither has a turn cap, and `kimi` reports no cost. Remaining: record exit codes and output samples for the adapters.
+- [ ] **Models and budget per role.** ([#8](https://github.com/albertcbrown/ard/issues/8)) Recommended: Opus for lead, architect and security review; Sonnet for workers and other reviewers; Haiku for cheap scanner work. Budgets are calibrated from measured cost per job in Phase 1.
+- [ ] **Implementation language for `ard`.** ([#9](https://github.com/albertcbrown/ard/issues/9)) Recommended: Go, one static binary with SQLite; CI already passes on Go 1.27.
 
