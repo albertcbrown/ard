@@ -64,6 +64,7 @@ var realCases = []string{"both_tools", "osv_only", "not_called", "nested_module"
 var syntheticCases = map[string]string{
 	"empty":              "what scan writes when osv-scanner exits 128",
 	"gv_only":            "stdlib-only govulncheck finding; needs an old toolchain",
+	"toolchain_switch":   "govulncheck ran with a switched toolchain (wrapper carries toolchain)",
 	"symbol_called":      "critical and reachable",
 	"severity_fallbacks": "CVSS missing, database severity per level",
 	"two_ghsa":           "two GHSA ids for one vulnerability",
@@ -371,17 +372,59 @@ exit "${OSV_RC:-0}"
 `
 
 const gvShim = `#!/bin/sh
-[ "${1:-}" = "-version" ] && { echo "Scanner: govulncheck@shim"; exit 0; }
+[ "${1:-}" = "-version" ] && { echo "${GV_SCANNER:-Scanner: govulncheck@v1.10.0}"; exit 0; }
 name=$(basename "$(pwd -P)")
-echo "govulncheck $name $*" >> "$SHIM_LOG"
+echo "govulncheck $name $* tc=$GOTOOLCHAIN path0=${PATH%%:*} self=$0" >> "$SHIM_LOG"
 [ "${GV_FAIL_IN:-}" = "$name" ] && { echo boom >&2; exit 1; }
 # Mimic Go's read-only module cache.
 mkdir -p "$GOMODCACHE/pkg/mod/x" && chmod 555 "$GOMODCACHE/pkg/mod/x"
 cat "$GV_DIR/$name"
 `
 
+// goShim stands in for go. GO_LIST_FAIL, GO_SEL_FAIL and GO_INSTALL_FAIL make
+// the matching call fail. A "go 1.99" in the cwd's go.mod is newer than the
+// image's go1.27.4: go list -m fails under GOTOOLCHAIN=local, and
+// GOTOOLCHAIN=auto selects go1.99.0. "toolchain go1.99.1" selects that.
+const goShim = `#!/bin/sh
+echo "go $GOTOOLCHAIN $*" >> "$SHIM_LOG"
+newer=
+grep -q '^go 1.99' go.mod 2>/dev/null && newer=go1.99.0
+grep -q '^toolchain go1.99.1' go.mod 2>/dev/null && newer=go1.99.1
+case "$1 $2" in
+"list -m")
+  [ -n "${GO_LIST_FAIL:-}" ] && { echo "go: list -m failed" >&2; exit 1; }
+  if [ "$GOTOOLCHAIN" = local ] && [ "$newer" = go1.99.0 ]; then
+    echo "go: go.mod requires go >= 1.99 (running go1.27.4; GOTOOLCHAIN=local)" >&2; exit 1
+  fi
+  echo example.com/r ;;
+"env GOVERSION")
+  [ -n "${GO_SEL_FAIL:-}" ] && [ "$GOTOOLCHAIN" = auto ] && { echo "go: download go1.99.0: toolchain not available" >&2; exit 1; }
+  if [ "$GOTOOLCHAIN" = auto ] && [ -n "$newer" ]; then echo "$newer"; else echo go1.27.4; fi ;;
+"env GOROOT") echo "$FAKE_GOROOT" ;;
+install*)
+  echo "install CGO_ENABLED=${CGO_ENABLED:-} GOBIN=$GOBIN" >> "$SHIM_LOG"
+  [ -n "${GO_INSTALL_FAIL:-}" ] && { echo "go: install failed" >&2; exit 1; }
+  mkdir -p "$GOBIN" && cat "$GV_SHIM_SRC" > "$GOBIN/govulncheck" && chmod 755 "$GOBIN/govulncheck" ;;
+esac
+exit 0
+`
+
+// fakeGoroot is $FAKE_GOROOT/bin/go, the go that scan runs first on PATH once
+// it has switched toolchains. It reports FAKE_SEL and can install.
+const fakeGoroot = `#!/bin/sh
+case "$1" in
+env) echo "${FAKE_SEL:-go1.99.0}" ;;
+install)
+  echo "go $GOTOOLCHAIN $*" >> "$SHIM_LOG"
+  echo "install CGO_ENABLED=${CGO_ENABLED:-} GOBIN=$GOBIN" >> "$SHIM_LOG"
+  [ -n "${GO_INSTALL_FAIL:-}" ] && { echo "go: install failed" >&2; exit 1; }
+  mkdir -p "$GOBIN" && cat "$GV_SHIM_SRC" > "$GOBIN/govulncheck" && chmod 755 "$GOBIN/govulncheck" ;;
+esac
+exit 0
+`
+
 type env struct {
-	bin, role, repo, tmp, log, gvDir string
+	bin, role, repo, tmp, log, gvDir, goroot, gvSrc string
 }
 
 // setup builds a hermetic PATH (only the utilities scan needs, plus shims),
@@ -396,7 +439,19 @@ func setup(t *testing.T) *env {
 	}
 	e.repo = repo
 	e.log = filepath.Join(t.TempDir(), "calls.log")
-	for _, n := range []string{"jq", "find", "sort", "mktemp", "rm", "chmod", "cat", "wc", "tr", "head", "dirname", "sed", "mkdir", "basename", "grep"} {
+	e.goroot = t.TempDir()
+	e.gvSrc = filepath.Join(t.TempDir(), "govulncheck")
+	if err := os.WriteFile(e.gvSrc, []byte(gvShim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(e.goroot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.goroot, "bin", "go"),
+		[]byte(fakeGoroot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"jq", "find", "sort", "mktemp", "rm", "chmod", "cat", "wc", "tr", "head", "dirname", "sed", "mkdir", "basename", "grep", "tail"} {
 		p, err := exec.LookPath(n)
 		if err != nil {
 			t.Skipf("%s not available", n)
@@ -476,6 +531,7 @@ func (e *env) run(t *testing.T, extra ...string) (stdout, stderr string, code in
 	cmd.Env = append([]string{
 		"PATH=" + e.bin, "HOME=/nonexistent", "TMPDIR=" + e.tmp,
 		"SHIM_LOG=" + e.log, "GV_DIR=" + e.gvDir,
+		"FAKE_GOROOT=" + e.goroot, "GV_SHIM_SRC=" + e.gvSrc,
 	}, extra...)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
@@ -510,7 +566,7 @@ func listDir(t *testing.T, dir string) []string {
 func (e *env) bothToolsRepo(t *testing.T) {
 	e.shim(t, "osv-scanner", osvShim)
 	e.shim(t, "govulncheck", gvShim)
-	e.shim(t, "go", "#!/bin/sh\necho go shim\n")
+	e.shim(t, "go", goShim)
 	e.write(t, "go.mod", "module example.com/r\n")
 	e.govulnFromFixture(t, "both_tools", map[string]string{"go.mod": filepath.Base(e.repo)})
 }
@@ -564,7 +620,9 @@ func TestScanFailures(t *testing.T) {
 		extra    []string
 		wantCode int
 		wantOut  string // exact stdout
-		calls    func(c string) bool
+		wantErr  string // substring of stderr
+		// noInstall: the rebuilt govulncheck must never be installed.
+		noInstall bool
 	}{
 		{name: "osv exits 128 means nothing to scan", prep: func(t *testing.T, e *env) {
 			e.shim(t, "osv-scanner", osvShim)
@@ -590,6 +648,17 @@ func TestScanFailures(t *testing.T) {
 			e.write(t, "go.mod", "module example.com/r\n")
 		}, extra: []string{"OSV_FIXTURE=" + osvFix}, wantCode: 2},
 		{name: "osv-scanner missing", prep: func(t *testing.T, e *env) {}, wantCode: 2},
+		{name: "toolchain selection fails", prep: newerGoRepo, extra: []string{"OSV_FIXTURE=" + osvFix, "GO_SEL_FAIL=1"},
+			wantCode: 1, wantErr: "cannot get a Go toolchain for go.mod"},
+		{name: "govulncheck build fails", prep: newerGoRepo, extra: []string{"OSV_FIXTURE=" + osvFix, "GO_INSTALL_FAIL=1"},
+			wantCode: 1, wantErr: "cannot build govulncheck"},
+		{name: "unknown govulncheck version", prep: newerGoRepo,
+			extra:    []string{"OSV_FIXTURE=" + osvFix, "GV_SCANNER=Scanner: govulncheck@(devel)"},
+			wantCode: 1, wantErr: "unknown govulncheck version", noInstall: true},
+		{name: "selected GOROOT is another version", prep: newerGoRepo, extra: []string{"OSV_FIXTURE=" + osvFix, "FAKE_SEL=go1.98.0"},
+			wantCode: 1, wantErr: "is not go1.99.0", noInstall: true},
+		{name: "go list fails without a version problem", prep: func(t *testing.T, e *env) { e.bothToolsRepo(t) },
+			extra: []string{"OSV_FIXTURE=" + osvFix, "GO_LIST_FAIL=1"}, wantCode: 1, wantErr: "go list -m failed in go.mod"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -603,8 +672,145 @@ func TestScanFailures(t *testing.T) {
 			if out != tc.wantOut {
 				t.Fatalf("stdout = %q, want %q", out, tc.wantOut)
 			}
+			if !strings.Contains(errOut, tc.wantErr) {
+				t.Fatalf("stderr lacks %q:\n%s", tc.wantErr, errOut)
+			}
+			if tc.noInstall && strings.Contains(e.calls(t), " install") {
+				t.Fatalf("install was called:\n%s", e.calls(t))
+			}
 			assertClean(t, e, before)
 		})
+	}
+}
+
+// newerGoRepo is bothToolsRepo with a go.mod whose go directive is newer than
+// the image's Go.
+func newerGoRepo(t *testing.T, e *env) {
+	e.bothToolsRepo(t)
+	e.write(t, "go.mod", "module example.com/r\n\ngo 1.99\n")
+}
+
+func TestScanToolchainSwitch(t *testing.T) {
+	fix := "OSV_FIXTURE=" + filepath.Join(mustAbs(t, "testdata/cve/both_tools"), "osv.json")
+	gvLines := func(c string) (n int, lines []string) {
+		for _, l := range strings.Split(c, "\n") {
+			if strings.HasPrefix(l, "govulncheck ") && strings.Contains(l, "-format json") {
+				lines = append(lines, l)
+			}
+		}
+		return len(lines), lines
+	}
+	installs := func(c string) int { return strings.Count(c, "install golang.org/x/vuln/cmd/govulncheck@v1.10.0\n") }
+	tests := []struct {
+		name  string
+		prep  func(t *testing.T, e *env)
+		extra []string
+		// switched: how many govulncheck runs use the rebuilt binary.
+		switched, runs, installs int
+	}{
+		{name: "image toolchain suffices", prep: func(t *testing.T, e *env) { e.bothToolsRepo(t) }, runs: 1},
+		{name: "toolchain line not newer than the image", prep: func(t *testing.T, e *env) {
+			e.bothToolsRepo(t)
+			e.write(t, "go.mod", "module example.com/r\n\ngo 1.21\n\ntoolchain go1.27.0\n")
+		}, runs: 1},
+		{name: "two newer modules share one install", prep: func(t *testing.T, e *env) {
+			newerGoRepo(t, e)
+			e.write(t, "sub/go.mod", "module example.com/r/sub\n\ngo 1.99\n")
+			if err := os.WriteFile(filepath.Join(e.gvDir, "sub"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, runs: 2, switched: 2, installs: 1},
+		{name: "only the newer submodule switches", prep: func(t *testing.T, e *env) {
+			e.bothToolsRepo(t)
+			e.write(t, "sub/go.mod", "module example.com/r/sub\n\ngo 1.99\n")
+			if err := os.WriteFile(filepath.Join(e.gvDir, "sub"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, runs: 2, switched: 1, installs: 1},
+		{name: "toolchain line newer than the image", prep: func(t *testing.T, e *env) {
+			e.bothToolsRepo(t)
+			e.write(t, "go.mod", "module example.com/r\n\ngo 1.21\n\ntoolchain go1.99.1\n")
+		}, extra: []string{"FAKE_SEL=go1.99.1"}, runs: 1, switched: 1, installs: 1},
+		{name: "caller GOTOOLCHAIN=auto is overridden", prep: func(t *testing.T, e *env) { e.bothToolsRepo(t) },
+			extra: []string{"GOTOOLCHAIN=auto"}, runs: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t)
+			tc.prep(t, e)
+			before := listDir(t, e.repo)
+			out, errOut, code := e.run(t, append([]string{fix}, tc.extra...)...)
+			if code != 0 {
+				t.Fatalf("exit %d\n%s", code, errOut)
+			}
+			c := e.calls(t)
+			n, lines := gvLines(c)
+			if n != tc.runs {
+				t.Fatalf("%d govulncheck runs, want %d:\n%s", n, tc.runs, c)
+			}
+			if got := installs(c); got != tc.installs {
+				t.Fatalf("%d installs, want %d:\n%s", got, tc.installs, c)
+			}
+			sw := 0
+			for _, l := range lines {
+				if !strings.Contains(l, "tc=local ") {
+					t.Errorf("govulncheck did not run with GOTOOLCHAIN=local: %s", l)
+				}
+				if strings.Contains(l, "path0="+filepath.Join(e.goroot, "bin")+" ") {
+					sw++
+					if !strings.Contains(l, filepath.Join(e.tmp, "ard-cve.")) || !strings.Contains(l, "/gv/go1.99.") {
+						t.Errorf("rebuilt govulncheck not under the temp dir: %s", l)
+					}
+				}
+			}
+			if sw != tc.switched {
+				t.Fatalf("%d runs on the switched toolchain, want %d:\n%s", sw, tc.switched, c)
+			}
+			if tc.installs > 0 {
+				if !strings.Contains(c, "CGO_ENABLED=0 GOBIN="+e.tmp) {
+					t.Errorf("install without CGO_ENABLED=0 under TMPDIR:\n%s", c)
+				}
+				if !strings.Contains(errOut, "govulncheck: building v1.10.0 with go1.99.") {
+					t.Errorf("no build log line:\n%s", errOut)
+				}
+			} else if strings.Contains(errOut, "building") {
+				t.Errorf("unexpected build:\n%s", errOut)
+			}
+			want, _ := os.ReadFile("testdata/cve/both_tools/want.jsonl")
+			got := out
+			if tc.switched > 0 {
+				// The root module's findings carry the toolchain note.
+				if tc.name == "only the newer submodule switches" {
+					if strings.Contains(out, "Go toolchain:") {
+						t.Errorf("root findings must not carry a toolchain note")
+					}
+				} else {
+					if !strings.Contains(out, "Go toolchain: `go1.99.") {
+						t.Errorf("no toolchain note in findings:\n%s", out)
+					}
+					for _, v := range []string{"go1.99.0", "go1.99.1"} {
+						got = strings.ReplaceAll(got, `\nGo toolchain: `+"`"+v+"`"+` (selected from go.mod; standard library findings are measured against it)`, "")
+					}
+				}
+			}
+			if got != string(want) {
+				t.Fatalf("stdout mismatch\n got: %s\nwant: %s", got, want)
+			}
+			assertClean(t, e, before)
+		})
+	}
+}
+
+func TestDockerfileTmpdir(t *testing.T) {
+	b, err := FS.ReadFile("scanners/cve/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := string(b[strings.LastIndex(string(b), "\nFROM "):])
+	for _, want := range []string{"\nENV GOTOOLCHAIN=local\n", "\nENV TMPDIR=/var/tmp\n"} {
+		if !strings.Contains(final, want) {
+			t.Errorf("final stage lacks %q", strings.TrimSpace(want))
+		}
 	}
 }
 
