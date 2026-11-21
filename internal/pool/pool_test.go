@@ -410,7 +410,7 @@ func TestCrossLoop(t *testing.T) {
 		p.Offer("triage", time.Hour, []Candidate{cand(ClassTriage, "a", 7, 0), cand(ClassTriage, "b", 7, 1)})
 		ws[0].Slot.Release()
 		ws[1].Slot.Release()
-		if ds := p.Offer("work", time.Hour, []Candidate{cand(ClassWorker, "w", 3, 0)}); ds[0].Verdict != Granted {
+		if ds := p.Offer("scan", time.Hour, []Candidate{scan}); ds[0].Verdict != Granted {
 			t.Fatalf("%v", ds[0].Verdict)
 		}
 	})
