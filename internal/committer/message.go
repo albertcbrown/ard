@@ -17,7 +17,8 @@ var (
 // Message builds the commit message: ard(<stage>:<role>): #<issue> <summary>
 // with " [skip ci]" when skipCI, and an Ard-Job trailer when jobID is set.
 // The summary is untrusted: control characters and newlines become spaces,
-// so it cannot forge a trailer or a [skip ci] marker line, and it is cut to
+// so it cannot forge a trailer or a [skip ci] marker line, closing
+// references ("Fixes #12") are neutralised by NeutraliseRefs, and it is cut to
 // 72 runes.
 func Message(stage, role string, issue int, summary, jobID string, skipCI bool) (string, error) {
 	s := strings.Join(strings.FieldsFunc(summary, func(r rune) bool {
@@ -27,6 +28,10 @@ func Message(stage, role string, issue int, summary, jobID string, skipCI bool) 
 	// summary must not be able to skip CI.
 	s = skipRe.ReplaceAllString(s, "(skip-ci)")
 	s = skipChecksRe.ReplaceAllString(s, "skip-checks -")
+	// A closing keyword before an issue reference would close it when the
+	// commit reaches main. Done before the cut so truncation only shortens
+	// already-safe text.
+	s = NeutraliseRefs(s)
 	if s == "" {
 		return "", fmt.Errorf("%w: empty summary", ErrInvalid)
 	}
