@@ -11,6 +11,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/gitx"
 )
 
@@ -32,6 +33,11 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 		return err
 	}
 	if res != nil {
+		for _, r := range res.HostUntrusted() {
+			local.WarnHostRole(e.Log, string(r.Kind), r.Name)
+			// Loud: also straight to stderr, whatever --log-level says.
+			fmt.Fprint(e.Stderr, local.HostRoleText(string(r.Kind), r.Name))
+		}
 		if yamlErr := res.WriteYAML(e.Stdout); yamlErr != nil {
 			fmt.Fprintf(e.Stderr, "ard config check: rendering resolved config: %v\n", yamlErr)
 		}

@@ -29,6 +29,10 @@ type Options struct {
 	BuildTimeout time.Duration // default 15m
 	Now          func() time.Time
 	Log          *slog.Logger
+	// OnHostUntrusted, if set, is called once per host-mode job that reads
+	// untrusted input, right after the process starts. serve records an
+	// events row through it. nil = log only.
+	OnHostUntrusted func(ctx context.Context, h executor.Handle) error
 }
 
 // Local implements executor.Executor on this host.
@@ -39,6 +43,7 @@ type Local struct {
 	grace, buildTimeout      time.Duration
 	now                      func() time.Time
 	log                      *slog.Logger
+	onHostUntrusted          func(ctx context.Context, h executor.Handle) error
 
 	mu     sync.Mutex
 	tracks map[string]*track
@@ -101,7 +106,7 @@ func New(o Options) (*Local, error) {
 		fixed[n] = true
 	}
 	return &Local{allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
-		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log,
+		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log, onHostUntrusted: o.OnHostUntrusted,
 		tracks: map[string]*track{}}, nil
 }
 
@@ -138,7 +143,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		LogPath: filepath.Join(logDir, base+".log"), StdoutPath: filepath.Join(logDir, base+".stdout"),
 		View:    executor.Paths{Work: wt, Role: j.RoleDir, Sidecar: j.SidecarDir},
 		RoleDir: j.RoleDir, SidecarDir: j.SidecarDir, ReadOnly: j.ReadOnly,
-		PreparedAt: now, Timeout: j.Timeout,
+		TrustedInput: j.TrustedInput, PreparedAt: now, Timeout: j.Timeout,
 	}
 	var created []string // paths to remove on failure
 	worktreeAdded := false

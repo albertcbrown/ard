@@ -31,6 +31,7 @@ func TestIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The merge-guard and PR-number cases need real branches and commits, so
-	// no WithPR factory is supplied and they skip.
+	// no WithPR factory is supplied and they skip. The transfer case skips
+	// because it needs a second repository to move an issue into.
 	clienttest.Run(t, func(t *testing.T) github.Client { return c })
 }

@@ -20,7 +20,15 @@ import (
 type Option func(*config)
 
 type config struct {
-	newPR func(t *testing.T, c github.Client) (n int, headSHA string)
+	newPR    func(t *testing.T, c github.Client) (n int, headSHA string)
+	transfer func(t *testing.T, c github.Client, n int)
+}
+
+// WithTransfer supplies a way to move issue n out of the repository, as an
+// issue transfer does. The transfer case is skipped without it (a real transfer
+// needs a second repository).
+func WithTransfer(f func(t *testing.T, c github.Client, n int)) Option {
+	return func(cfg *config) { cfg.transfer = f }
 }
 
 // WithPR supplies a way to obtain an open, mergeable PR and its head SHA. The
@@ -296,6 +304,41 @@ func Run(t *testing.T, newClient func(t *testing.T) github.Client, opts ...Optio
 		}
 		if !sort.SliceIsSorted(tl, func(i, j int) bool { return tl[i].CreatedAt.Before(tl[j].CreatedAt) }) {
 			t.Error("timeline not oldest first")
+		}
+	})
+
+	t.Run("TransferredIssueIsNotFound", func(t *testing.T) {
+		if cfg.transfer == nil {
+			t.Skip("no transfer hook")
+		}
+		c := newClient(t)
+		is := mustIssue(t, c, "transfer me")
+		if _, err := c.CreateComment(ctx, is.Number, "c"); err != nil {
+			t.Fatal(err)
+		}
+		cfg.transfer(t, c, is.Number)
+		// RemoveLabel is not asserted: GitHub may answer a label DELETE on a
+		// transferred issue with a 404, which the client treats as "absent".
+		calls := map[string]func() error{
+			"GetIssue":      func() error { _, err := c.GetIssue(ctx, is.Number); return err },
+			"ListComments":  func() error { _, err := c.ListComments(ctx, is.Number, time.Time{}); return err },
+			"ListTimeline":  func() error { _, err := c.ListTimeline(ctx, is.Number); return err },
+			"AddLabels":     func() error { return c.AddLabels(ctx, is.Number, uniq+"-x") },
+			"CreateComment": func() error { _, err := c.CreateComment(ctx, is.Number, "again"); return err },
+		}
+		for name, call := range calls {
+			if err := call(); !errors.Is(err, github.ErrNotFound) {
+				t.Errorf("%s on a transferred issue err = %v, want ErrNotFound", name, err)
+			}
+		}
+		all, err := c.ListIssues(ctx, github.ListIssuesOpts{State: github.StateAll})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, i := range all {
+			if i.Number == is.Number {
+				t.Errorf("transferred issue #%d still listed", is.Number)
+			}
 		}
 	})
 

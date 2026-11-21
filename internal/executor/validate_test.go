@@ -26,6 +26,8 @@ func TestValidate(t *testing.T) {
 		{"upper repo", func(j *Job) { j.Repo = "O/R" }, true},
 		{"bad stage", func(j *Job) { j.Stage = "x" }, false},
 		{"bad role", func(j *Job) { j.Role = "Go_Dev" }, false},
+		{"scanner trusted input", func(j *Job) { j.Stage = "scanner"; j.TrustedInput = true }, true},
+		{"triage trusted input", func(j *Job) { j.Stage = "triage"; j.TrustedInput = true }, false},
 		{"zero timeout", func(j *Job) { j.Timeout = 0 }, false},
 		{"relative repodir", func(j *Job) { j.RepoDir = "r" }, false},
 		{"relative roledir", func(j *Job) { j.RoleDir = "role" }, false},

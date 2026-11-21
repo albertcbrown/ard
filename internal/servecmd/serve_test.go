@@ -18,6 +18,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
+	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
 	"github.com/albertcbrown/ard/internal/gitx"
@@ -160,6 +161,12 @@ func (s *syncBuf) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 func (s *syncBuf) has(sub string) bool {
@@ -568,5 +575,95 @@ func TestServeInvalidRemoteFails(t *testing.T) {
 	}
 	if err := serve(context.Background(), env(t, "o/r", cfg, true), b); err == nil {
 		t.Fatal("want an error for an empty remote URL")
+	}
+}
+
+func TestServeWarnsHostUntrustedOncePerRole(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, clone := gittest.NewRemote(t)
+	if err := os.MkdirAll(filepath.Join(clone, ".ard", "triage", "lead"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, ".ard", "triage", "lead", "prompt.txt"), []byte("route"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pushConfig(t, clone, "max_pods: 2\n")
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	buf, errBuf := &syncBuf{}, &syncBuf{}
+	e := env(t, "o/r", filepath.Join(clone, ".ard", "config.yaml"), true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	e.Stderr = errBuf
+	// A probe loop ticks once the scheduler has reloaded config after the
+	// startup load, so the loader has run at least twice.
+	probe := &probeLoop{ticked: make(chan struct{})}
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { return append(orig(x), probe) }
+	defer func() { registerLoops = orig }()
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool {
+		select {
+		case <-probe.ticked:
+			return buf.has("controller.start")
+		default:
+			return false
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(buf.String(), "executor.host_untrusted"); n != 1 {
+		t.Errorf("host_untrusted logged %d times, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "role=lead") {
+		t.Errorf("warning does not name the role:\n%s", buf.String())
+	}
+	if n := strings.Count(errBuf.String(), `role "lead"`); n != 1 {
+		t.Errorf("stderr has the warning %d times, want 1:\n%s", n, errBuf.String())
+	}
+}
+
+// probeLoop closes ticked on its first tick.
+type probeLoop struct {
+	once   sync.Once
+	ticked chan struct{}
+}
+
+func (*probeLoop) Name() string                            { return "probe" }
+func (*probeLoop) Interval(*config.Resolved) time.Duration { return time.Minute }
+func (*probeLoop) Claims() bool                            { return false }
+func (p *probeLoop) Tick(context.Context, controller.Env) error {
+	p.once.Do(func() { close(p.ticked) })
+	return nil
+}
+
+func TestRecordHostUntrusted(t *testing.T) {
+	tests := []struct {
+		name string
+		h    executor.Handle
+	}{
+		{"triage job", executor.Handle{JobID: "J1", Issue: 7, Stage: "triage", Role: "lead"}},
+		{"issue-less scanner job", executor.Handle{JobID: "J2", Stage: "scanner", Role: "lint"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, err := state.Open(ctx, t.TempDir(), state.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			if err := recordHostUntrusted(st)(ctx, tc.h); err != nil {
+				t.Fatal(err)
+			}
+			evs, err := st.Events(ctx, state.EventFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(evs) != 1 {
+				t.Fatalf("%d events, want 1: %+v", len(evs), evs)
+			}
+			e := evs[0]
+			if e.Kind != state.EventHostUntrusted || e.JobID != tc.h.JobID || e.Issue != tc.h.Issue || e.Stage != tc.h.Stage || e.Role != tc.h.Role {
+				t.Errorf("event = %+v, want handle %+v", e, tc.h)
+			}
+		})
 	}
 }

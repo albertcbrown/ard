@@ -21,7 +21,23 @@ func TestConformance(t *testing.T) {
 			n := f.SeedPR(github.PullRequest{Title: "pr", HeadRef: "feat", HeadSHA: "abc123", BaseRef: "main"})
 			return n, "abc123"
 		}),
+		clienttest.WithTransfer(func(t *testing.T, c github.Client, n int) { c.(*fake.Fake).TransferIssue(n) }),
 	)
+}
+
+func TestTransferIssuePanicsOnPR(t *testing.T) {
+	f := fake.New()
+	n := f.SeedPR(github.PullRequest{Title: "pr"})
+	for name, num := range map[string]int{"pr": n, "unknown": 999} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: want panic", name)
+				}
+			}()
+			f.TransferIssue(num)
+		}()
+	}
 }
 
 func TestFailNextFiresOnce(t *testing.T) {

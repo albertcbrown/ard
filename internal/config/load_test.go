@@ -482,6 +482,27 @@ func assertErr(t *testing.T, errs Errors, want wantErr) {
 	t.Errorf("no error {file %q key %q msg containing %q} in:\n%s", want.file, want.key, want.contains, errs)
 }
 
+func TestHostUntrusted(t *testing.T) {
+	fsys := baseFS()
+	fsys[".ard/triage/architect/Dockerfile"] = &fstest.MapFile{Data: []byte("FROM scratch"), Mode: 0o644}
+	res := mustLoad(t, fsys)
+	var got []string
+	for _, r := range res.HostUntrusted() {
+		got = append(got, string(r.Kind)+"/"+r.Name)
+	}
+	// cve is a deterministic scanner and architect has a Dockerfile: neither
+	// is listed. lint is an LLM scanner.
+	want := []string{"scanner/lint", "triage/engineer", "triage/lead", "worker/engineer",
+		"reviewer/eng-review", "reviewer/license-review", "reviewer/security-review"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("HostUntrusted = %v, want %v", got, want)
+	}
+	res.Executor = "k8s"
+	if got := res.HostUntrusted(); len(got) != 0 {
+		t.Errorf("executor k8s: HostUntrusted = %v, want none", got)
+	}
+}
+
 func TestRoleLookupHelpers(t *testing.T) {
 	res := mustLoad(t, baseFS())
 	roles := res.RolesOf(KindScanner)

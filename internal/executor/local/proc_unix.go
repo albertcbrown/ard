@@ -130,6 +130,9 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 	l.mu.Unlock()
 	l.log.Info("executor job started", "job", h.JobID, "issue", h.Issue, "stage", h.Stage,
 		"role", h.Role, "kind", h.Kind, "pid", h.PID, "deadline", h.Deadline)
+	if hostUntrusted(h) {
+		l.warnHostJob(ctx, h)
+	}
 
 	hh := h
 	tr.timer = time.AfterFunc(h.Timeout, func() {

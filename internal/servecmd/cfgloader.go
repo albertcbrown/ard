@@ -3,12 +3,14 @@ package servecmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
 
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/configsrc"
+	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 )
 
@@ -24,13 +26,18 @@ type commenter interface {
 // the memory, so the same failure after a recovery is reported again. It is
 // safe for concurrent use: every loop calls it each tick.
 type cfgLoader struct {
-	src   *configsrc.Source
-	fx    commenter
-	log   *slog.Logger
-	issue func() int // the status issue number; <= 0 when unknown or synthetic
+	src *configsrc.Source
+	fx  commenter
+	log *slog.Logger
+	// stderr receives the host-mode warning in plain text, so it survives
+	// --log-level. nil = log only.
+	stderr io.Writer
+	issue  func() int // the status issue number; <= 0 when unknown or synthetic
 
 	mu   sync.Mutex
 	last string // the last error text posted
+	// warned holds the roles already warned about as host-mode, by kind/name.
+	warned map[string]bool
 }
 
 func (c *cfgLoader) Load(ctx context.Context) (*config.Resolved, error) {
@@ -42,7 +49,30 @@ func (c *cfgLoader) Load(ctx context.Context) (*config.Resolved, error) {
 	c.mu.Lock()
 	c.last = ""
 	c.mu.Unlock()
+	c.warnHost(res)
 	return res, nil
+}
+
+// warnHost logs executor.host_untrusted once per role per process, and writes
+// it to stderr: at the first successful load (startup, or the first tick
+// after a startup that could not load) and for any role a later config adds.
+func (c *cfgLoader) warnHost(res *config.Resolved) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, r := range res.HostUntrusted() {
+		key := string(r.Kind) + "/" + r.Name
+		if c.warned[key] {
+			continue
+		}
+		if c.warned == nil {
+			c.warned = map[string]bool{}
+		}
+		c.warned[key] = true
+		local.WarnHostRole(c.log, string(r.Kind), r.Name)
+		if c.stderr != nil {
+			fmt.Fprint(c.stderr, local.HostRoleText(string(r.Kind), r.Name))
+		}
+	}
 }
 
 func (c *cfgLoader) report(ctx context.Context, err error) {
