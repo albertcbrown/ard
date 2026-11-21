@@ -27,7 +27,7 @@ const (
 // Spec describes one agent run. Untrusted inputs are paths only; the adapter
 // never reads their contents.
 type Spec struct {
-	Stage        string   // one of the Stage* constants; picks the default tool profile
+	Stage        string   // one of the Stage* constants; named in the user message; every stage gets the same default tool profile
 	Role         string   // ^[a-z0-9][a-z0-9-]*$
 	Issue        int      // >= 1; output file is .ard/<Issue>/<Role>.md
 	PromptFile   string   // absolute runtime path of the role's prompt.txt from the role mount
@@ -37,7 +37,7 @@ type Spec struct {
 	Model        string   // "" = CLI default
 	MaxBudgetUSD float64  // > 0, finite
 	MaxTurns     int      // 0 = omit the flag
-	Tools        []string // nil = adapter's default profile for Stage
+	Tools        []string // nil = the adapter's default profile
 }
 
 // Command is what the executor should run. Argv[0] is the binary; run with
