@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -52,10 +53,61 @@ func runMerge(t *testing.T, osvJSON, gvJSONL []byte) []byte {
 	return out
 }
 
-var cases = []string{
-	"both_tools", "osv_only", "gv_only", "module_level_only", "symbol_called",
-	"severity_fallbacks", "two_ghsa", "cve_only", "excluded_manifests",
-	"nested_module", "untrusted_summary", "scoped_npm", "empty",
+// Fixtures in testdata/cve: realCases are regenerated from the tools pinned
+// in scanners/cve/Dockerfile by `make cve-fixtures` (testdata/cve/regen.sh,
+// needs Docker and network). Review every want.jsonl diff by hand: the golden
+// test cannot tell a correct change from a regression. syntheticCases are
+// hand-written and never regenerated.
+var realCases = []string{"both_tools", "osv_only", "not_called", "nested_module", "scoped_npm"}
+
+// syntheticCases are hand-written: real tools can't produce them on demand.
+var syntheticCases = map[string]string{
+	"empty":              "what scan writes when osv-scanner exits 128",
+	"gv_only":            "stdlib-only govulncheck finding; needs an old toolchain",
+	"symbol_called":      "critical and reachable",
+	"severity_fallbacks": "CVSS missing, database severity per level",
+	"two_ghsa":           "two GHSA ids for one vulnerability",
+	"cve_only":           "no GHSA id",
+	"excluded_manifests": "testdata/vendor/node_modules manifests",
+	"untrusted_summary":  "hostile advisory summary",
+}
+
+var cases = allCases()
+
+func allCases() []string {
+	out := append([]string(nil), realCases...)
+	var syn []string
+	for k := range syntheticCases {
+		syn = append(syn, k)
+	}
+	sort.Strings(syn)
+	return append(out, syn...)
+}
+
+func TestFixtureCasesListed(t *testing.T) {
+	ents, err := os.ReadDir(filepath.Join("testdata", "cve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, e := range ents {
+		if e.IsDir() {
+			have[e.Name()] = true
+		}
+	}
+	want := map[string]bool{}
+	for _, c := range realCases {
+		want[c] = true
+	}
+	for c := range syntheticCases {
+		if want[c] {
+			t.Errorf("%s is both real and synthetic", c)
+		}
+		want[c] = true
+	}
+	if !reflect.DeepEqual(have, want) {
+		t.Errorf("fixture dirs %v != listed cases %v", have, want)
+	}
 }
 
 func TestMergeGolden(t *testing.T) {
@@ -162,7 +214,8 @@ func TestUntrustedSummaryStaysFenced(t *testing.T) {
 	}
 }
 
-// permute applies f to every array in a decoded JSON value.
+// permute applies f to every array in a decoded JSON value, except govulncheck
+// traces (real ones have several frames, callee first).
 func permute(v any, f func([]any) []any) any {
 	switch x := v.(type) {
 	case []any:
@@ -173,6 +226,9 @@ func permute(v any, f func([]any) []any) any {
 		return f(out)
 	case map[string]any:
 		for k, e := range x {
+			if k == "trace" { // a call stack: its order is meaning, not noise
+				continue
+			}
 			x[k] = permute(e, f)
 		}
 		return x
@@ -276,18 +332,29 @@ func TestFingerprintIgnoresScoreAndSummary(t *testing.T) {
 	}
 	walk(v)
 	mod, _ := json.Marshal(v)
-	a, b := decode(t, runMerge(t, osvB, gvB)), decode(t, runMerge(t, mod, gvB))
-	if len(a) != 1 || len(b) != 1 {
-		t.Fatalf("want one finding each, got %d and %d", len(a), len(b))
+	byFP := func(fs []finding) map[string]finding {
+		m := map[string]finding{}
+		for _, f := range fs {
+			m[f.Fingerprint] = f
+		}
+		return m
 	}
-	if a[0].Fingerprint != b[0].Fingerprint {
-		t.Fatalf("fingerprint changed: %q -> %q", a[0].Fingerprint, b[0].Fingerprint)
+	a, b := byFP(decode(t, runMerge(t, osvB, gvB))), byFP(decode(t, runMerge(t, mod, gvB)))
+	if len(a) == 0 || len(a) != len(b) {
+		t.Fatalf("want the same non-empty finding set, got %d and %d", len(a), len(b))
 	}
-	if a[0].Severity == b[0].Severity {
-		t.Fatalf("severity should have changed with the score")
+	for fp, fa := range a {
+		fb, ok := b[fp]
+		if !ok {
+			t.Fatalf("fingerprint %s disappeared", fp)
+		}
+		if !reflect.DeepEqual(fa.Files, fb.Files) {
+			t.Fatalf("%s: files changed", fp)
+		}
 	}
-	if !reflect.DeepEqual(a[0].Files, b[0].Files) {
-		t.Fatal("files changed")
+	const ghsa = "osv:GHSA-69ch-w2m2-3vjp:go.mod:golang.org/x/text"
+	if a[ghsa].Severity == b[ghsa].Severity {
+		t.Fatalf("%s: severity should have changed with the score (%s)", ghsa, a[ghsa].Severity)
 	}
 }
 
@@ -304,7 +371,7 @@ exit "${OSV_RC:-0}"
 `
 
 const gvShim = `#!/bin/sh
-[ "${1:-}" = "-version" ] && { echo "govulncheck shim"; exit 0; }
+[ "${1:-}" = "-version" ] && { echo "Scanner: govulncheck@shim"; exit 0; }
 name=$(basename "$(pwd -P)")
 echo "govulncheck $name $*" >> "$SHIM_LOG"
 [ "${GV_FAIL_IN:-}" = "$name" ] && { echo boom >&2; exit 1; }
@@ -329,7 +396,7 @@ func setup(t *testing.T) *env {
 	}
 	e.repo = repo
 	e.log = filepath.Join(t.TempDir(), "calls.log")
-	for _, n := range []string{"jq", "find", "sort", "mktemp", "rm", "chmod", "cat", "wc", "tr", "head", "dirname", "sed", "mkdir", "basename"} {
+	for _, n := range []string{"jq", "find", "sort", "mktemp", "rm", "chmod", "cat", "wc", "tr", "head", "dirname", "sed", "mkdir", "basename", "grep"} {
 		p, err := exec.LookPath(n)
 		if err != nil {
 			t.Skipf("%s not available", n)
@@ -567,8 +634,13 @@ func TestScanSkipsTestdataModulesAndNoGovulncheck(t *testing.T) {
 		t.Fatalf("govulncheck ran despite no-govulncheck:\n%s", e.calls(t))
 	}
 	fs := decode(t, []byte(out))
-	if len(fs) != 1 || !strings.Contains(fs[0].Body, "Reachable: unknown") {
-		t.Fatalf("want one finding with unknown reachability, got %s", out)
+	if len(fs) == 0 {
+		t.Fatalf("no findings: %s", out)
+	}
+	for _, f := range fs {
+		if !strings.Contains(f.Body, "Reachable: unknown") {
+			t.Fatalf("want unknown reachability, got %s", out)
+		}
 	}
 }
 
@@ -579,8 +651,14 @@ func TestScanOsvOnlyNoGoModule(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if fs := decode(t, []byte(out)); len(fs) != 1 || !strings.Contains(fs[0].Body, "Reachable: unknown") {
-		t.Fatalf("got %s", out)
+	fs := decode(t, []byte(out))
+	if len(fs) == 0 {
+		t.Fatalf("no findings: %s", out)
+	}
+	for _, f := range fs {
+		if !strings.Contains(f.Body, "Reachable: unknown") {
+			t.Fatalf("want unknown reachability: %s", out)
+		}
 	}
 }
 
@@ -615,5 +693,44 @@ func TestScanAbsoluteManifestFailsClosed(t *testing.T) {
 	out, errOut, code := e.run(t, "OSV_ROOT=/somewhere/else", "OSV_FIXTURE="+filepath.Join(mustAbs(t, "testdata/cve/osv_only"), "osv.json"))
 	if code == 0 || out != "" || !strings.Contains(errOut, "absolute manifest") {
 		t.Fatalf("exit %d stdout %q stderr %s", code, out, errOut)
+	}
+}
+
+// Real fixtures must keep the shape of real tool output: a hand edit of a real
+// case is caught here. Update the version with the Dockerfile.
+func TestRealFixturesHaveRealShape(t *testing.T) {
+	for _, c := range realCases {
+		t.Run(c, func(t *testing.T) {
+			d := filepath.Join("testdata", "cve", c)
+			var osv map[string]json.RawMessage
+			if err := json.Unmarshal(readFixture(t, filepath.Join(d, "osv.json"), "/R"), &osv); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := osv["experimental_config"]; !ok {
+				t.Error("osv.json lacks experimental_config")
+			}
+			gv, err := os.ReadFile(filepath.Join(d, "gv.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, l := range bytes.Split(bytes.TrimSpace(gv), []byte("\n")) {
+				if len(l) == 0 {
+					continue
+				}
+				var w struct {
+					Messages []struct {
+						Config struct {
+							ScannerVersion string `json:"scanner_version"`
+						} `json:"config"`
+					}
+				}
+				if err := json.Unmarshal(l, &w); err != nil {
+					t.Fatal(err)
+				}
+				if len(w.Messages) == 0 || w.Messages[0].Config.ScannerVersion != "v1.10.0" {
+					t.Errorf("first govulncheck message is not a v1.10.0 config: %s", l[:min(len(l), 200)])
+				}
+			}
+		})
 	}
 }
