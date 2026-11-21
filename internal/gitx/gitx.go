@@ -66,7 +66,7 @@ func (g *Git) run(ctx context.Context, dir string, env []string, stdin string, s
 		stderr := scrub(errb.String(), secrets...)
 		return out.String(), stderr, &runError{args: scrubArgs(args, secrets), stderr: stderr, err: err}
 	}
-	return out.String(), errb.String(), nil
+	return out.String(), scrub(errb.String(), secrets...), nil
 }
 
 func scrubArgs(args []string, secrets []string) []string {
@@ -104,4 +104,13 @@ func (g *Git) RevParse(ctx context.Context, dir, ref string) (string, error) {
 func isExit(err error, code int) bool {
 	var ee *exec.ExitError
 	return errors.As(err, &ee) && ee.ExitCode() == code
+}
+
+// RemoteURL returns the fetch URL of the named remote in dir.
+func (g *Git) RemoteURL(ctx context.Context, dir, remote string) (string, error) {
+	out, _, err := g.run(ctx, dir, nil, "", nil, "remote", "get-url", remote)
+	if err != nil {
+		return "", fmt.Errorf("gitx: remote url %s: %w", remote, err)
+	}
+	return strings.TrimSpace(out), nil
 }

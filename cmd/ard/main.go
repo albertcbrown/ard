@@ -8,6 +8,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/configcmd"
+	"github.com/albertcbrown/ard/internal/labels/labelsync"
 	"github.com/albertcbrown/ard/internal/servecmd"
 )
 
@@ -28,5 +29,6 @@ func handlers() cli.Handlers {
 	return cli.Handlers{
 		ConfigCheck: configcmd.Check,
 		Serve:       servecmd.Serve,
+		LabelsSync:  labelsync.Command,
 	}
 }

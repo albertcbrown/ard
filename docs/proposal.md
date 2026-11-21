@@ -78,7 +78,7 @@ stateDiagram-v2
 | `ard:needs-approval` | Merger | PR touches a protected path; merges after a human approves |
 | `ard:hold` | Human | Controller ignores this issue or PR entirely |
 
-Four more labels sit outside the grammar: `ard:approved` (human go-ahead before a worker starts), `ard:tests:failed` (worker could not get tests green), `ard:keep` (hold failed-job resources past 24 h) and `ard:pause` (on the pinned status issue, stops all new claims).
+Four more labels sit outside the grammar: `ard:approved` (human go-ahead before a worker starts), `ard:tests:failed` (worker could not get tests green), `ard:keep` (hold failed-job resources past 24 h) and `ard:pause` (on the pinned status issue, stops all new claims). `ard labels sync` creates and updates the full set from the resolved config, idempotently, and never deletes a label: stale `ard:` labels are only reported. `--repo owner/name` names the repository; when omitted, it is read from the `origin` remote. Role names are at most 31 characters and scanner names at most 38, because GitHub caps a label at 50 characters.
 
 **One query per role per poll.** For example: `is:open label:"ard:triage:architect" -label:"ard:triage:architect:running" -label:"ard:triage:architect:done" -label:ard:executor:failed -label:ard:needs-human -label:ard:hold`. Six triage roles every 15 minutes, plus four reviewers, a worker and the merger every 5, is about 100 searches an hour, well under GitHub's limits.
 
@@ -167,6 +167,8 @@ A scanner is a directory, `.ard/scanners/<name>/`, holding either an executable 
 | architecture | LLM against ADRs and the sidecar spec repo | 3 d | 1 | no |
 | stale | built-in | 24 h | none | none |
 
+**The cve scanner** (`scanners/cve`, a `sh` script plus one `jq` program, no build step) merges osv-scanner (all ecosystems) and govulncheck (Go reachability). Its fingerprint is `osv:<advisory>:<manifest>:<package>`, where the advisory is the smallest `GHSA-` id of the vulnerability, else the smallest `CVE-` id, else the smallest id, so one vulnerability reported under `GO-`, `GHSA-` and `CVE-` ids is one finding. Severity is `critical|high|medium|low`, from the CVSS score, else the database severity, else `medium`; a vulnerability govulncheck finds unreachable is capped at `medium`. Manifests under `testdata/`, `vendor/` and `node_modules/` are skipped. It fails closed: if a Go module cannot be analysed, the run fails and files nothing, unless a human adds a `no-govulncheck` file to the role directory, which skips govulncheck and reports reachability as unknown. The Dependabot alerts API is not wrapped, because a scanner holds no token.
+
 Intervals and group sizes are starting values to tune, not measurements.
 
 ## Triage loop
@@ -215,7 +217,7 @@ Local-executor details: the job worktree is always detached at a SHA resolved fr
 | Labels on resources | job id in the directory name | `ard/issue`, `ard/stage`, `ard/role`, `ard/job` |
 | Good for | Phase 1, one host, fast iteration | parallelism, isolation, untrusted inputs |
 
-**Agent CLIs plug in through adapters.** Each adapter turns (prompt file, context paths, budget) into a command line and parses the exit code and, where the CLI reports them, turns and cost. For Claude Code that is roughly `claude -p --output-format stream-json --model <model> --max-budget-usd <max_budget_usd>`; the installed CLI has no turn cap, so a per-job dollar cap and the executor's hard timeout bound each run. `kimi` and `dsh-tui` both run headless with `-p`; neither has a turn cap and `kimi` reports no cost, so turns and cost are optional in the adapter result. `config.yaml` names the default CLI and any per-role override, so a role can move between CLIs without touching its prompt.
+**Agent CLIs plug in through adapters.** Each adapter turns (prompt file, context paths, budget) into a command line and parses the exit code and, where the CLI reports them, turns and cost. For Claude Code that is `claude -p --output-format=stream-json --verbose --bare --restricted --strict-mcp-config --permission-mode=dontAsk --tools=… --allowed-tools=… --model <model> --max-budget-usd <max_budget_usd> --append-system-prompt-file <role prompt> -- <message>` (`--verbose` is required by `stream-json` in print mode). The user message holds only fixed text and the paths of the untrusted input files. The installed CLI accepts an undocumented `--max-turns`; ard does not rely on it, so a per-job dollar cap and the executor's hard timeout bound each run. Agents run with an empty per-job CLI config dir and API-key auth only (`ANTHROPIC_API_KEY`, passed by the executor and never visible to the adapter). `kimi` and `dsh-tui` both run headless with `-p`; neither has a turn cap and `kimi` reports no cost, so turns and cost are optional in the adapter result. `config.yaml` names the default CLI and any per-role override, so a role can move between CLIs without touching its prompt.
 
 **The agent's contract is narrow.** It may edit files in its worktree and must write `.ard/<issue#>/<role>.md` with a `status`. Exit 0 without that file counts as a failure, not a success.
 

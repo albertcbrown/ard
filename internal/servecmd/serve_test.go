@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
+	"github.com/albertcbrown/ard/internal/gitx/gittest"
+	"github.com/albertcbrown/ard/internal/redact"
 )
 
 // repoDir writes a minimal valid config and returns its path.
@@ -57,7 +60,7 @@ func fakeBuilder(f *fake.Fake, dry bool) builder {
 
 func TestServeRequiresRepo(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	for _, repo := range []string{"", "noslash"} {
+	for _, repo := range []string{"noslash"} {
 		err := serve(context.Background(), env(t, repo, repoDir(t), true), fakeBuilder(fake.New(), true))
 		if err == nil {
 			t.Errorf("repo %q: want error", repo)
@@ -134,5 +137,34 @@ func TestServeLiveCreatesStatusIssue(t *testing.T) {
 	}
 	if !f.Pinned(1) {
 		t.Errorf("status issue not created and pinned; writes %v", f.Writes())
+	}
+}
+
+func TestRedactText(t *testing.T) {
+	secrets := redact.NewSecrets()
+	if err := secrets.Add("TOKEN", "hunter2-hunter2"); err != nil {
+		t.Fatal(err)
+	}
+	rd, err := redact.New(secrets, redact.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := redactText(context.Background(), rd, "see hunter2-hunter2 here")
+	if strings.Contains(got, "hunter2") {
+		t.Errorf("secret leaked: %q", got)
+	}
+}
+
+func TestResolveRepoFromOrigin(t *testing.T) {
+	ctx := context.Background()
+	_, clone := gittest.NewRemote(t)
+	gittest.Run(t, clone, "remote", "set-url", "origin", "git@github.com:Own/Rep.git")
+	r, err := resolveRepo(ctx, "", clone)
+	if err != nil || r.Owner != "Own" || r.Name != "Rep" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	gittest.Run(t, clone, "remote", "set-url", "origin", "https://user:secrettoken@example.com/o/r")
+	if _, err := resolveRepo(ctx, "", clone); err == nil || strings.Contains(err.Error(), "secrettoken") {
+		t.Errorf("want error without the URL, got %v", err)
 	}
 }

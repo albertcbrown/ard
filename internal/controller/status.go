@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 // Status issue identity. The marker, not the title, is what makes an issue
@@ -28,7 +29,7 @@ type StatusEffects interface {
 	PinIssue(ctx context.Context, n int) error
 }
 
-const statusBody = StatusMarker + "\n\nManaged by ard. Add the `" + LabelPause +
+const statusBody = StatusMarker + "\n\nManaged by ard. Add the `" + labels.Pause +
 	"` label to stop new claims; remove it to resume.\n"
 
 // EnsureStatusIssue returns the number of the pinned status issue, creating

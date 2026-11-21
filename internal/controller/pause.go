@@ -9,12 +9,8 @@ import (
 
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/labels"
 )
-
-// LabelPause is the label on the status issue that stops new claims. It is
-// the catalogue name from the proposal; #22's labels package should own this
-// constant once it lands.
-const LabelPause = "ard:pause"
 
 // Reason says why the controller is paused.
 type Reason string
@@ -115,7 +111,7 @@ func (g *PauseGate) Check(ctx context.Context, cfg *config.Resolved) PauseState 
 	if warn {
 		g.log.Warn("pause.status_issue_closed", "issue", n)
 	}
-	if slices.Contains(is.Labels, LabelPause) {
+	if slices.Contains(is.Labels, labels.Pause) {
 		return PauseState{Paused: true, Reason: ReasonLabel}
 	}
 	return PauseState{}

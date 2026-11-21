@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -338,6 +340,7 @@ func TestLedger(t *testing.T) {
 	})
 	t.Run("no path no file", func(t *testing.T) {
 		dir := t.TempDir()
+		t.Chdir(dir)
 		d, _ := newDR(t, "")
 		issue(t, d)
 		if es, _ := os.ReadDir(dir); len(es) != 0 {
@@ -545,5 +548,94 @@ func TestIsSynthetic(t *testing.T) {
 		if IsSynthetic(n) != want {
 			t.Errorf("IsSynthetic(%d)", n)
 		}
+	}
+}
+
+// faultFile injects write or sync failures into the ledger.
+type faultFile struct {
+	ledgerFile
+	failWrite, failSync, failTruncate bool
+}
+
+func (f *faultFile) Write(b []byte) (int, error) {
+	if f.failWrite {
+		n, _ := f.ledgerFile.Write(b[:len(b)/2]) // partial write
+		return n, errors.New("disk full")
+	}
+	return f.ledgerFile.Write(b)
+}
+func (f *faultFile) Sync() error {
+	if f.failSync {
+		return errors.New("fsync failed")
+	}
+	return f.ledgerFile.Sync()
+}
+func (f *faultFile) Truncate(n int64) error {
+	if f.failTruncate {
+		return errors.New("truncate failed")
+	}
+	return f.ledgerFile.Truncate(n)
+}
+
+func TestLedgerFaults(t *testing.T) {
+	ctx := context.Background()
+	for _, fault := range []string{"write", "sync"} {
+		t.Run(fault, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "e.jsonl")
+			d, _ := NewDryRun(DryRunOptions{Log: slog.New(slog.DiscardHandler), LedgerPath: p})
+			ff := &faultFile{ledgerFile: d.ledger, failWrite: fault == "write", failSync: fault == "sync"}
+			d.ledger = ff
+			if _, err := d.CreateIssue(ctx, github.NewIssue{Title: "a"}); err == nil {
+				t.Fatal("want error")
+			}
+			ff.failWrite, ff.failSync = false, false
+			is, err := d.CreateIssue(ctx, github.NewIssue{Title: "b"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if is.Number != -2 {
+				t.Errorf("number %d reissued or wrong, want -2", is.Number)
+			}
+			d.Close()
+			data, _ := os.ReadFile(p)
+			for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+				if !json.Valid(line) {
+					t.Fatalf("corrupt line %q", line)
+				}
+			}
+			if _, err := NewDryRun(DryRunOptions{Log: slog.New(slog.DiscardHandler), LedgerPath: p}); err != nil {
+				t.Fatalf("ledger unreadable: %v", err)
+			}
+		})
+	}
+	t.Run("truncate fails", func(t *testing.T) {
+		d, _ := NewDryRun(DryRunOptions{Log: slog.New(slog.DiscardHandler), LedgerPath: filepath.Join(t.TempDir(), "e.jsonl")})
+		d.ledger = &faultFile{ledgerFile: d.ledger, failWrite: true, failTruncate: true}
+		if _, err := d.CreateIssue(ctx, github.NewIssue{}); err == nil {
+			t.Fatal("want error")
+		}
+		d.ledger = d.ledger.(*faultFile).ledgerFile
+		if err := d.AddLabels(ctx, 1, "x"); err == nil || !strings.Contains(err.Error(), "unusable") {
+			t.Fatalf("later effect err = %v", err)
+		}
+	})
+}
+
+func TestNewClientReadOnlyUnderDryRun(t *testing.T) {
+	var reqs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reqs++ }))
+	defer srv.Close()
+	for _, dry := range []bool{true} {
+		c, err := newClient(Options{DryRun: dry, GitHub: github.Config{
+			Repo: github.Repo{Owner: "o", Name: "r"}, Auth: github.NewTokenAuth("t"), BaseURL: srv.URL}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.CreateIssue(context.Background(), github.NewIssue{Title: "x"}); !errors.Is(err, github.ErrReadOnly) {
+			t.Fatalf("err = %v, want ErrReadOnly", err)
+		}
+	}
+	if reqs != 0 {
+		t.Fatalf("server saw %d requests", reqs)
 	}
 }

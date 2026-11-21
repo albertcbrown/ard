@@ -20,7 +20,9 @@ import (
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/pool"
+	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -43,7 +45,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
-	repo, err := resolveRepo(e.Repo)
+	repo, err := resolveRepo(ctx, e.Repo, root)
 	if err != nil {
 		return err
 	}
@@ -149,15 +151,23 @@ type wiring struct {
 // one constructor call here.
 func registerLoops(*wiring) []controller.Loop { return nil }
 
-// resolveRepo parses --repo, which is required.
-// TODO: fall back to origin via gitx.RemoteURL once #22 lands.
-func resolveRepo(flag string) (github.Repo, error) {
-	if flag == "" {
-		return github.Repo{}, errors.New("ard serve: --repo owner/repo is required")
+// resolveRepo parses --repo, or falls back to the origin remote of root.
+// Errors never include the remote URL, which may embed a token.
+func resolveRepo(ctx context.Context, flag, root string) (github.Repo, error) {
+	if flag != "" {
+		r, err := github.ParseRepo(flag)
+		if err != nil {
+			return github.Repo{}, fmt.Errorf("ard serve: %w", err)
+		}
+		return r, nil
 	}
-	r, err := github.ParseRepo(flag)
+	url, err := gitx.New("").RemoteURL(ctx, root, "origin")
 	if err != nil {
-		return github.Repo{}, fmt.Errorf("ard serve: %w", err)
+		return github.Repo{}, errors.New("ard serve: --repo owner/repo is required (no origin remote to fall back on)")
+	}
+	r, err := github.RepoFromRemote(url)
+	if err != nil {
+		return github.Repo{}, errors.New("ard serve: --repo owner/repo is required (origin remote is not a github.com owner/repo URL)")
 	}
 	return r, nil
 }
@@ -189,7 +199,12 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 	if auth.Kind() == github.AuthToken && !e.DryRun {
 		return deps{}, errors.New("ard serve: ARD_GITHUB_TOKEN auth is for --dry-run only; configure a GitHub App for live runs")
 	}
+	red, err := redact.New(redact.FromEnviron(os.Environ()), redact.Options{})
+	if err != nil {
+		return deps{}, fmt.Errorf("ard serve: %w", err)
+	}
 	o := effects.Options{
+		Redact: func(text string) string { return redactText(ctx, red, text) },
 		DryRun: e.DryRun,
 		GitHub: github.Config{Repo: repo, Auth: auth, Log: e.Log},
 		Log:    e.Log,
@@ -206,4 +221,14 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 		d.Close = c.Close
 	}
 	return d, nil
+}
+
+// redactText masks known secrets in text bound for the dry-run ledger and
+// log. It fails closed: a scanner hit or error replaces the whole text.
+func redactText(ctx context.Context, rd *redact.Redactor, text string) string {
+	res, err := rd.Text(ctx, []byte(text))
+	if err != nil || res.Flagged {
+		return "[REDACTED: secret scan flagged this text]"
+	}
+	return string(res.Clean)
 }

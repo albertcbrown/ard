@@ -1,0 +1,194 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "@ROOT@/package-lock.json",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "a",
+            "version": "1.0.0",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-aaaa-aaaa-aaaa",
+              "aliases": [],
+              "summary": "moderate one",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "npm",
+                    "name": "a"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "1.0.1"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "database_specific": {
+                "severity": "MODERATE"
+              }
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-aaaa-aaaa-aaaa"
+              ],
+              "aliases": [],
+              "max_severity": ""
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "b",
+            "version": "1.0.0",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-bbbb-bbbb-bbbb",
+              "aliases": [],
+              "summary": "no severity",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "npm",
+                    "name": "b"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-bbbb-bbbb-bbbb"
+              ],
+              "aliases": [],
+              "max_severity": ""
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "c",
+            "version": "1.0.0",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-cccc-cccc-cccc",
+              "aliases": [],
+              "summary": "high one",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "npm",
+                    "name": "c"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "2.0.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "database_specific": {
+                "severity": "HIGH"
+              }
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-cccc-cccc-cccc"
+              ],
+              "aliases": [],
+              "max_severity": ""
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "d",
+            "version": "1.0.0",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-dddd-dddd-dddd",
+              "aliases": [],
+              "summary": "low score",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "npm",
+                    "name": "d"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "1.1.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "database_specific": {
+                "severity": "CRITICAL"
+              }
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-dddd-dddd-dddd"
+              ],
+              "aliases": [],
+              "max_severity": "2.1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

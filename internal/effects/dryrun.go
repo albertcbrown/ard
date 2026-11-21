@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -31,7 +30,8 @@ type DryRun struct {
 
 	mu     sync.Mutex
 	next   int // next synthetic number, always negative
-	ledger *os.File
+	ledger ledgerFile
+	broken error // set when the ledger could not be repaired; fails every later effect
 }
 
 var _ Effects = (*DryRun)(nil)
@@ -73,9 +73,13 @@ func (d *DryRun) emit(ctx context.Context, op, target string, payload map[string
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.broken != nil {
+		return 0, fmt.Errorf("effects: %s: %w", op, d.broken)
+	}
 	n := 0
 	if alloc {
 		n = d.next
+		d.next-- // never reissue a number, even if the append below fails
 	}
 	var res map[string]any
 	if result != nil {
@@ -83,12 +87,13 @@ func (d *DryRun) emit(ctx context.Context, op, target string, payload map[string
 	}
 	if d.ledger != nil {
 		r := record{TS: time.Now().UTC(), Op: op, Target: target, Payload: payload, Result: res}
-		if err := appendRecord(d.ledger, r); err != nil {
+		err, broken := appendRecord(d.ledger, r)
+		if broken != nil {
+			d.broken = broken
+		}
+		if err != nil {
 			return 0, fmt.Errorf("effects: %s: %w", op, err)
 		}
-	}
-	if alloc {
-		d.next--
 	}
 	d.log.InfoContext(ctx, "effect", "op", op, "dry_run", true, "target", target, "payload", payload, "result", res)
 	return n, nil

@@ -10,6 +10,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 func TestPauseGateCheck(t *testing.T) {
@@ -23,12 +24,12 @@ func TestPauseGateCheck(t *testing.T) {
 		want   Reason
 	}{
 		{name: "config paused", cfg: config.Resolved{Paused: true}, want: ReasonConfig},
-		{name: "label present", issue: &github.Issue{Labels: []string{LabelPause}}, want: ReasonLabel},
+		{name: "label present", issue: &github.Issue{Labels: []string{labels.Pause}}, want: ReasonLabel},
 		{name: "label absent", issue: &github.Issue{Labels: []string{"other"}}, want: ReasonNone},
-		{name: "closed with label", issue: &github.Issue{State: github.StateClosed, Labels: []string{LabelPause}}, want: ReasonLabel},
+		{name: "closed with label", issue: &github.Issue{State: github.StateClosed, Labels: []string{labels.Pause}}, want: ReasonLabel},
 		{name: "read error", issue: &github.Issue{}, fail: errors.New("boom"), want: ReasonUnreadable},
 		{name: "not found", issue: &github.Issue{}, number: 999, want: ReasonUnreadable},
-		{name: "number zero is config only", issue: &github.Issue{Labels: []string{LabelPause}}, number: -1, want: ReasonNone},
+		{name: "number zero is config only", issue: &github.Issue{Labels: []string{labels.Pause}}, number: -1, want: ReasonNone},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,13 +64,13 @@ func TestPauseGateCheck(t *testing.T) {
 func TestPauseGateResumesWhenLabelRemoved(t *testing.T) {
 	ctx := context.Background()
 	f := fake.New()
-	n := f.SeedIssue(github.Issue{Labels: []string{LabelPause}})
+	n := f.SeedIssue(github.Issue{Labels: []string{labels.Pause}})
 	g := NewPauseGate(f, nil)
 	g.SetStatusIssue(n)
 	if !g.Check(ctx, &config.Resolved{}).Paused {
 		t.Fatal("want paused")
 	}
-	if err := f.RemoveLabel(ctx, n, LabelPause); err != nil {
+	if err := f.RemoveLabel(ctx, n, labels.Pause); err != nil {
 		t.Fatal(err)
 	}
 	if g.Check(ctx, &config.Resolved{}).Paused {
@@ -90,7 +91,7 @@ func TestPauseStopsClaimingLoopsWithinOnePoll(t *testing.T) {
 		stop := start(t, mustNew(t, Deps{Log: log, Pause: g, Rand: fixedRand(0.5)}, claim, reap))
 		time.Sleep(iv * 3)
 
-		if err := f.AddLabels(ctx, n, LabelPause); err != nil {
+		if err := f.AddLabels(ctx, n, labels.Pause); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(iv * 11 / 10) // one interval plus jitter: any tick in flight has ended
@@ -103,7 +104,7 @@ func TestPauseStopsClaimingLoopsWithinOnePoll(t *testing.T) {
 			t.Errorf("non-claiming loop stalled: %d -> %d", r0, reap.ticks())
 		}
 
-		if err := f.RemoveLabel(ctx, n, LabelPause); err != nil {
+		if err := f.RemoveLabel(ctx, n, labels.Pause); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(iv * 3)

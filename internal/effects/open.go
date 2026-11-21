@@ -36,15 +36,9 @@ func Open(ctx context.Context, o Options) (Effects, github.Reader, error) {
 	if g == nil {
 		g = gitx.New("")
 	}
-	client := o.Client
-	if client == nil {
-		cfg := o.GitHub
-		cfg.ReadOnly = o.DryRun
-		c, err := github.New(cfg)
-		if err != nil {
-			return nil, nil, fmt.Errorf("effects: open github client: %w", err)
-		}
-		client = c
+	client, err := newClient(o)
+	if err != nil {
+		return nil, nil, err
 	}
 	if o.DryRun {
 		d, err := NewDryRun(DryRunOptions{Log: o.Log, LedgerPath: o.LedgerPath, Redact: o.Redact, Staged: g.StagedPaths})
@@ -54,4 +48,19 @@ func Open(ctx context.Context, o Options) (Effects, github.Reader, error) {
 		return d, readOnly{client}, nil
 	}
 	return NewLive(client, g, o.Log), readOnly{client}, nil
+}
+
+// newClient returns o.Client, or builds the HTTP client. Under dry-run the
+// built client is read-only, so even a bug cannot write to GitHub.
+func newClient(o Options) (github.Client, error) {
+	if o.Client != nil {
+		return o.Client, nil
+	}
+	cfg := o.GitHub
+	cfg.ReadOnly = o.DryRun
+	c, err := github.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("effects: open github client: %w", err)
+	}
+	return c, nil
 }

@@ -172,3 +172,18 @@ func TestRevParseError(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestRemoteURL(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	gittest.Run(t, clone, "remote", "set-url", "origin", "git@github.com:o/r.git")
+
+	got, err := g.RemoteURL(ctx, clone, "origin")
+	if err != nil || got != "git@github.com:o/r.git" {
+		t.Errorf("RemoteURL = %q, %v", got, err)
+	}
+	if _, err := g.RemoteURL(ctx, clone, "nope"); err == nil {
+		t.Error("missing remote: want error")
+	}
+}
