@@ -87,3 +87,4 @@ Run `make lint test` before every commit.
 - Branch per issue: `<issue#>-<short-slug>`. Open a PR that says `Closes #<issue>`. Do not push to `main` directly.
 - Keep PRs to one issue. Note follow-ups as new issues rather than widening the PR.
 - Decision issues (`type:decision`) record the choice in a comment, then update the proposal and close.
+- No AI attribution in commits or PRs: no `Co-Authored-By: Claude …` trailers, and no "Generated with Claude Code" lines in PR descriptions or comments.
