@@ -65,6 +65,28 @@ func TestEnsureStatusIssue(t *testing.T) {
 			t.Errorf("issue = %+v", is)
 		}
 	})
+	t.Run("restart reuses the created issue", func(t *testing.T) {
+		f := fake.New()
+		fx := f.As(bot)
+		log, _ := newLog()
+		a, err := EnsureStatusIssue(ctx, f, fx, bot, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := EnsureStatusIssue(ctx, f, fx, bot, log)
+		if err != nil || a != b {
+			t.Fatalf("got %d then %d, %v", a, b, err)
+		}
+		creates := 0
+		for _, w := range f.Writes() {
+			if w.Method == "CreateIssue" {
+				creates++
+			}
+		}
+		if creates != 1 {
+			t.Errorf("CreateIssue called %d times, want 1", creates)
+		}
+	})
 	t.Run("pin error is a warning", func(t *testing.T) {
 		f := fake.New()
 		f.FailNext("PinIssue", errors.New("3 pinned already"))

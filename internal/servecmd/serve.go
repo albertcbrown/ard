@@ -85,7 +85,6 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	log := e.Log
 	gate := controller.NewPauseGate(d.Reader, log)
 	w := &wiring{Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: cfg.MaxPods}
-	var poolRef atomic.Pointer[pool.Pool]
 
 	cc, err := controller.New(controller.Deps{
 		Log: log,
@@ -94,7 +93,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 			if err != nil {
 				return nil, err
 			}
-			if p := poolRef.Load(); p != nil {
+			if p := w.pool.Load(); p != nil {
 				p.SetMax(c.MaxPods) // a reload may change max_pods
 			}
 			return c, nil
@@ -108,8 +107,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 				if err != nil {
 					return err
 				}
-				w.Pool = p
-				poolRef.Store(p)
+				w.pool.Store(p)
 				return nil
 			}},
 			{Name: "status-issue", Fn: func(ctx context.Context) error {
@@ -135,21 +133,32 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 }
 
 // wiring holds the long-lived dependencies loops take through their own
-// constructors. Pool is set by the pool-adopt startup hook, which runs
-// before any loop ticks.
+// constructors. The pool is not built yet when constructors run (the
+// pool-adopt startup hook builds it inside Run), so loops must call Pool()
+// at tick time, never in their constructors.
 type wiring struct {
 	Log     *slog.Logger
 	Reader  github.Reader
 	Effects effects.Effects
 	Store   *state.Store
-	Pool    *pool.Pool
 	MaxPods int
+	pool    atomic.Pointer[pool.Pool]
+}
+
+// Pool returns the slot pool adopted at startup. It panics if called before
+// the pool-adopt hook has run, which means a loop used it in its constructor.
+func (w *wiring) Pool() *pool.Pool {
+	p := w.pool.Load()
+	if p == nil {
+		panic("pool used before pool-adopt")
+	}
+	return p
 }
 
 // registerLoops returns the loops to run. None yet: #23 (scanners), #25
 // (stale) and the triage, worker, reviewer, merger and Reaper loops each add
-// one constructor call here.
-func registerLoops(*wiring) []controller.Loop { return nil }
+// one constructor call here. It is a variable so tests can observe wiring.
+var registerLoops = func(*wiring) []controller.Loop { return nil }
 
 // resolveRepo parses --repo, or falls back to the origin remote of root.
 // Errors never include the remote URL, which may embed a token.
@@ -204,7 +213,7 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 		return deps{}, fmt.Errorf("ard serve: %w", err)
 	}
 	o := effects.Options{
-		Redact: func(text string) string { return redactText(ctx, red, text) },
+		Redact: func(text string) string { return redactText(context.WithoutCancel(ctx), e.Log, red, text) },
 		DryRun: e.DryRun,
 		GitHub: github.Config{Repo: repo, Auth: auth, Log: e.Log},
 		Log:    e.Log,
@@ -224,10 +233,16 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 }
 
 // redactText masks known secrets in text bound for the dry-run ledger and
-// log. It fails closed: a scanner hit or error replaces the whole text.
-func redactText(ctx context.Context, rd *redact.Redactor, text string) string {
+// log. It fails closed: a scan error or hit replaces the whole text, and the
+// reason is logged without the text itself.
+func redactText(ctx context.Context, log *slog.Logger, rd *redact.Redactor, text string) string {
 	res, err := rd.Text(ctx, []byte(text))
-	if err != nil || res.Flagged {
+	switch {
+	case err != nil:
+		log.Warn("dryrun.redact_failed", "error", err)
+		return "[REDACTED: secret scan failed]"
+	case res.Flagged:
+		log.Warn("dryrun.redact_flagged", "findings", len(res.Findings))
 		return "[REDACTED: secret scan flagged this text]"
 	}
 	return string(res.Clean)

@@ -1,6 +1,7 @@
 package servecmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,19 +109,63 @@ func TestServeSecondInstanceExits(t *testing.T) {
 		t.Fatalf("first serve: %v", err)
 	}
 	// Lock released: a new serve can start and stop.
-	ctx3, cancel3 := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel3()
-	if err := serve(ctx3, env(t, "o/r", cfg, true), fakeBuilder(f, true)); err != nil {
+	buf := &syncBuf{}
+	e3 := env(t, "o/r", cfg, true)
+	e3.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e3, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
 		t.Fatalf("serve after release: %v", err)
 	}
+}
+
+// syncBuf is a goroutine-safe log destination.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) has(sub string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Contains(s.b.String(), sub)
+}
+
+// runUntil starts serve, waits until cond holds (startup is done), then
+// cancels and returns serve's result.
+func runUntil(t *testing.T, e *cli.Env, b builder, cond func() bool) error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := make(chan error, 1)
+	go func() { res <- serve(ctx, e, b) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		select {
+		case err := <-res:
+			t.Fatalf("serve returned before startup finished: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("startup did not finish")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	return <-res
 }
 
 func TestServeDryRunWritesNothing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	if err := serve(ctx, env(t, "o/r", repoDir(t), true), fakeBuilder(f, true)); err != nil {
+	buf := &syncBuf{}
+	e := env(t, "o/r", repoDir(t), true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
 		t.Fatal(err)
 	}
 	if w := f.Writes(); len(w) != 0 {
@@ -130,13 +176,43 @@ func TestServeDryRunWritesNothing(t *testing.T) {
 func TestServeLiveCreatesStatusIssue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	if err := serve(ctx, env(t, "o/r", repoDir(t), false), fakeBuilder(f, false)); err != nil {
+	if err := runUntil(t, env(t, "o/r", repoDir(t), false), fakeBuilder(f, false), func() bool { return f.Pinned(1) }); err != nil {
 		t.Fatal(err)
 	}
 	if !f.Pinned(1) {
 		t.Errorf("status issue not created and pinned; writes %v", f.Writes())
+	}
+}
+
+func TestWiringPoolAvailableAfterRunStarts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	var w *wiring
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop {
+		w = x
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("Pool() in a constructor should panic")
+				}
+			}()
+			x.Pool()
+		}()
+		return nil
+	}
+	defer func() { registerLoops = orig }()
+	buf := &syncBuf{}
+	e := env(t, "o/r", repoDir(t), true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
+		t.Fatal(err)
+	}
+	if w == nil || w.Pool() == nil {
+		t.Fatal("pool not adopted")
+	}
+	if st := w.Pool().Stats(); st.Max != 2 {
+		t.Errorf("pool max = %d, want 2 from config", st.Max)
 	}
 }
 
@@ -149,7 +225,7 @@ func TestRedactText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := redactText(context.Background(), rd, "see hunter2-hunter2 here")
+	got := redactText(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)), rd, "see hunter2-hunter2 here")
 	if strings.Contains(got, "hunter2") {
 		t.Errorf("secret leaked: %q", got)
 	}
@@ -166,5 +242,32 @@ func TestResolveRepoFromOrigin(t *testing.T) {
 	gittest.Run(t, clone, "remote", "set-url", "origin", "https://user:secrettoken@example.com/o/r")
 	if _, err := resolveRepo(ctx, "", clone); err == nil || strings.Contains(err.Error(), "secrettoken") {
 		t.Errorf("want error without the URL, got %v", err)
+	}
+}
+
+func TestRedactTextSurvivesCancelledContextAndLogsFlag(t *testing.T) {
+	rd, err := redact.New(redact.NewSecrets(), redact.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := &syncBuf{}
+	log := slog.New(slog.NewTextHandler(buf, nil))
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	// The closure serve builds detaches from cancellation.
+	got := redactText(context.WithoutCancel(parent), log, rd, "plain title")
+	if got != "plain title" {
+		t.Errorf("got %q", got)
+	}
+	// A cancelled ctx directly fails closed and says why.
+	got = redactText(parent, log, rd, "plain title")
+	if !strings.Contains(got, "scan failed") || !buf.has("dryrun.redact_failed") {
+		t.Errorf("got %q, log has failed=%v", got, buf.has("dryrun.redact_failed"))
+	}
+	// A scanner hit logs the count, never the text.
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	got = redactText(context.Background(), log, rd, "key "+secret)
+	if strings.Contains(got, secret) || buf.has(secret) {
+		t.Errorf("leak: %q", got)
 	}
 }

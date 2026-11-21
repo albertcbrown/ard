@@ -198,4 +198,7 @@ func TestSearchInTitleText(t *testing.T) {
 	if _, err := f.SearchIssues(ctx, "in:body", github.SearchOpts{}); err == nil {
 		t.Error("in:body should be unsupported")
 	}
+	if _, err := f.SearchIssues(ctx, `"ard status"`, github.SearchOpts{}); err == nil {
+		t.Error("quoted text without in:title should be rejected")
+	}
 }

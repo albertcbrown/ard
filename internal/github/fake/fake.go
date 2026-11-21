@@ -5,6 +5,7 @@ package fake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -969,6 +970,14 @@ func parseSearch(q string) (searchTerms, error) {
 		}
 		t.key, t.value = k, v
 		out = append(out, t)
+	}
+	var hasText, hasInTitle bool
+	for _, t := range out {
+		hasText = hasText || t.key == "text"
+		hasInTitle = hasInTitle || (t.key == "in" && !t.neg)
+	}
+	if hasText && !hasInTitle {
+		return nil, errors.New("fake: quoted text requires in:title")
 	}
 	return out, nil
 }
