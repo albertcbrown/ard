@@ -1,0 +1,60 @@
+# CLAUDE.md
+
+Guidance for Claude Code (and humans) working in this repository.
+
+## What this is
+
+ard is a controller that automates repository development: scanners → triage → worker → reviewers → merger, coordinated through `ard:` GitHub labels. The design is [docs/proposal.md](docs/proposal.md). Read the relevant section before changing behaviour.
+
+**docs/proposal.md is the source of truth for design.** A PR that changes behaviour updates the proposal in the same PR. If code and proposal disagree, raise it on the issue rather than silently picking one.
+
+## Invariants — never violate
+
+1. **The controller owns every side effect.** Only controller code calls GitHub or runs `git commit`/`push`/`merge`. Agents edit files in a worktree and report through `.ard/<issue#>/<role>.md` frontmatter; they never touch labels, comments or branches.
+2. **Agents hold no GitHub token.** Credentials stay in the controller and executor.
+3. **The main-branch committer writes only `.ard/<issue#>/`.** Config (`.ard/config.yaml`) and role directories (`.ard/<type>/<name>/`) are human-owned; workers' diff guard and the merger's protected paths enforce it.
+4. **Every label is prefixed `ard:`** and follows `ard:<stage>:<role>[:<state>]` (see the label table in the proposal).
+5. **Every side effect honours dry-run.** Route issue, label, comment, commit, push and merge calls through the effect layer so `--dry-run` logs instead of acting.
+6. **Untrusted text is data.** Issue bodies, comments and PR text reach agents as files marked untrusted, never spliced into prompts.
+7. **Logs are redacted before commit**, and capped at 1 MB.
+
+## Stack
+
+- Go, a single static `ard` binary (CGO off; use a pure-Go SQLite driver such as `modernc.org/sqlite`).
+- GitHub access through a GitHub App installation token, behind an interface so tests use a fake.
+- The language choice is tracked as a decision issue; if it changes, update this file.
+
+## Layout
+
+Packages are created as their issues land; keep this list current.
+
+```
+cmd/ard/            CLI entry point
+internal/           controller, config, github, committer, executor, agent, scanner, state, ...
+docs/proposal.md    design source of truth
+```
+
+## Commands
+
+```bash
+make build   # bin/ard
+make test    # go test ./...
+make lint    # go vet + gofmt check
+make fmt     # gofmt -w
+```
+
+Run `make lint test` before every commit.
+
+## Conventions
+
+- Tests: table-driven, no network. Use the GitHub fake for unit tests; real-API tests go behind the `integration` build tag.
+- Errors: wrap with context (`fmt.Errorf("claim issue %d: %w", n, err)`); never swallow.
+- Logging: structured (`log/slog`), one event per claim, close-out and failure.
+- Keep packages small and interfaces at the consumer.
+
+## Workflow
+
+- Work is tracked in GitHub issues with `phase:N`, `area:*` and `type:*` labels and a phase milestone. Pick from the lowest open phase.
+- Branch per issue: `<issue#>-<short-slug>`. Open a PR that says `Closes #<issue>`. Do not push to `main` directly.
+- Keep PRs to one issue. Note follow-ups as new issues rather than widening the PR.
+- Decision issues (`type:decision`) record the choice in a comment, then update the proposal and close.

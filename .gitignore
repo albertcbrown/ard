@@ -1,0 +1,18 @@
+# Build output
+/bin/
+/dist/
+
+# Test and coverage output
+*.test
+*.out
+coverage.*
+
+# Local ard state and scratch
+*.db
+*.db-journal
+.ard-local/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
