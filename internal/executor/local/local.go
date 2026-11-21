@@ -158,13 +158,25 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		return h, fmt.Errorf("add worktree: %w", err)
 	}
 	worktreeAdded = true
-	for _, f := range j.Inputs {
-		dst := filepath.Join(wt, filepath.FromSlash(f.Path))
-		if err = os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return h, fmt.Errorf("write input %s: %w", f.Path, err)
+	if len(j.Inputs) > 0 {
+		// os.Root refuses to follow symlinks out of the worktree, so a
+		// committed symlink at an input path cannot redirect the write.
+		var r *os.Root
+		if r, err = os.OpenRoot(wt); err != nil {
+			return h, fmt.Errorf("open worktree: %w", err)
 		}
-		if err = os.WriteFile(dst, f.Data, 0o644); err != nil {
-			return h, fmt.Errorf("write input %s: %w", f.Path, err)
+		defer r.Close()
+		for _, f := range j.Inputs {
+			rel := filepath.FromSlash(f.Path)
+			if err = r.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+				return h, fmt.Errorf("write input %s: %w", f.Path, err)
+			}
+			if err = rejectSymlink(r, rel); err != nil {
+				return h, fmt.Errorf("write input %s: %w", f.Path, err)
+			}
+			if err = r.WriteFile(rel, f.Data, 0o644); err != nil {
+				return h, fmt.Errorf("write input %s: %w", f.Path, err)
+			}
 		}
 	}
 	if err = os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
@@ -280,6 +292,15 @@ func (l *Local) Prune(ctx context.Context, olderThan time.Duration) error {
 	}
 	if err != nil {
 		return fmt.Errorf("prune logs: %w", err)
+	}
+	return nil
+}
+
+// rejectSymlink fails when rel already exists as a symlink: even a link that
+// stays inside the worktree would let a branch swap what an input resolves to.
+func rejectSymlink(r *os.Root, rel string) error {
+	if st, err := r.Lstat(rel); err == nil && st.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink", rel)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -20,8 +21,10 @@ type gitRunner interface {
 type execGit struct{ bin string }
 
 func (g execGit) run(ctx context.Context, repo string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, g.bin, append([]string{"-C", repo}, args...)...)
-	cmd.Env = []string{"PATH=" + defaultPath(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "HOME=" + repo}
+	cmd := exec.CommandContext(ctx, g.bin, append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-C", repo}, args...)...)
+	// Never HOME=repo: git would read <repo>/.gitconfig, which a branch controls.
+	cmd.Env = []string{"PATH=" + defaultPath(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null", "HOME=" + os.TempDir()}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))

@@ -21,7 +21,7 @@ func TestLayout(t *testing.T) {
 		t.Error(got)
 	}
 	ts := time.Date(2026, 11, 21, 10, 15, 0, 0, time.UTC)
-	if got := LogBase("worker", "dev", ts); got != "worker-dev-20261121T101500Z" {
+	if got := LogBase("worker", "dev", ts); got != "worker-dev-20261121T101500.000Z" {
 		t.Error(got)
 	}
 }

@@ -37,7 +37,8 @@ internal/executor/    Executor interface and plain-data job types
 internal/executor/local/  git worktree + host subprocess or docker run, watchdog, logs
 internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
 internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
-internal/           controller, github, committer, executor, agent, scanner, state, ...
+internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
+internal/           controller, config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```
 

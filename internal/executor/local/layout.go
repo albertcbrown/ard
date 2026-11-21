@@ -29,7 +29,7 @@ func (l *Local) logDir(repo string, issue int) string {
 }
 
 // LogBase is the log file basename (no extension), e.g.
-// "worker-go-dev-20261121T101500Z". The close-out commit uses the same name.
+// "worker-go-dev-20261121T101500.000Z". The close-out commit uses the same name.
 func LogBase(stage, role string, ts time.Time) string {
-	return fmt.Sprintf("%s-%s-%s", stage, role, ts.UTC().Format("20060102T150405Z"))
+	return fmt.Sprintf("%s-%s-%s", stage, role, ts.UTC().Format("20060102T150405.000Z"))
 }
