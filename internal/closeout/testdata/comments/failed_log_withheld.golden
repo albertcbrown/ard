@@ -1,0 +1,6 @@
+<!-- ard:closeout job=01JTEST attempt=1 -->
+**ard · triage:lead · failed**
+
+`agent exited 1; log withheld: secret scan flagged it`
+
+Output: log withheld (secret scan) · job `01JTEST` · attempt 1

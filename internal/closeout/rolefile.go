@@ -1,0 +1,191 @@
+package closeout
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Stage words of the jobs close-out handles.
+const (
+	StageTriage = "triage"
+	StageWorker = "worker"
+	StageReview = "review"
+)
+
+// Role file statuses and reviewer verdicts.
+const (
+	StatusDone       = "done"
+	StatusBlocked    = "blocked"
+	StatusNeedsHuman = "needs-human"
+	VerdictApprove   = "approve"
+	VerdictChanges   = "changes"
+)
+
+// MaxRoleFileBytes bounds a role file.
+const MaxRoleFileBytes = 256 << 10
+
+var (
+	// ErrMissing means the role file does not exist.
+	ErrMissing = errors.New("closeout: role file missing")
+	// ErrMalformed means the role file exists but breaks the contract. It is
+	// always wrapped with the reason.
+	ErrMalformed = errors.New("closeout: malformed role file")
+)
+
+// RoleFile is the parsed .ard/<issue#>/<role>.md.
+type RoleFile struct {
+	Role, Status, Verdict, Worker string
+	Attempt                       int
+	Next                          []string // raw entries; see next.go
+	Summary                       string
+}
+
+type rawFront struct {
+	Role    *string   `yaml:"role"`
+	Status  *string   `yaml:"status"`
+	Attempt *int      `yaml:"attempt"`
+	Next    *[]string `yaml:"next"`
+	Verdict *string   `yaml:"verdict"`
+	Worker  *string   `yaml:"worker"`
+}
+
+func malformed(format string, a ...any) error {
+	return fmt.Errorf("%w: %s", ErrMalformed, fmt.Sprintf(format, a...))
+}
+
+// Parse reads a role file: a first line of exactly "---", YAML, a line of
+// exactly "---", then the summary. It checks the syntax and the field
+// types; Check validates the fields against the job.
+func Parse(b []byte) (RoleFile, error) {
+	if len(b) > MaxRoleFileBytes {
+		return RoleFile{}, malformed("file is %d bytes, max %d", len(b), MaxRoleFileBytes)
+	}
+	if !utf8.Valid(b) || bytes.IndexByte(b, 0) >= 0 {
+		return RoleFile{}, malformed("not valid UTF-8 text")
+	}
+	b = bytes.TrimPrefix(b, []byte("\xef\xbb\xbf"))
+	lines := strings.SplitAfter(string(b), "\n")
+	fence := func(l string) bool { return strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r") == "---" }
+	if len(lines) == 0 || !fence(lines[0]) {
+		return RoleFile{}, malformed("no opening --- line")
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if fence(lines[i]) {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return RoleFile{}, malformed("no closing --- line")
+	}
+	front := strings.Join(lines[1:end], "")
+	summary := strings.TrimSpace(strings.Join(lines[end+1:], ""))
+
+	var raw rawFront
+	dec := yaml.NewDecoder(strings.NewReader(front))
+	dec.KnownFields(true)
+	if err := dec.Decode(&raw); err != nil {
+		if errors.Is(err, io.EOF) {
+			return RoleFile{}, malformed("empty frontmatter")
+		}
+		return RoleFile{}, malformed("frontmatter: %v", err)
+	}
+	var extra rawFront
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return RoleFile{}, malformed("frontmatter holds more than one document")
+	}
+	rf := RoleFile{Summary: summary}
+	switch {
+	case raw.Role == nil:
+		return RoleFile{}, malformed("missing role")
+	case raw.Status == nil:
+		return RoleFile{}, malformed("missing status")
+	case raw.Attempt == nil:
+		return RoleFile{}, malformed("missing attempt")
+	}
+	rf.Role, rf.Status, rf.Attempt = *raw.Role, *raw.Status, *raw.Attempt
+	if raw.Verdict != nil {
+		rf.Verdict = *raw.Verdict
+	}
+	if raw.Worker != nil {
+		rf.Worker = *raw.Worker
+	}
+	if raw.Next != nil {
+		rf.Next = *raw.Next
+	}
+	switch rf.Status {
+	case StatusDone, StatusBlocked, StatusNeedsHuman:
+	default:
+		return RoleFile{}, malformed("status %q is not done, blocked or needs-human", clip(rf.Status, 40))
+	}
+	if rf.Attempt < 1 {
+		return RoleFile{}, malformed("attempt %d is below 1", rf.Attempt)
+	}
+	if rf.Verdict != "" && rf.Verdict != VerdictApprove && rf.Verdict != VerdictChanges {
+		return RoleFile{}, malformed("verdict %q is not approve or changes", clip(rf.Verdict, 40))
+	}
+	if rf.Summary == "" {
+		return RoleFile{}, malformed("empty summary")
+	}
+	return rf, nil
+}
+
+// check applies the rules that depend on the job: the role name and where a
+// verdict or worker field may appear.
+func (rf RoleFile) check(j Job) error {
+	if rf.Role != j.Role {
+		return malformed("role %q does not match job role %q", clip(rf.Role, 40), j.Role)
+	}
+	if rf.Verdict != "" && j.Stage != StageReview {
+		return malformed("verdict is allowed only on a review")
+	}
+	if j.Stage == StageReview && rf.Status == StatusDone && rf.Verdict == "" {
+		return malformed("a done review needs verdict: approve or changes")
+	}
+	if rf.Worker != "" && !(j.Stage == StageTriage && j.Role == "lead") {
+		return malformed("worker is allowed only for triage:lead")
+	}
+	return nil
+}
+
+// readRoleFile reads path without following a symlink.
+func readRoleFile(path string) ([]byte, error) {
+	fi, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrMissing
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat role file: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, malformed("not a regular file")
+	}
+	if fi.Size() > MaxRoleFileBytes {
+		return nil, malformed("file is %d bytes, max %d", fi.Size(), MaxRoleFileBytes)
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrMissing
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read role file: %w", err)
+	}
+	return b, nil
+}
+
+// clip shortens untrusted text for a reason string.
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "..."
+	}
+	return s
+}

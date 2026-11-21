@@ -172,3 +172,49 @@ func TestRevParseError(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestChangedSince(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	mk := func(rel, body string) {
+		p := filepath.Join(clone, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(".ard/5/issue.md", "a")
+	mk(".ard/5/gone.md", "a")
+	mk(".ard/6/other.md", "a")
+	gittest.Run(t, clone, "add", "-A")
+	gittest.Run(t, clone, "commit", "-m", "base")
+	base := gittest.Run(t, clone, "rev-parse", "HEAD")
+	base = strings.TrimSpace(base)
+
+	mk(".ard/5/issue.md", "changed")
+	mk(".ard/5/new.md", "n")
+	mk(".ard/5/sub dir/x y.md", "n")
+	mk(".ard/6/other.md", "changed")
+	if err := os.Remove(filepath.Join(clone, ".ard/5/gone.md")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := g.ChangedSince(ctx, clone, base, ".ard/5/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PathChange{{Path: ".ard/5/gone.md", Deleted: true}, {Path: ".ard/5/issue.md"}, {Path: ".ard/5/new.md"}, {Path: ".ard/5/sub dir/x y.md"}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if _, err := g.ChangedSince(ctx, clone, "deadbeef", ".ard/5/"); err == nil {
+		t.Fatal("bad base: want error")
+	}
+}
