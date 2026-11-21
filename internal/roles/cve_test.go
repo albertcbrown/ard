@@ -399,7 +399,8 @@ case "$1 $2" in
   echo example.com/r ;;
 "env GOVERSION")
   [ -n "${GO_SEL_FAIL:-}" ] && [ "$GOTOOLCHAIN" = auto ] && { echo "go: download go1.99.0: toolchain not available" >&2; exit 1; }
-  if [ "$GOTOOLCHAIN" = auto ] && [ -n "$newer" ]; then echo "$newer"; else echo go1.27.4; fi ;;
+  if [ "$GOTOOLCHAIN" = auto ] && [ -n "${GO_SEL:-}" ]; then echo "$GO_SEL"
+  elif [ "$GOTOOLCHAIN" = auto ] && [ -n "$newer" ]; then echo "$newer"; else echo go1.27.4; fi ;;
 "env GOROOT") echo "$FAKE_GOROOT" ;;
 install*)
   echo "install CGO_ENABLED=${CGO_ENABLED:-} GOBIN=$GOBIN" >> "$SHIM_LOG"
@@ -654,6 +655,14 @@ func TestScanFailures(t *testing.T) {
 			wantCode: 1, wantErr: "cannot build govulncheck"},
 		{name: "unknown govulncheck version", prep: newerGoRepo,
 			extra:    []string{"OSV_FIXTURE=" + osvFix, "GV_SCANNER=Scanner: govulncheck@(devel)"},
+			wantCode: 1, wantErr: "unknown govulncheck version", noInstall: true},
+		{name: "selected Go version is a path", prep: newerGoRepo, extra: []string{"OSV_FIXTURE=" + osvFix, "GO_SEL=go1/../x"},
+			wantCode: 1, wantErr: "unexpected Go version", noInstall: true},
+		{name: "govulncheck version with a slash", prep: newerGoRepo,
+			extra:    []string{"OSV_FIXTURE=" + osvFix, "GV_SCANNER=Scanner: govulncheck@v1.2/../3"},
+			wantCode: 1, wantErr: "unknown govulncheck version", noInstall: true},
+		{name: "govulncheck version with one dot", prep: newerGoRepo,
+			extra:    []string{"OSV_FIXTURE=" + osvFix, "GV_SCANNER=Scanner: govulncheck@v1.2"},
 			wantCode: 1, wantErr: "unknown govulncheck version", noInstall: true},
 		{name: "selected GOROOT is another version", prep: newerGoRepo, extra: []string{"OSV_FIXTURE=" + osvFix, "FAKE_SEL=go1.98.0"},
 			wantCode: 1, wantErr: "is not go1.99.0", noInstall: true},
@@ -936,6 +945,37 @@ func TestRealFixturesHaveRealShape(t *testing.T) {
 				if len(w.Messages) == 0 || w.Messages[0].Config.ScannerVersion != "v1.10.0" {
 					t.Errorf("first govulncheck message is not a v1.10.0 config: %s", l[:min(len(l), 200)])
 				}
+			}
+		})
+	}
+}
+
+func TestVerLe(t *testing.T) {
+	needTools(t, "sh", "sed")
+	src, err := exec.Command("sed", "-n", "/^ver_le()/,/^}/p", "scanners/cve/scan").Output()
+	if err != nil || len(src) == 0 {
+		t.Fatalf("extract ver_le: %v", err)
+	}
+	f := filepath.Join(t.TempDir(), "ver_le.sh")
+	if err := os.WriteFile(f, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"1.27.10", "1.27.9", false},
+		{"1.27.9", "1.27.10", true},
+		{"go1.28.0", "1.28", true},
+		{"1.28", "go1.28.0", true},
+		{"go1.28rc1", "go1.27.4", false},
+		{"go1.27.4", "go1.27.4", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.a+"_le_"+tc.b, func(t *testing.T) {
+			err := exec.Command("sh", "-c", `. "$1"; ver_le "$2" "$3"`, "sh", f, tc.a, tc.b).Run()
+			if got := err == nil; got != tc.want {
+				t.Fatalf("ver_le %s %s = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}

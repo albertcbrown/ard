@@ -121,12 +121,14 @@ if [ -s "$tmp/mods.txt" ]; then
       if [ "$need_sw" = 1 ]; then
         # The temp dir holds the downloaded toolchain: it must be exec-capable.
         # Probe before any download so a noexec dir never pulls 300 MB first.
+        # The toolchain lands in GOMODCACHE: keep it in the exec-checked dir.
+        GOMODCACHE=$tmp/GOMODCACHE; export GOMODCACHE
         printf '#!/bin/sh\nexit 0\n' > "$tmp/exec-probe" && chmod 700 "$tmp/exec-probe"
         "$tmp/exec-probe" 2>/dev/null || die "$manifest needs a newer Go than the image's $local_go (${why:-newer toolchain line}), but the temp dir ${TMPDIR:-/tmp} is noexec so a downloaded toolchain cannot run: set TMPDIR to an exec-capable directory or use a newer cve image"
         # Let Go pick the version from go.mod (go and toolchain lines).
         sel=$(cd -- "$mdir" && GOTOOLCHAIN=auto go env GOVERSION 2>"$tmp/sel.err") \
           || die "cannot get a Go toolchain for $manifest: $(tail -n 1 "$tmp/sel.err")"
-        case $sel in go[0-9]*) ;; *) die "unexpected Go version for $manifest: $sel" ;; esac
+        case $sel in *[!0-9a-z.]*|go|go[!0-9]*) die "unexpected Go version for $manifest: $sel" ;; esac
         if [ "$sel" = "$local_go" ]; then
           [ -z "$why" ] || die "go list -m failed in $manifest: $why"
         else
@@ -138,6 +140,7 @@ if [ -s "$tmp/mods.txt" ]; then
           if [ ! -x "$gv" ]; then
             ver=${scanner#Scanner: govulncheck@}
             case $ver in
+              v*[!0-9.]*|v|*..*|*.|v*.) die "unknown govulncheck version \"$ver\": cannot rebuild it with $sel" ;;
               v[0-9]*.[0-9]*.[0-9]*) ;;
               *) die "unknown govulncheck version \"$ver\": cannot rebuild it with $sel" ;;
             esac
