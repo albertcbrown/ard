@@ -58,9 +58,9 @@ type Command struct {
 	Args []string
 	Env  []string // "NAME=value" secrets; only names the executor allows (AllowEnv)
 	// Fixed holds non-secret "NAME=value" settings the CLI needs (for example
-	// an agent adapter's config dir). Any name is accepted except the
-	// executor's own (PATH, HOME, ARD_*, ...), GitHub credentials and names
-	// that look like secrets.
+	// an agent adapter's config dir). Only names on the executor's AllowFixed
+	// list are accepted; the executor's own names, GitHub credentials and
+	// secret-shaped names are always refused.
 	Fixed []string
 	Stdin io.Reader
 }

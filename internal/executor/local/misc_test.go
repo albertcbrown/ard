@@ -80,7 +80,7 @@ func TestRunArgv(t *testing.T) {
 	h := executor.Handle{JobID: "J1", Issue: 4, Stage: "scanner", Role: "cve", Container: "ard-J1", Image: "img:1",
 		Worktree: "/root-secret/work/o-r/J1", RoleDir: "/repo/.ard/scanners/cve",
 		View: executor.Paths{Work: "/work", Role: "/role"}}
-	cmd := executor.Command{Path: "/role/scan", Args: []string{"--x"}, Env: []string{"ANTHROPIC_API_KEY=sk-secret"}}
+	cmd := executor.Command{Path: "/role/scan", Args: []string{"--x"}, Env: []string{"ANTHROPIC_API_KEY=sk-secret"}, Fixed: []string{"A=1"}}
 	tests := []struct {
 		name  string
 		mut   func(*executor.Handle)
@@ -90,7 +90,7 @@ func TestRunArgv(t *testing.T) {
 	}{
 		{"base", func(*executor.Handle) {}, false,
 			[]string{"--rm", "--name", "ard-J1", "--user", "ard.job=J1", "ard.issue=4", "ard.stage=scanner", "ard.role=cve",
-				"/root-secret/work/o-r/J1:/work", "/repo/.ard/scanners/cve:/role:ro", "ANTHROPIC_API_KEY", "ARD_WORK=/work"},
+				"/root-secret/work/o-r/J1:/work", "/repo/.ard/scanners/cve:/role:ro", "ANTHROPIC_API_KEY", "ARD_WORK=/work", "-e A=1"},
 			[]string{"-i", "/sidecar:ro", "/work:ro"}},
 		{"sidecar", func(h *executor.Handle) { h.SidecarDir = "/sc"; h.View.Sidecar = "/sidecar" }, false,
 			[]string{"/sc:/sidecar:ro", "ARD_SIDECAR=/sidecar"}, nil},

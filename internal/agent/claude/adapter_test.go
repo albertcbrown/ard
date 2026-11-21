@@ -42,7 +42,7 @@ func TestCommandArgv(t *testing.T) {
 			[]string{"claude", "-p", "--output-format=stream-json", "--verbose",
 				"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 				"--permission-mode=dontAsk", "--permission-prompts=none",
-				"--tools=Read,Bash(ls *)", "--allowed-tools=Read,Bash(ls *)",
+				"--tools=Read,Bash", "--allowed-tools=Read,Bash(ls *)",
 				"--max-budget-usd=1.5", "--append-system-prompt-file=/role/prompt.txt", "--", msg}},
 	}
 	for _, tc := range tests {

@@ -61,6 +61,7 @@ func TestParse(t *testing.T) {
 		{name: "400 is not transient", in: init + `{"type":"result","subtype":"success","is_error":true,"api_error_status":400}` + "\n", exit: 1, subtype: "success", isErr: true, session: "s"},
 		{name: "exit 0 with is_error", in: init + `{"type":"result","subtype":"success","is_error":true}` + "\n", subtype: "success", isErr: true, session: "s"},
 		{name: "exit nonzero with success result", in: init + res(""), exit: 2, subtype: "success", turns: ip(2), cost: fp(0.1), session: "s"},
+		{name: "malformed final result", in: init + res("") + `{"type":"result",` + "\n", exit: 0, session: "s", skipped: 1, wantErr: agent.ErrNoResult},
 		{name: "no trailing newline", in: init + strings.TrimSuffix(res(""), "\n"), ok: true, subtype: "success", turns: ip(2), cost: fp(0.1), session: "s"},
 	}
 	for _, tc := range tests {

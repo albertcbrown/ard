@@ -58,6 +58,10 @@ func (*Adapter) Parse(stdout io.Reader, exitCode int) (agent.Result, error) {
 				var h head
 				if json.Unmarshal(line, &h) != nil {
 					res.SkippedLines++
+					// A damaged result line must not let an earlier result stand.
+					if bytes.HasPrefix(line, []byte(`{"type":"result"`)) {
+						last = nil
+					}
 				} else {
 					switch {
 					case h.Type == "system" && h.Subtype == "init":
@@ -69,6 +73,7 @@ func (*Adapter) Parse(stdout io.Reader, exitCode int) (agent.Result, error) {
 						var e resultEvent
 						if json.Unmarshal(line, &e) != nil {
 							res.SkippedLines++
+							last = nil
 						} else {
 							last = &e
 						}

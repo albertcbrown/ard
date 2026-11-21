@@ -48,8 +48,8 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 		tools, allowed, deny = workerTools, workerTools, workerDeny
 	}
 	if s.Tools != nil {
-		tools = strings.Join(s.Tools, ",")
-		allowed, deny = tools, ""
+		allowed, deny = strings.Join(s.Tools, ","), ""
+		tools = toolNames(s.Tools)
 	}
 	argv := []string{a.binary, "-p", "--output-format=stream-json", "--verbose",
 		"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
@@ -78,4 +78,19 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 		},
 		PassEnv: []string{"ANTHROPIC_API_KEY"},
 	}, nil
+}
+
+// toolNames cuts permission rules such as Bash(ls *) down to tool names,
+// removing duplicates and keeping order.
+func toolNames(rules []string) string {
+	var names []string
+	seen := map[string]bool{}
+	for _, r := range rules {
+		n, _, _ := strings.Cut(r, "(")
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	return strings.Join(names, ",")
 }
