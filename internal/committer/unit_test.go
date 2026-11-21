@@ -84,6 +84,13 @@ func TestMessage(t *testing.T) {
 		{"skip-checks", "a\nskip-checks: true", "", false, "ard(triage:lead): #7 a skip-checks - true", false},
 		{"skip-checks spaced", "SKIP-CHECKS : true", "", false, "ard(triage:lead): #7 skip-checks - true", false},
 		{"format char split", "[skip\u200b ci]", "", false, "ard(triage:lead): #7 (skip-ci)", false},
+		// Each closing case: GitHub would close #12 if the summary were kept as is.
+		{"closing ref", "Fixes #12", "", false, "ard(triage:lead): #7 Fixes issue 12", false},
+		{"closing ref newline split", "Fixes\n#12", "", false, "ard(triage:lead): #7 Fixes issue 12", false},
+		{"closing ref format char split", "Fixes\u200b#12", "", false, "ard(triage:lead): #7 Fixes issue 12", false},
+		{"keyword only", "fixes", "", false, "ard(triage:lead): #7 fixes", false},
+		// GitHub would not close here: no keyword directly before the reference.
+		{"benign ref", "fixed a typo in #12's test", "", false, "ard(triage:lead): #7 fixed a typo in #12's test", false},
 		{"job", "s", "01ABC", true, "ard(triage:lead): #7 s [skip ci]\n\nArd-Job: 01ABC", false},
 		{"truncate", long, "", false, "ard(triage:lead): #7 " + strings.Repeat("é", 71) + "…", false},
 		{"empty", " \n\t", "", true, "", true},
@@ -99,6 +106,18 @@ func TestMessage(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("%s: got %q, %v; want %q", tc.name, got, err, tc.want)
 		}
+	}
+}
+
+// A closing reference pushed past the 72-rune cut: GitHub would close #12 from
+// the uncut text, and the cut result must hold no reference at all.
+func TestMessageClosingRefPastCut(t *testing.T) {
+	got, err := Message("triage", "lead", 7, strings.Repeat("a", 66)+" fixes #12", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "#12") || strings.Contains(got, "12") {
+		t.Errorf("reference survived the cut: %q", got)
 	}
 }
 
