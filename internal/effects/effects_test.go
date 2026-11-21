@@ -46,7 +46,10 @@ func (c failClient) RemoveLabel(context.Context, int, string) error {
 	c.fail("RemoveLabel")
 	return nil
 }
-func (c failClient) CreateLabel(context.Context, github.Label) error { c.fail("CreateLabel"); return nil }
+func (c failClient) CreateLabel(context.Context, github.Label) error {
+	c.fail("CreateLabel")
+	return nil
+}
 func (c failClient) UpdateLabel(context.Context, string, github.Label) error {
 	c.fail("UpdateLabel")
 	return nil

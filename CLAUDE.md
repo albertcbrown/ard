@@ -39,6 +39,8 @@ internal/executor/local/  git worktree + host subprocess or docker run, watchdog
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
+internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
+internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
 internal/           controller, config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```
