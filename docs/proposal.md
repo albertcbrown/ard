@@ -271,7 +271,7 @@ Reviewers run like workers against a PR instead of an issue: they read the chang
 | license-review | a manifest or lockfile changes | go-licenses or scancode | a license outside the allowlist |
 | product-manager-review | the issue had PM triage, or UI paths change | none | acceptance criteria not met |
 
-Every directory under `.ard/reviewers/` reviews every PR unless `config.yaml` gives it a `when:` rule (paths, or a triage role that ran). The lead can request extra reviewers through `next`; they are recorded at triage close-out and applied when the worker opens the PR.
+Every directory under `.ard/reviewers/` reviews every PR unless `config.yaml` gives it a `when:` rule (paths, or a triage role that ran). The lead can request extra reviewers through `next`; they are recorded in the triage job's close-out record in local state (`closeout.Deferred` reads them) and the worker loop adds the `ard:review:<role>` labels to the PR when it opens it.
 
 ## Merger loop
 
@@ -345,7 +345,7 @@ Agents with push access read text that strangers can write, so the controls sit 
 - **Untrusted text is passed as data.** Issue bodies, comments and PR text go to the agent as files the prompt labels as untrusted input, never spliced into the instructions.
 - **Role files are human-owned.** The diff guard rejects any worker change to `.ard/config.yaml` or a role directory, and the merger treats those paths as protected, so no agent can rewrite its own prompt.
 - **Merges are gated.** The merger lands a PR only when every review passed and required checks are green on an up-to-date branch; protected paths wait for a human approval. The App may bypass the approval rule, never required checks.
-- **Committed output is redacted.** Close-out strips known secret values from each log and every `.ard/<issue#>/` file it commits, and runs a secret scan before anything is committed or posted. A hit on a log keeps that log host-local and adds `ard:needs-human`; a hit on a role file or `plan.md` commits only the clean log and adds `ard:needs-human`. Comments never quote text the scan flagged, never forge an `ard:` marker and never `@`-mention anyone. The scan fails closed: if it cannot run, nothing is committed.
+- **Committed output is redacted.** Close-out strips known secret values from each log and every `.ard/<issue#>/` file it commits, and runs a secret scan before anything is committed or posted. A hit on a log keeps that log host-local and adds `ard:needs-human`; a hit on a role file or `plan.md` commits only the clean log and adds `ard:needs-human`. Comments never quote text the scan flagged, never forge an `ard:` marker and never `@`-mention anyone. The scan fails closed: if it cannot run, nothing is committed. Once a log's redacted copy is committed, close-out deletes the raw host log; if redaction failed or the scan flagged it, the raw log is kept (and the keep logged) for a human to inspect.
 - **Budgets.** Every job has a dollar cap (`max_budget_usd`) and a hard timeout; every role and the whole repo have a daily dollar cap. At the cap the controller stops claiming and posts once on the status issue.
 - **Concurrency.** `max_pods` (default 3) caps every job together, and at most one triage job runs per issue at a time, because triage roles share `plan.md`.
 - **Kill switch.** `paused: true` in `config.yaml`, or `ard:pause` on the pinned status issue, stops new claims within one poll; running jobs finish.

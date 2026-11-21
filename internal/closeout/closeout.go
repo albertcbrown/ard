@@ -95,6 +95,38 @@ type Store interface {
 	Fail(ctx context.Context, id, reason string, keepUntil time.Time) error
 }
 
+// Deferred returns the review requests that triage jobs of an issue recorded
+// but could not apply (no PR existed yet), de-duplicated, in request order. The
+// Phase 1 worker loop calls it when it opens the PR and adds the
+// ard:review:<role> labels to the PR itself. Only closed, done triage
+// close-outs count.
+func Deferred(ctx context.Context, s interface {
+	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+}, issue int) ([]NextReq, error) {
+	jobs, err := s.CloseoutsOf(ctx, issue, StageTriage)
+	if err != nil {
+		return nil, fmt.Errorf("deferred reviewers of issue %d: %w", issue, err)
+	}
+	seen := map[NextReq]bool{}
+	var out []NextReq
+	for _, sj := range jobs {
+		rec, err := decode(sj)
+		if err != nil {
+			return nil, err
+		}
+		if rec.Phase != PhaseClosed || rec.Plan.Outcome != OutcomeDone {
+			continue
+		}
+		for _, r := range rec.Plan.Deferred {
+			if !seen[r] {
+				seen[r] = true
+				out = append(out, r)
+			}
+		}
+	}
+	return out, nil
+}
+
 // Deps are the collaborators of a Closer. Prepare needs Roles, NewRedactor,
 // Changed and StagingDir; the rest are for Closer.
 type Deps struct {
@@ -260,6 +292,7 @@ func (c *Closer) advance(ctx context.Context, rec Record) (Outcome, error) {
 	if err := os.RemoveAll(filepath.Join(c.d.StagingDir, rec.Job.ID)); err != nil {
 		c.d.log().Warn("closeout: remove staging", "job", rec.Job.ID, "error", err)
 	}
+	c.dropRawLog(rec)
 	return rec.Plan.Outcome, nil
 }
 
@@ -373,4 +406,22 @@ func (c *Closer) finish(ctx context.Context, rec Record) error {
 		return fmt.Errorf("close job in state: %w", err)
 	}
 	return nil
+}
+
+// dropRawLog deletes the unredacted host log once its redacted copy has been
+// committed. It is kept, and the keep is logged, when redaction failed or the
+// scan flagged it (so a human can inspect it) or when the commit did not
+// carry it.
+func (c *Closer) dropRawLog(rec Record) {
+	j := rec.Job
+	if j.LogPath == "" {
+		return
+	}
+	if rec.Plan.LogPath == "" {
+		c.d.log().Warn("closeout: raw log kept", "job", j.ID, "path", j.LogPath, "withheld", rec.Plan.LogWithheld)
+		return
+	}
+	if err := os.Remove(j.LogPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		c.d.log().Warn("closeout: remove raw log", "job", j.ID, "path", j.LogPath, "error", err)
+	}
 }

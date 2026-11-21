@@ -2,6 +2,8 @@ package closeout
 
 import (
 	"fmt"
+
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 // Outcome is what close-out decided about a job.
@@ -59,24 +61,24 @@ func (j Job) target() int {
 func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 	p := Plan{Status: rf.Status}
 	n := j.target()
-	run := Label{n, labelRunning(j.Stage, j.Role)}
+	run := Label{n, labels.Running(labels.Stage(j.Stage), j.Role)}
 	switch {
 	case rf.Status != StatusDone:
 		p.Outcome = OutcomeNeedsHuman
-		p.Terminal = []Label{{n, labelNeedsHuman}}
+		p.Terminal = []Label{{n, labels.NeedsHuman}}
 		p.Remove = []Label{run}
 	case j.Stage == StageReview && rf.Verdict == VerdictChanges:
 		p.Outcome = OutcomeChanges
-		p.Terminal = []Label{{n, labelChanges(j.Role)}}
-		p.Remove = []Label{{n, labelDone(j.Stage, j.Role)}, run}
+		p.Terminal = []Label{{n, labels.Changes(j.Role)}}
+		p.Remove = []Label{{n, labels.Done(labels.Stage(j.Stage), j.Role)}, run}
 	default:
 		p.Outcome = OutcomeDone
-		p.Terminal = []Label{{n, labelDone(j.Stage, j.Role)}}
+		p.Terminal = []Label{{n, labels.Done(labels.Stage(j.Stage), j.Role)}}
 		if j.Stage == StageReview {
-			p.Remove = append(p.Remove, Label{n, labelChanges(j.Role)})
+			p.Remove = append(p.Remove, Label{n, labels.Changes(j.Role)})
 		}
 		if j.Stage == StageTriage && j.Role == "lead" {
-			p.Remove = append(p.Remove, Label{n, labelPending})
+			p.Remove = append(p.Remove, Label{n, labels.Pending})
 		}
 		p.Remove = append(p.Remove, run)
 		now, deferred, skipped := resolveNext(j, rf.Next, rs)
@@ -86,7 +88,7 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 			if r.Stage == StageReview {
 				num = j.PR
 			}
-			p.Requests = append(p.Requests, Label{num, labelRequest(r.Stage, r.Role)})
+			p.Requests = append(p.Requests, Label{num, labels.Request(labels.Stage(r.Stage), r.Role)})
 		}
 		if rf.Worker != "" {
 			if hasRole(rs, StageWorker, rf.Worker) {
@@ -103,10 +105,10 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 func failedPlan(j Job, reason string, logWithheld bool) Plan {
 	n := j.target()
 	p := Plan{Outcome: OutcomeFailed, Reason: reason, LogWithheld: logWithheld,
-		Terminal: []Label{{n, labelExecutorFailed}},
-		Remove:   []Label{{n, labelRunning(j.Stage, j.Role)}}}
+		Terminal: []Label{{n, labels.ExecutorFailed}},
+		Remove:   []Label{{n, labels.Running(labels.Stage(j.Stage), j.Role)}}}
 	if logWithheld {
-		p.Terminal = append(p.Terminal, Label{n, labelNeedsHuman})
+		p.Terminal = append(p.Terminal, Label{n, labels.NeedsHuman})
 	}
 	return p
 }
@@ -115,8 +117,8 @@ func failedPlan(j Job, reason string, logWithheld bool) Plan {
 func needsHumanPlan(j Job, status, reason string) Plan {
 	n := j.target()
 	return Plan{Outcome: OutcomeNeedsHuman, Status: status, Reason: reason, LogWithheld: false,
-		Terminal: []Label{{n, labelNeedsHuman}},
-		Remove:   []Label{{n, labelRunning(j.Stage, j.Role)}}}
+		Terminal: []Label{{n, labels.NeedsHuman}},
+		Remove:   []Label{{n, labels.Running(labels.Stage(j.Stage), j.Role)}}}
 }
 
 func (j Job) validate() error {

@@ -251,6 +251,30 @@ func (s *Store) OpenCloseouts(ctx context.Context) ([]Job, error) {
 	return out, nil
 }
 
+// CloseoutsOf returns the jobs of an issue and stage that have a stored
+// close-out record, oldest first. The worker loop reads the reviewers the lead
+// deferred from them.
+func (s *Store) CloseoutsOf(ctx context.Context, issue int, stage string) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs
+		WHERE issue = ? AND stage = ? AND closeout_plan IS NOT NULL ORDER BY created_at, id`, issue, stage)
+	if err != nil {
+		return nil, fmt.Errorf("list closeouts of issue %d: %w", issue, err)
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan closeout: %w", err)
+		}
+		out = append(out, j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list closeouts of issue %d: %w", issue, err)
+	}
+	return out, nil
+}
+
 // Attempt is one execution attempt of a job.
 type Attempt struct {
 	JobID     string

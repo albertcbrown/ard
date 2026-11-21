@@ -76,6 +76,13 @@ func TestRunLeadDone(t *testing.T) {
 	if r := e.cm.reqs[0]; r.Stage != "triage" || r.Role != "lead" || r.JobID != j.ID || r.Summary != "Summary of the work." {
 		t.Errorf("request = %+v", r)
 	}
+	if _, err := os.Stat(j.LogPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("raw log not deleted: %v", err)
+	}
+	def, err := Deferred(context.Background(), e.store, 7)
+	if err != nil || len(def) != 1 || def[0].String() != "review:license-review" {
+		t.Errorf("Deferred = %v, %v", def, err)
+	}
 	// A second Run on the closed job changes nothing.
 	calls := e.calls
 	if out, err := New(e.d).Run(context.Background(), j); err != nil || out != OutcomeDone || e.calls != calls {
@@ -183,6 +190,35 @@ func TestRunFailedAndNeedsHuman(t *testing.T) {
 			t.Error("comment leaks the secret")
 		}
 	})
+}
+
+func TestRawLogKept(t *testing.T) {
+	e := newEnv(t)
+	e.write(".ard/7/lead.md", roleFile("lead", "done"))
+	j := e.claim(StageTriage, "lead")
+	if err := os.WriteFile(j.LogPath, []byte(planted()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(e.d).Run(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(j.LogPath); err != nil {
+		t.Errorf("flagged raw log was deleted: %v", err)
+	}
+	if l := e.labels(7); !l["ard:needs-human"] || l["ard:triage:lead:done"] {
+		t.Errorf("labels = %v", l)
+	}
+	// Redaction failure also keeps it.
+	e2 := newEnv(t)
+	e2.d.NewRedactor = func(Job) (Redactor, error) { return brokenRedactor{}, nil }
+	e2.write(".ard/7/lead.md", roleFile("lead", "done"))
+	j2 := e2.claim(StageTriage, "lead")
+	if _, err := New(e2.d).Run(context.Background(), j2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(j2.LogPath); err != nil {
+		t.Errorf("raw log deleted after failed redaction: %v", err)
+	}
 }
 
 func TestPermanentCommitError(t *testing.T) {

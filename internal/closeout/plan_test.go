@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 type roles map[string]bool // "kind/name"
@@ -89,7 +90,7 @@ func TestBuild(t *testing.T) {
 			if len(p.Skipped) != tc.skippedCount {
 				t.Errorf("skipped = %v, want %d", p.Skipped, tc.skippedCount)
 			}
-			if last := p.Remove[len(p.Remove)-1].Name; last != labelRunning(tc.j.Stage, tc.j.Role) {
+			if last := p.Remove[len(p.Remove)-1].Name; last != labels.Running(labels.Stage(tc.j.Stage), tc.j.Role) {
 				t.Errorf("last removal = %s, want running", last)
 			}
 		})
