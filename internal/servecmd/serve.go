@@ -19,6 +19,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/configsrc"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/executor/local"
@@ -26,6 +27,7 @@ import (
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/redact"
+	"github.com/albertcbrown/ard/internal/repopath"
 	"github.com/albertcbrown/ard/internal/scanner/stale"
 	"github.com/albertcbrown/ard/internal/state"
 	"github.com/albertcbrown/ard/internal/state/scannerdb"
@@ -34,10 +36,11 @@ import (
 // deps is what serve needs from the outside world. Tests inject fakes
 // through build, so no test builds a real GitHub client.
 type deps struct {
-	Reader  github.Reader
-	Effects effects.Effects
-	Token   gitx.TokenFunc // mints a push and fetch credential; nil in tests
-	Close   func() error   // optional
+	Reader    github.Reader
+	Effects   effects.Effects
+	RemoteURL string         // where the controller fetches main from
+	Token     gitx.TokenFunc // mints a push and fetch credential; nil in tests
+	Close     func() error   // optional
 }
 
 // builder constructs deps for repo. stateDir is where a dry-run ledger goes.
@@ -51,11 +54,12 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
-	repo, err := resolveRepo(ctx, e.Repo, root)
-	if err != nil {
-		return err
+	// The root is handed to git and to executor.Job.RepoDir, which must be
+	// absolute; RepoRoot returns "." when --config is omitted.
+	if root, err = filepath.Abs(root); err != nil {
+		return fmt.Errorf("ard serve: %w", err)
 	}
-	cfg, err := config.Load(root)
+	repo, err := resolveRepo(ctx, e.Repo, root)
 	if err != nil {
 		return err
 	}
@@ -98,16 +102,53 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	}
 
 	log := e.Log
+	// Config comes from origin/main, not from the working tree (#87): a merged
+	// change applies on the next tick without a pull, and every job of a tick
+	// runs against one commit.
+	cacheDir, err := repopath.Join(filepath.Join(home, ".ard", "config"), repo.String())
+	if err != nil {
+		return fmt.Errorf("ard serve: %w", err)
+	}
+	src, err := configsrc.New(configsrc.Options{
+		Git: gitx.New(""), RepoDir: root, RemoteURL: d.RemoteURL, Token: d.Token,
+		CacheDir: cacheDir, Log: log,
+	})
+	if err != nil {
+		return fmt.Errorf("ard serve: %w", err)
+	}
 	gate := controller.NewPauseGate(d.Reader, log)
+	gate.SetLocalConfig(root)
+	pausePath, err := controller.PauseFilePath(home, repo.Owner, repo.Name)
+	if err != nil {
+		return fmt.Errorf("ard serve: %w", err)
+	}
+	gate.SetPauseFile(pausePath)
+	// Make `touch ~/.ard/pause/<owner>/<repo>` work on a fresh host.
+	if err := os.MkdirAll(filepath.Dir(pausePath), 0o700); err != nil {
+		log.Warn("serve.pause_dir_failed", "path", filepath.Dir(pausePath), "error", err)
+	}
+
 	w := &wiring{
-		Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: cfg.MaxPods,
-		Repo: repo, Root: root, Home: home, Token: d.Token, Scanners: scanners,
+		Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: config.DefaultMaxPods,
+		Repo: repo, Root: root, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners,
 	}
 	defer w.closeAll()
+	loader := &cfgLoader{src: src, fx: d.Effects, log: log, issue: func() int { return int(w.statusIssue.Load()) }}
+
+	// An origin/main whose config cannot be loaded does not abort startup:
+	// serve starts paused, tells the status issue, and retries every tick.
+	loadCtx, cancelLoad := context.WithTimeout(ctx, 2*time.Minute)
+	cfg, cfgErr := loader.Load(loadCtx)
+	cancelLoad()
+	if cfgErr != nil {
+		log.Error("serve.config_unavailable", "error", cfgErr, "hint", "starting paused; will retry every tick")
+	} else {
+		w.MaxPods = cfg.MaxPods
+	}
 	// A scan can outlast a pause, so the scanners re-check after it. The
 	// check fails closed, like the gate's own.
 	w.Paused = func(ctx context.Context) bool {
-		c, err := config.Load(root)
+		c, err := loader.Load(ctx)
 		if err != nil {
 			return true
 		}
@@ -116,8 +157,8 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 
 	cc, err := controller.New(controller.Deps{
 		Log: log,
-		Config: func() (*config.Resolved, error) {
-			c, err := config.Load(root)
+		Config: func(ctx context.Context) (*config.Resolved, error) {
+			c, err := loader.Load(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +179,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 				if err := failStaleScannerJobs(ctx, store, cl, log); err != nil {
 					return err
 				}
-				p, err := adoptPool(ctx, store, cfg.MaxPods, log)
+				p, err := adoptPool(ctx, store, w.MaxPods, log)
 				if err != nil {
 					return err
 				}
@@ -155,6 +196,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 					return err
 				}
 				gate.SetStatusIssue(n)
+				w.statusIssue.Store(int64(n))
 				return nil
 			}},
 		},
@@ -163,7 +205,11 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
-	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun)
+	startSHA := ""
+	if cfg != nil {
+		startSHA = cfg.SHA
+	}
+	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun, "pause_file", pausePath, "config_sha", startSHA)
 	return cc.Run(ctx)
 }
 
@@ -172,18 +218,22 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 // pool-adopt startup hook builds it inside Run), so loops must call Pool()
 // at tick time, never in their constructors.
 type wiring struct {
-	Log      *slog.Logger
-	Reader   github.Reader
-	Effects  effects.Effects
-	Store    *state.Store
-	MaxPods  int
-	Repo     github.Repo
-	Root     string // the local checkout holding .ard/; the object store for scans and commits
-	Home     string // the user's home directory; ~/.ard holds state, logs and worktrees
-	Token    gitx.TokenFunc
-	Scanners *scannerdb.Registry
-	Paused   func(ctx context.Context) bool // nil = never paused
-	pool     atomic.Pointer[pool.Pool]
+	Log     *slog.Logger
+	Reader  github.Reader
+	Effects effects.Effects
+	Store   *state.Store
+	MaxPods int
+	Repo    github.Repo
+	Root    string // absolute path of the local clone; the object store for worktrees and commits
+	Home    string // the user's home directory; ~/.ard holds state, logs and worktrees
+	// RemoteURL is where main is fetched from and pushed to.
+	RemoteURL string
+	Token     gitx.TokenFunc
+	Scanners  *scannerdb.Registry
+	Paused    func(ctx context.Context) bool // nil = never paused
+	pool      atomic.Pointer[pool.Pool]
+
+	statusIssue atomic.Int64 // the status issue number; 0 until the startup hook has run
 
 	mu      sync.Mutex
 	closers []func(context.Context)
@@ -296,7 +346,7 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 	if err != nil {
 		return deps{}, fmt.Errorf("ard serve: %w", err)
 	}
-	d := deps{Reader: rd, Effects: fx, Token: auth.Token}
+	d := deps{Reader: rd, Effects: fx, Token: auth.Token, RemoteURL: fmt.Sprintf("https://github.com/%s.git", repo)}
 	if c, ok := fx.(interface{ Close() error }); ok {
 		d.Close = c.Close
 	}

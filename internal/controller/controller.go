@@ -30,8 +30,10 @@ type Hook struct {
 // Deps are the controller's collaborators.
 type Deps struct {
 	Log *slog.Logger
-	// Config is called before every tick for a fresh snapshot.
-	Config func() (*config.Resolved, error)
+	// Config is called before every tick for a fresh snapshot, and once at
+	// startup. An error counts as paused (fail closed): claiming loops are
+	// skipped, and when no config has ever loaded no loop runs until one does.
+	Config func(ctx context.Context) (*config.Resolved, error)
 	Pause  Pauser
 	// Startup hooks run in order before any loop starts; any error aborts Run.
 	Startup []Hook
@@ -120,9 +122,14 @@ func (c *Controller) Run(ctx context.Context) error {
 		}
 		log.Info("controller.hook", "name", h.Name, "duration", time.Since(start).String())
 	}
-	cfg, err := c.deps.Config()
+	// A config that cannot be loaded does not abort startup: the controller
+	// starts paused, with no config, and retries on every tick.
+	lctx, cancelLoad := context.WithTimeout(ctx, configTimeout)
+	cfg, err := c.deps.Config(lctx)
+	cancelLoad()
 	if err != nil {
-		return fmt.Errorf("initial config: %w", err)
+		log.Error("config.initial_failed", "error", err)
+		cfg = nil
 	}
 
 	// Work contexts outlive the first signal; only grace expiry or Force
@@ -136,7 +143,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for i, l := range c.loops {
 		names[i] = l.Name()
-		r := &runner{c: c, loop: l, log: log.With("loop", l.Name()), cfg: cfg}
+		r := &runner{c: c, loop: l, log: log.With("loop", l.Name()), cfg: cfg, cfgBroken: err != nil}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

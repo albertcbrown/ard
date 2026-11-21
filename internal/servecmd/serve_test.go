@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -14,26 +15,46 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/cli"
+	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
+	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
-// repoDir writes a minimal valid config and returns its path.
+// repoDir builds a clone of a local bare remote with a minimal valid config
+// committed and pushed to main, and returns the config path in the clone.
 func repoDir(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".ard"), 0o755); err != nil {
+	cfg, _ := repoWithRemote(t, "max_pods: 2\n")
+	return cfg
+}
+
+// repoWithRemote is repoDir with the config content given; it also returns
+// the bare remote's path.
+func repoWithRemote(t *testing.T, config string) (cfgPath, bare string) {
+	t.Helper()
+	bare, clone := gittest.NewRemote(t)
+	pushConfig(t, clone, config)
+	return filepath.Join(clone, ".ard", "config.yaml"), bare
+}
+
+// pushConfig commits .ard/config.yaml in clone and pushes main.
+func pushConfig(t *testing.T, clone, config string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(clone, ".ard"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".ard", "config.yaml"), []byte("max_pods: 2\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(clone, ".ard", "config.yaml"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return filepath.Join(root, ".ard", "config.yaml")
+	gittest.Run(t, clone, "add", "-A")
+	gittest.Run(t, clone, "commit", "-m", "config")
+	gittest.Run(t, clone, "push", "origin", "main")
 }
 
 func env(t *testing.T, repo, cfg string, dry bool) *cli.Env {
@@ -45,8 +66,18 @@ func env(t *testing.T, repo, cfg string, dry bool) *cli.Env {
 	}
 }
 
+// fakeBuilder injects fakes. The remote is the clone's own origin (a local
+// bare repo), where production uses the github.com URL.
 func fakeBuilder(f *fake.Fake, dry bool) builder {
 	return func(ctx context.Context, e *cli.Env, _ github.Repo, _ string) (deps, error) {
+		root, err := config.RepoRoot(e.ConfigPath)
+		if err != nil {
+			return deps{}, err
+		}
+		remote, err := gitx.New("").RemoteURL(ctx, root, "origin")
+		if err != nil {
+			return deps{}, err
+		}
 		var fx effects.Effects
 		if dry {
 			d, err := effects.NewDryRun(effects.DryRunOptions{Log: e.Log})
@@ -57,7 +88,7 @@ func fakeBuilder(f *fake.Fake, dry bool) builder {
 		} else {
 			fx = effects.NewLive(f, nil, e.Log)
 		}
-		return deps{Reader: f, Effects: fx}, nil
+		return deps{Reader: f, Effects: fx, RemoteURL: remote}, nil
 	}
 }
 
@@ -295,5 +326,180 @@ func TestServeRefusesLegacyStateDir(t *testing.T) {
 				t.Errorf("a refused start created the locks dir: %v", statErr)
 			}
 		})
+	}
+}
+
+// With --config omitted the repo root defaulted to ".", and a relative RepoDir
+// is rejected by executor.Job.Validate, so every scan would fail.
+func TestServeRootIsAbsoluteWithoutConfigFlag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := filepath.Dir(filepath.Dir(repoDir(t)))
+	t.Chdir(dir)
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	var root string
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { root = x.Root; return nil }
+	defer func() { registerLoops = orig }()
+	buf := &syncBuf{}
+	e := env(t, "o/r", "", true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(root) {
+		t.Fatalf("wiring.Root = %q, want an absolute path", root)
+	}
+}
+
+// The working tree's config is ignored (apart from paused): origin/main wins.
+func TestServeReadsConfigFromOrigin(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := repoDir(t) // origin says max_pods: 2
+	if err := os.WriteFile(cfg, []byte("max_pods: [not valid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	var w *wiring
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { w = x; return nil }
+	defer func() { registerLoops = orig }()
+	buf := &syncBuf{}
+	e := env(t, "o/r", cfg, true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
+		t.Fatal(err)
+	}
+	if st := w.Pool().Stats(); st.Max != 2 {
+		t.Errorf("pool max = %d, want 2 from origin/main", st.Max)
+	}
+	if !buf.has("config_sha=") {
+		t.Error("serve.start did not log config_sha")
+	}
+}
+
+// Unlike every other setting, paused: true in the working tree is honoured.
+func TestServeLocalPausedIsHonoured(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := repoDir(t)
+	if err := os.WriteFile(cfg, []byte("paused: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	var w *wiring
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { w = x; return nil }
+	defer func() { registerLoops = orig }()
+	buf := &syncBuf{}
+	e := env(t, "o/r", cfg, true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
+		t.Fatal(err)
+	}
+	if !w.Paused(context.Background()) {
+		t.Error("a working-tree paused: true did not pause the post-scan check")
+	}
+}
+
+// An origin/main that cannot be loaded starts serve paused rather than
+// aborting, says why on the status issue, and resumes once it loads.
+func TestServeStartsPausedOnInvalidOriginConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg, bare := repoWithRemote(t, "max_pods: 0\n")
+	clone := filepath.Dir(filepath.Dir(cfg))
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	buf := &syncBuf{}
+	e := env(t, "o/r", cfg, false)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	var w *wiring
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { w = x; return nil }
+	defer func() { registerLoops = orig }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := make(chan error, 1)
+	go func() { res <- serve(ctx, e, fakeBuilder(f, false)) }()
+	waitFor(t, "controller.start", func() bool { return buf.has("controller.start") })
+	if !buf.has("serve.config_unavailable") || !buf.has("config.initial_failed") {
+		t.Errorf("startup did not report the config failure:\n%s", buf.b.String())
+	}
+	if !f.Pinned(1) {
+		t.Error("status issue not created")
+	}
+	short := strings.TrimSpace(gittest.Run(t, bare, "rev-parse", "main"))[:12]
+	waitFor(t, "a status comment naming the SHA", func() bool {
+		for _, wr := range f.Writes() {
+			if strings.Contains(fmt.Sprint(wr), short) {
+				return true
+			}
+		}
+		return false
+	})
+	// Three more ticks' worth of loads fail the same way: still one comment.
+	for range 3 {
+		if !w.Paused(ctx) {
+			t.Error("Paused = false with an invalid origin config")
+		}
+	}
+	n := 0
+	for _, wr := range f.Writes() {
+		if strings.Contains(fmt.Sprint(wr), short) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d comments name %s, want exactly 1", n, short)
+	}
+	// Fixing origin un-pauses: the next load succeeds.
+	pushConfig(t, clone, "max_pods: 4\n")
+	if w.Paused(ctx) {
+		t.Error("still paused after origin/main was fixed")
+	}
+	cancel()
+	if err := <-res; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestServeCreatesPauseDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home, _ := os.UserHomeDir()
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	buf := &syncBuf{}
+	e := env(t, "O/R", repoDir(t), true)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("controller.start") }); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(home, ".ard", "pause", "o"))
+	if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+		t.Errorf("pause dir: %v, %v", fi, err)
+	}
+	if !buf.has("pause_file=" + filepath.Join(home, ".ard", "pause", "o", "r")) {
+		t.Errorf("serve.start does not log the pause file path:\n%s", buf.b.String())
+	}
+}
+
+func TestServeInvalidRemoteFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := repoDir(t)
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	b := func(ctx context.Context, e *cli.Env, r github.Repo, s string) (deps, error) {
+		d, err := fakeBuilder(f, true)(ctx, e, r, s)
+		d.RemoteURL = ""
+		return d, err
+	}
+	if err := serve(context.Background(), env(t, "o/r", cfg, true), b); err == nil {
+		t.Fatal("want an error for an empty remote URL")
 	}
 }

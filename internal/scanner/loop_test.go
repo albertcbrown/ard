@@ -19,7 +19,7 @@ type namedEngine struct {
 	noSlot bool
 }
 
-func (e *namedEngine) Scan(_ context.Context, r config.Role, _ time.Time) (ScanResult, error) {
+func (e *namedEngine) Scan(_ context.Context, _ *config.Resolved, r config.Role, _ time.Time) (ScanResult, error) {
 	e.tried = append(e.tried, r.Name)
 	if e.noSlot {
 		return ScanResult{}, ErrNoSlot

@@ -31,11 +31,18 @@ type Env struct {
 // Handlers holds one function per implemented command. A nil field makes
 // that command exit non-zero with an ErrNotImplemented message.
 type Handlers struct {
-	Serve        func(ctx context.Context, e *Env) error                 // #15
-	ConfigCheck  func(ctx context.Context, e *Env) error                 // #11
-	LabelsSync   func(ctx context.Context, e *Env) error                 // #22
-	RebuildState func(ctx context.Context, e *Env, scanner string) error // #23
-	Init         func(ctx context.Context, e *Env, o InitOpts) error     // #27
+	Serve        func(ctx context.Context, e *Env) error                    // #15
+	ConfigCheck  func(ctx context.Context, e *Env, o ConfigCheckOpts) error // #11
+	LabelsSync   func(ctx context.Context, e *Env) error                    // #22
+	RebuildState func(ctx context.Context, e *Env, scanner string) error    // #23
+	Init         func(ctx context.Context, e *Env, o InitOpts) error        // #27
+}
+
+// ConfigCheckOpts is the parsed flag set of `ard config check`.
+type ConfigCheckOpts struct {
+	// Ref is a commit to validate instead of the working tree; "" means the
+	// working tree.
+	Ref string
 }
 
 // InitOpts is the parsed flag set of `ard init`.

@@ -49,7 +49,7 @@ func (e *fakeEngine) failNext(err error) {
 	e.errs = append(e.errs, err)
 }
 
-func (e *fakeEngine) Scan(_ context.Context, _ config.Role, _ time.Time) (ScanResult, error) {
+func (e *fakeEngine) Scan(_ context.Context, _ *config.Resolved, _ config.Role, _ time.Time) (ScanResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls++

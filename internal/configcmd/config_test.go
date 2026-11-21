@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/albertcbrown/ard/internal/cli"
+	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
 
 func testEnv(t *testing.T, configPath string) (*cli.Env, *bytes.Buffer, *bytes.Buffer) {
@@ -50,7 +52,7 @@ func TestCheckValid(t *testing.T) {
 	root := writeRepo(t, "max_pods: 5\noverrides: {scanners/cve: {every: 6h}}\n")
 	e, stdout, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
 
-	if err := Check(context.Background(), e); err != nil {
+	if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
 		t.Fatalf("Check: %v (stderr: %s)", err, stderr.String())
 	}
 	out := stdout.String()
@@ -72,7 +74,7 @@ func TestCheckDefaultsWithoutConfig(t *testing.T) {
 	}
 	e, stdout, _ := testEnv(t, cfgPath)
 
-	if err := Check(context.Background(), e); err != nil {
+	if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
 		t.Fatalf("Check without a config file must succeed with defaults: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "max_pods: 3") {
@@ -106,5 +108,113 @@ func TestCheckReportsErrors(t *testing.T) {
 	// The resolved config still prints to stdout for inspection.
 	if !strings.Contains(stdout.String(), "executor: remote") {
 		t.Errorf("stdout missing resolved config:\n%s", stdout.String())
+	}
+}
+
+// gitRepo commits the files (rel path -> content) to a fresh repo and returns
+// its root. A "*" prefix on the path marks the file executable.
+func gitRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	_, clone := gittest.NewRemote(t)
+	for rel, content := range files {
+		mode := os.FileMode(0o644)
+		if strings.HasPrefix(rel, "*") {
+			rel, mode = rel[1:], 0o755
+		}
+		p := filepath.Join(clone, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gittest.Run(t, clone, "add", "-A")
+	gittest.Run(t, clone, "commit", "-m", "config")
+	return clone
+}
+
+func TestCheckRef(t *testing.T) {
+	good := map[string]string{".ard/config.yaml": "max_pods: 5\n", "*.ard/scanners/cve/scan": "#!/bin/sh\n"}
+	tests := []struct {
+		name       string
+		committed  map[string]string
+		dirty      string // overwrites .ard/config.yaml in the working tree
+		ref        string
+		wantExit   int
+		wantStdout []string
+		wantStderr []string
+	}{
+		{
+			name: "valid commit, dirty invalid working tree", committed: good, dirty: "executor: bogus\n", ref: "HEAD",
+			wantStdout: []string{"max_pods: 5", "sha: ", "name: cve"},
+		},
+		{
+			name: "bad ref", committed: good, ref: "no-such-ref", wantExit: 1,
+			wantStderr: []string{"resolve --ref no-such-ref"},
+		},
+		{
+			name: "invalid config at the ref", committed: map[string]string{".ard/config.yaml": "executor: remote\n"}, ref: "HEAD", wantExit: 1,
+			wantStdout: []string{"sha: "},
+			wantStderr: []string{".ard/config.yaml: executor:"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := gitRepo(t, tc.committed)
+			if tc.dirty != "" {
+				if err := os.WriteFile(filepath.Join(root, ".ard", "config.yaml"), []byte(tc.dirty), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var stdout, stderr bytes.Buffer
+			code := cli.Run(
+				[]string{"config", "check", "--config", filepath.Join(root, ".ard", "config.yaml"), "--ref", tc.ref},
+				&stdout, &stderr, cli.Handlers{ConfigCheck: Check}, "dev",
+			)
+			if code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, tc.wantExit, stderr.String())
+			}
+			for _, w := range tc.wantStdout {
+				if !strings.Contains(stdout.String(), w) {
+					t.Errorf("stdout missing %q:\n%s", w, stdout.String())
+				}
+			}
+			for _, w := range tc.wantStderr {
+				if !strings.Contains(stderr.String(), w) {
+					t.Errorf("stderr missing %q:\n%s", w, stderr.String())
+				}
+			}
+			if code == 0 && !strings.Contains(stdout.String(), "repo: "+root) {
+				t.Errorf("output names the temp dir rather than the repo:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
+// Without --ref the output is exactly what it was before the flag existed:
+// no sha line, and the working tree is what is checked.
+func TestCheckWithoutRefIsUnchanged(t *testing.T) {
+	root := gitRepo(t, map[string]string{".ard/config.yaml": "max_pods: 5\n"})
+	if err := os.WriteFile(filepath.Join(root, ".ard", "config.yaml"), []byte("max_pods: 7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, stdout, _ := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+	if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantOut bytes.Buffer
+	if err := want.WriteYAML(&wantOut); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != wantOut.String() || strings.Contains(stdout.String(), "sha:") || !strings.Contains(stdout.String(), "max_pods: 7") {
+		t.Errorf("stdout differs from the plain working-tree render:\n%s", stdout.String())
 	}
 }

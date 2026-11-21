@@ -33,7 +33,8 @@ cmd/ard/            CLI entry point; wire a new subcommand by adding one line to
 internal/cli/       cobra command tree, global flags, slog logging; Handlers is the plug-in point
 internal/github/    GitHub client: domain types, Reader/Writer/Client, App auth, retry transport; query/ (search builder), fake/ (test double), clienttest/ (conformance suite)
 internal/config/    .ard/config.yaml + role directory loading into a Resolved value (pure, fs.FS in)
-internal/configcmd/ `ard config check` handler: prints the resolved config, returns validation errors
+internal/configcmd/ `ard config check` handler: prints the resolved config, returns validation errors; `--ref` checks a commit
+internal/configsrc/  config from origin/main: a snapshot per SHA under ~/.ard/config/<owner>/<repo>/ (what `ard serve` reads)
 internal/executor/    Executor interface and plain-data job types
 internal/executor/local/  git worktree + host subprocess or docker run, watchdog, logs
 internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
