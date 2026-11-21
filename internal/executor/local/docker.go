@@ -73,6 +73,9 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 	for _, kv := range ardEnv(h) {
 		a = append(a, "-e", kv)
 	}
+	for _, kv := range cmd.Fixed {
+		a = append(a, "-e", kv)
+	}
 	for _, kv := range cmd.Env {
 		name, _, _ := strings.Cut(kv, "=")
 		a = append(a, "-e", name)

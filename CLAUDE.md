@@ -36,8 +36,11 @@ internal/config/    .ard/config.yaml + role directory loading into a Resolved va
 internal/configcmd/ `ard config check` handler: prints the resolved config, returns validation errors
 internal/executor/    Executor interface and plain-data job types
 internal/executor/local/  git worktree + host subprocess or docker run, watchdog, logs
+internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
+internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
+internal/roles/     starter role directories embedded for ard init (scanners/cve)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
