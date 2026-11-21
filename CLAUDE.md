@@ -32,6 +32,7 @@ Packages are created as their issues land; keep this list current.
 cmd/ard/            CLI entry point; wire a new subcommand by adding one line to handlers()
 internal/cli/       cobra command tree, global flags, slog logging; Handlers is the plug-in point
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
+internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/           controller, config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
