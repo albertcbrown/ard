@@ -8,8 +8,6 @@ package configsrc
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -138,6 +136,7 @@ func (s *Source) Load(ctx context.Context) (*config.Resolved, error) {
 	res.SHA = sha
 	// The superseded snapshot may still be a running job's role directory:
 	// stamp it so retention counts from now, not from when it was exported.
+	prev := s.res
 	if s.sha != "" && s.sha != sha {
 		now := s.o.Now()
 		if err := os.Chtimes(filepath.Join(o.CacheDir, s.sha), now, now); err != nil {
@@ -146,7 +145,9 @@ func (s *Source) Load(ctx context.Context) (*config.Resolved, error) {
 	}
 	s.sha, s.res = sha, res
 	if fresh {
-		s.prune(sha)
+		// A job can run as long as its role's timeout, which may exceed Keep.
+		keep := max(o.Keep, longestTimeout(prev, res)+time.Hour)
+		s.prune(sha, keep)
 	}
 	return res, nil
 }
@@ -155,11 +156,10 @@ func (s *Source) Load(ctx context.Context) (*config.Resolved, error) {
 // directory, so a crash never leaves a half-written snapshot under its final
 // name.
 func (s *Source) export(ctx context.Context, sha, snap string) error {
-	var b [6]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return err
-	}
-	tmp := snap + ".tmp-" + hex.EncodeToString(b[:])
+	// A fixed name keeps error text stable across ticks (the status issue gets
+	// one comment per distinct error). s.mu and the leader lock serialise use.
+	tmp := snap + ".tmp-export"
+	_ = os.RemoveAll(tmp)
 	if err := s.o.Git.ExportPaths(ctx, s.o.RepoDir, sha, tmp, config.SourcePaths()...); err != nil {
 		return err
 	}
@@ -172,13 +172,13 @@ func (s *Source) export(ctx context.Context, sha, snap string) error {
 
 // prune removes the snapshots other than current that were last current (or
 // exported) more than Keep ago, judged by directory modification time.
-func (s *Source) prune(current string) {
+func (s *Source) prune(current string, keep time.Duration) {
 	ents, err := os.ReadDir(s.o.CacheDir)
 	if err != nil {
 		s.o.Log.Warn("configsrc.prune_failed", "error", err)
 		return
 	}
-	cutoff := s.o.Now().Add(-s.o.Keep)
+	cutoff := s.o.Now().Add(-keep)
 	for _, e := range ents {
 		if !e.IsDir() || e.Name() == current || strings.Contains(e.Name(), ".tmp-") {
 			continue
@@ -191,4 +191,18 @@ func (s *Source) prune(current string) {
 			s.o.Log.Warn("configsrc.prune_failed", "snapshot", e.Name(), "error", err)
 		}
 	}
+}
+
+// longestTimeout is the largest role timeout across the configs; nil is skipped.
+func longestTimeout(rs ...*config.Resolved) time.Duration {
+	var d time.Duration
+	for _, r := range rs {
+		if r == nil {
+			continue
+		}
+		for _, role := range r.Roles {
+			d = max(d, role.Timeout)
+		}
+	}
+	return d
 }

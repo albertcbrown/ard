@@ -197,7 +197,7 @@ func (g *Git) ChangedSince(ctx context.Context, dir, base string, paths ...strin
 }
 
 // maxExportBytes caps the total size ExportPaths will write.
-const maxExportBytes = 64 << 20
+var maxExportBytes int64 = 64 << 20
 
 // ExportPaths writes the files under paths at commit sha in repoDir into
 // dest, which must not exist; it is created 0o755. Paths missing at sha are

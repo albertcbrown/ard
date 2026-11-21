@@ -296,3 +296,37 @@ func TestConcurrentLoads(t *testing.T) {
 		t.Errorf("exports = %d, want 1", n)
 	}
 }
+
+// A role timeout longer than the retention keeps the superseded snapshot: the
+// job that uses it may still be running.
+func TestPruneKeepsSnapshotForLongTimeoutRole(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	now := time.Now()
+	clock := &now
+	s := e.newSource(func() time.Time { return *clock })
+	long := map[string]string{
+		".ard/config.yaml":      "overrides: {scanners/x: {timeout: 48h}}\n",
+		"*.ard/scanners/x/scan": "#!/bin/sh\n",
+	}
+	e.push(long)
+	first, err := s.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long[".ard/config.yaml"] = "max_pods: 2\noverrides: {scanners/x: {timeout: 48h}}\n"
+	e.push(long)
+	if _, err := s.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	later := now.Add(25 * time.Hour)
+	clock = &later
+	long[".ard/config.yaml"] = "max_pods: 4\noverrides: {scanners/x: {timeout: 48h}}\n"
+	e.push(long)
+	if _, err := s.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(first.Repo); err != nil {
+		t.Errorf("snapshot of a 48h-timeout role pruned after 25h: %v", err)
+	}
+}

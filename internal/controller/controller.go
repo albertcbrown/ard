@@ -124,7 +124,9 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 	// A config that cannot be loaded does not abort startup: the controller
 	// starts paused, with no config, and retries on every tick.
-	cfg, err := c.deps.Config(ctx)
+	lctx, cancelLoad := context.WithTimeout(ctx, configTimeout)
+	cfg, err := c.deps.Config(lctx)
+	cancelLoad()
 	if err != nil {
 		log.Error("config.initial_failed", "error", err)
 		cfg = nil

@@ -185,4 +185,32 @@ func TestExportPathsErrors(t *testing.T) {
 			t.Error(err)
 		}
 	})
+	t.Run("submodule is an error", func(t *testing.T) {
+		_, c := gittest.NewRemote(t)
+		s := commitFiles(t, c, map[string]fileSpec{".ard/scanners/x/scan": {"x", 0o755}})
+		gittest.Run(t, c, "update-index", "--add", "--cacheinfo", "160000,"+s+",.ard/scanners/x/sub")
+		gittest.Run(t, c, "commit", "-m", "sub")
+		head, _ := g.RevParse(ctx, c, "HEAD")
+		dest := filepath.Join(t.TempDir(), "d")
+		if err := g.ExportPaths(ctx, c, head, dest, ".ard/scanners"); err == nil {
+			t.Fatal("want error")
+		}
+		if _, err := os.Lstat(dest); !os.IsNotExist(err) {
+			t.Errorf("dest left behind: %v", err)
+		}
+	})
+	t.Run("size cap", func(t *testing.T) {
+		old := maxExportBytes
+		maxExportBytes = 10
+		defer func() { maxExportBytes = old }()
+		_, c := gittest.NewRemote(t)
+		s := commitFiles(t, c, map[string]fileSpec{".ard/config.yaml": {"12345678901", 0o644}})
+		dest := filepath.Join(t.TempDir(), "d")
+		if err := g.ExportPaths(ctx, c, s, dest, ".ard"); err == nil {
+			t.Fatal("want error")
+		}
+		if _, err := os.Lstat(dest); !os.IsNotExist(err) {
+			t.Errorf("dest left behind: %v", err)
+		}
+	})
 }

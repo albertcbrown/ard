@@ -410,6 +410,10 @@ func TestServeStartsPausedOnInvalidOriginConfig(t *testing.T) {
 	buf := &syncBuf{}
 	e := env(t, "o/r", cfg, false)
 	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	var w *wiring
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { w = x; return nil }
+	defer func() { registerLoops = orig }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	res := make(chan error, 1)
@@ -430,9 +434,26 @@ func TestServeStartsPausedOnInvalidOriginConfig(t *testing.T) {
 		}
 		return false
 	})
+	// Three more ticks' worth of loads fail the same way: still one comment.
+	for range 3 {
+		if !w.Paused(ctx) {
+			t.Error("Paused = false with an invalid origin config")
+		}
+	}
+	n := 0
+	for _, wr := range f.Writes() {
+		if strings.Contains(fmt.Sprint(wr), short) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d comments name %s, want exactly 1", n, short)
+	}
 	// Fixing origin un-pauses: the next load succeeds.
 	pushConfig(t, clone, "max_pods: 4\n")
-	waitFor(t, "config.reloaded", func() bool { return buf.has("config.reloaded") })
+	if w.Paused(ctx) {
+		t.Error("still paused after origin/main was fixed")
+	}
 	cancel()
 	if err := <-res; err != nil {
 		t.Fatal(err)
