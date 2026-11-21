@@ -4,7 +4,9 @@
 // that runs one request at a time; main has a persistent lane (Committer) and
 // Branches creates one per PR branch.
 //
-// Local git work (fetch, worktree, staging) goes through gitx. The two steps
+// Local git work (fetch, worktree, staging) goes through gitx. gitx serialises
+// worktree add/remove/prune per repository across all lanes and the executor
+// (#109); fetch, commit and push stay parallel. The two steps
 // that change history or the remote, commit and push, go through the Effects
 // interface so --dry-run logs them instead of acting.
 //

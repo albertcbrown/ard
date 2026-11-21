@@ -277,7 +277,7 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 	if !o.KeepWorktree {
 		if _, err := os.Stat(h.Worktree); err == nil {
 			chmodWritable(h.Worktree)
-			if err := l.git.WorktreeRemove(ctx, h.RepoDir, h.Worktree, true); err != nil {
+			if err := l.git.WorktreeRemove(context.WithoutCancel(ctx), h.RepoDir, h.Worktree, true); err != nil {
 				errs = append(errs, err)
 				os.RemoveAll(h.Worktree)
 			}
@@ -285,7 +285,7 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 		if err := os.RemoveAll(h.Home); err != nil {
 			errs = append(errs, err)
 		}
-		if err := l.git.WorktreePrune(ctx, h.RepoDir); err != nil {
+		if err := l.git.WorktreePrune(context.WithoutCancel(ctx), h.RepoDir); err != nil {
 			errs = append(errs, err)
 		}
 	}

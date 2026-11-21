@@ -13,7 +13,32 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/albertcbrown/ard/internal/wtlock"
 )
+
+// worktreeAdminTimeout bounds each worktree add, remove and prune that runs
+// under the shared lock, so one hung git cannot stall every lane.
+const worktreeAdminTimeout = 30 * time.Second
+
+// worktreeLock takes the process-wide worktree-administration lock for the
+// repository at repoDir, keyed by its common git directory.
+func (g *Git) worktreeLock(ctx context.Context, repoDir string) (func(), error) {
+	out, _, err := g.run(ctx, repoDir, nil, "", nil, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return nil, fmt.Errorf("gitx: worktree lock %s: %w", repoDir, err)
+	}
+	dir := strings.TrimSpace(out)
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(repoDir, dir)
+	}
+	unlock, err := wtlock.Lock(ctx, dir)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: worktree lock %s: %w", repoDir, err)
+	}
+	return unlock, nil
+}
 
 // The functions in this file only touch the local repository or read from a
 // remote. They are not effects: commit and push stay in write.go and are
@@ -48,7 +73,16 @@ func (g *Git) Version(ctx context.Context) (major, minor int, err error) {
 
 // WorktreeAdd checks ref out detached at path. Detached, because the branch
 // may already be checked out elsewhere and git refuses a second checkout.
+// Serialised per repository with every other worktree add/remove in this
+// process (internal/wtlock).
 func (g *Git) WorktreeAdd(ctx context.Context, repoDir, path, ref string) error {
+	ctx, cancel := context.WithTimeout(ctx, worktreeAdminTimeout)
+	defer cancel()
+	unlock, err := g.worktreeLock(ctx, repoDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if _, _, err := g.run(ctx, repoDir, nil, "", nil, "worktree", "add", "--detach", "--force", path, ref); err != nil {
 		return fmt.Errorf("gitx: worktree add %s: %w", path, err)
 	}
@@ -56,8 +90,18 @@ func (g *Git) WorktreeAdd(ctx context.Context, repoDir, path, ref string) error 
 }
 
 // WorktreeRemove deletes the worktree at path, whatever state it is in, and
-// prunes stale registrations. A missing worktree is not an error.
+// prunes stale registrations. A missing worktree is not an error. It is
+// cleanup, so it runs even when ctx is cancelled, bounded by a 30 s deadline.
+// Serialised per repository with every other worktree add/remove in this
+// process (internal/wtlock).
 func (g *Git) WorktreeRemove(ctx context.Context, repoDir, path string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), worktreeAdminTimeout)
+	defer cancel()
+	unlock, err := g.worktreeLock(ctx, repoDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	_, _, _ = g.run(ctx, repoDir, nil, "", nil, "worktree", "remove", "--force", path)
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("gitx: remove %s: %w", path, err)
