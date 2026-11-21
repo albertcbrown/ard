@@ -11,7 +11,7 @@ const (
 	refHash  = `[#\x{FF03}]\d+`
 	refGH    = `GH-\d+`
 	refCross = `[\w.-]+/[\w.-]+[#\x{FF03}]\d+`
-	refURL   = `(?:https?://)?[^\s/]+/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+`
+	refURL   = `(?:https?://)?[\w.-]+(?::\d+)?/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+`
 	// refAny tries the longest forms first so "o/r#12" is not read as "#12".
 	refAny = `(?:` + refURL + `|` + refCross + `|` + refGH + `|` + refHash + `)`
 )
@@ -27,7 +27,7 @@ var (
 		`(?:[^\]\[\n]*\]\()?` +
 		refAny + `(?:[\s\p{Z}\p{Cf}]*(?:,|and|&)[\s\p{Z}\p{Cf}]*` + refAny + `)*`)
 	refRe      = regexp.MustCompile(`(?i)` + refAny)
-	urlRefRe   = regexp.MustCompile(`(?i)^(?:https?://)?[^\s/]+/([\w.-]+/[\w.-]+)/(?:issues|pull)/(\d+)$`)
+	urlRefRe   = regexp.MustCompile(`(?i)^(?:https?://)?[\w.-]+(?::\d+)?/([\w.-]+/[\w.-]+)/(?:issues|pull)/(\d+)$`)
 	crossRefRe = regexp.MustCompile(`^([\w.-]+/[\w.-]+)[#\x{FF03}](\d+)$`)
 )
 

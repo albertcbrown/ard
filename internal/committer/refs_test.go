@@ -39,6 +39,8 @@ func TestNeutraliseRefs(t *testing.T) {
 		{"angle url", "Closes <https://github.com/o/r/issues/12>", "Closes <o/r issue 12>", true, false},
 		{"markdown link", "Fixes [#12](https://github.com/o/r/issues/12)", "Fixes [issue 12](o/r issue 12)", true, false},
 		{"markdown link text", "Fixes [link](https://github.com/o/r/issues/12)", "Fixes [link](o/r issue 12)", true, false},
+		{"glued schemeless url", "fixes**github.com/o/r/issues/12", "fixes**o/r issue 12", true, false},
+		{"schemeless markdown link", "Fixes [x](github.com/o/r/issues/12)", "Fixes [x](o/r issue 12)", true, false},
 		{"nbsp", "Fixes\u00a0#12", "Fixes\u00a0issue 12", true, false},
 		{"zwsp", "Fixes\u200b#12", "Fixes\u200bissue 12", true, false},
 		{"word joiner", "Fixes\u2060#12", "Fixes\u2060issue 12", true, false},
