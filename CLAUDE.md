@@ -33,6 +33,8 @@ cmd/ard/            CLI entry point; wire a new subcommand by adding one line to
 internal/cli/       cobra command tree, global flags, slog logging; Handlers is the plug-in point
 internal/config/    .ard/config.yaml + role directory loading into a Resolved value (pure, fs.FS in)
 internal/configcmd/ `ard config check` handler: prints the resolved config, returns validation errors
+internal/executor/    Executor interface and plain-data job types
+internal/executor/local/  git worktree + host subprocess or docker run, watchdog, logs
 internal/           controller, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```
