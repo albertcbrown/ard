@@ -159,6 +159,15 @@ func TestResolveRepo(t *testing.T) {
 			t.Errorf("got %v, %v", got, err)
 		}
 	})
+	t.Run("remote with a token is not echoed", func(t *testing.T) {
+		_, c := gittest.NewRemote(t)
+		gittest.Run(t, c, "remote", "set-url", "origin", "https://x:secret@gitlab.com/a/b.git")
+		e, _ := env(c, false)
+		_, err := resolveRepo(ctx, e, c)
+		if err == nil || strings.Contains(err.Error(), "secret") {
+			t.Errorf("err = %v, want an error without the token", err)
+		}
+	})
 	t.Run("no remote", func(t *testing.T) {
 		e, _ := env(t.TempDir(), false)
 		_, err := resolveRepo(ctx, e, t.TempDir())

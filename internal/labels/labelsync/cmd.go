@@ -66,6 +66,9 @@ func run(ctx context.Context, e *cli.Env, open func(ctx context.Context, root st
 		return err
 	}
 	rep, err := Sync(ctx, d.Reader, d.Writer, want, e.Log)
+	if err != nil && rep.Failed == nil {
+		return err
+	}
 	Print(e.Stdout, rep, e.DryRun)
 	return err
 }
@@ -82,7 +85,8 @@ func resolveRepo(ctx context.Context, e *cli.Env, root string) (github.Repo, err
 	}
 	repo, err := github.RepoFromRemote(url)
 	if err != nil {
-		return github.Repo{}, fmt.Errorf("labels sync: --repo owner/repo is required (cannot use the origin remote: %w)", err)
+		// Not wrapped: the remote URL may embed a token.
+		return github.Repo{}, fmt.Errorf("labels sync: --repo owner/repo is required (origin remote is not a github.com owner/repo URL)")
 	}
 	e.Log.Info("repo taken from the origin remote", "repo", repo.String())
 	return repo, nil

@@ -99,9 +99,8 @@ func Sync(ctx context.Context, r Reader, w Writer, want []labels.Label, log *slo
 	rep := Report{Plan: Diff(have, want), Failed: map[string]error{}}
 	var errs []error
 	fail := func(name string, err error) {
-		err = fmt.Errorf("labels sync: %s: %w", name, err)
 		rep.Failed[name] = err
-		errs = append(errs, err)
+		errs = append(errs, fmt.Errorf("labels sync: %s: %w", name, err))
 	}
 	for _, l := range rep.Create {
 		log.InfoContext(ctx, "label", "label", l.Name, "action", "create")

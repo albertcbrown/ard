@@ -16,7 +16,7 @@ var update = flag.Bool("update", false, "rewrite testdata/catalogue.golden")
 var exampleSpec = Spec{
 	Triage:    []string{"lead", "product-manager", "architect", "designer", "documentation-planner", "engineer"},
 	Workers:   []string{"engineer"},
-	Reviewers: []string{"security-review", "license-review", "eng-review", "pm-review"},
+	Reviewers: []string{"security-review", "license-review", "eng-review", "product-manager-review"},
 	Scanners:  []string{"cve", "lint"},
 }
 

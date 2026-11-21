@@ -22,7 +22,7 @@ func catalogue(t *testing.T) []labels.Label {
 	want, err := labels.Desired(labels.Spec{
 		Triage:    []string{"lead", "product-manager", "architect", "designer", "documentation-planner", "engineer"},
 		Workers:   []string{"engineer"},
-		Reviewers: []string{"security-review", "license-review", "eng-review", "pm-review"},
+		Reviewers: []string{"security-review", "license-review", "eng-review", "product-manager-review"},
 		Scanners:  []string{"cve", "lint"},
 	})
 	if err != nil {
@@ -140,6 +140,11 @@ func TestSyncLive(t *testing.T) {
 		rep, err := Sync(ctx, f, effects.NewLive(f, nil, quiet), want, quiet)
 		if !errors.Is(err, boom) || len(rep.Failed) != 1 {
 			t.Fatalf("err=%v failed=%v", err, rep.Failed)
+		}
+		for name, ferr := range rep.Failed {
+			if !errors.Is(ferr, boom) || strings.HasPrefix(ferr.Error(), "labels sync:") {
+				t.Errorf("Failed[%s] = %v, want the raw error wrapping boom", name, ferr)
+			}
 		}
 		got, _ := f.ListLabels(ctx)
 		if len(got) != 46 {

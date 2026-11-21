@@ -14,10 +14,10 @@ ard:review:license-review	0e8a16	ard: review license-review requested
 ard:review:license-review:changes	e4a11b	ard: review license-review requested changes
 ard:review:license-review:done	c2e0c6	ard: review license-review done
 ard:review:license-review:running	0a5c10	ard: review license-review running
-ard:review:pm-review	0e8a16	ard: review pm-review requested
-ard:review:pm-review:changes	e4a11b	ard: review pm-review requested changes
-ard:review:pm-review:done	c2e0c6	ard: review pm-review done
-ard:review:pm-review:running	0a5c10	ard: review pm-review running
+ard:review:product-manager-review	0e8a16	ard: review product-manager-review requested
+ard:review:product-manager-review:changes	e4a11b	ard: review product-manager-review requested changes
+ard:review:product-manager-review:done	c2e0c6	ard: review product-manager-review done
+ard:review:product-manager-review:running	0a5c10	ard: review product-manager-review running
 ard:review:security-review	0e8a16	ard: review security-review requested
 ard:review:security-review:changes	e4a11b	ard: review security-review requested changes
 ard:review:security-review:done	c2e0c6	ard: review security-review done
