@@ -228,3 +228,34 @@ func TestAppAuthErrorsDoNotLeakKey(t *testing.T) {
 		t.Error("Transport without key: want error")
 	}
 }
+
+func TestAppAuthDiscoveryRedirectIsRepoMoved(t *testing.T) {
+	var targetHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/installation", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/repositories/7/installation?token=x")
+		w.WriteHeader(http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/repositories/7/installation", func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		fmt.Fprint(w, `{"id":1}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	a := &AppAuth{AppID: 12, PrivateKey: []byte(testKeyPEM(t))}
+	a.configure(Repo{"o", "r"}, srv.URL)
+	if _, err := a.Transport(nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err := a.Token(context.Background())
+	var rm *RepoMovedError
+	if !errors.As(err, &rm) || rm.Repo != (Repo{"o", "r"}) || !errors.Is(err, ErrRepoMoved) {
+		t.Fatalf("err = %v, want *RepoMovedError for o/r", err)
+	}
+	if targetHits.Load() != 0 {
+		t.Error("discovery followed the redirect")
+	}
+	if strings.Contains(err.Error(), "token=x") {
+		t.Errorf("error leaks the query: %v", err)
+	}
+}

@@ -28,7 +28,7 @@ type Writer interface {
 	UpdateIssue(ctx context.Context, n int, u IssueUpdate) error // title, body, close with reason, reopen
 	PinIssue(ctx context.Context, n int) error                   // GraphQL pinIssue
 	AddLabels(ctx context.Context, n int, labels ...string) error
-	RemoveLabel(ctx context.Context, n int, label string) error // nil on 404
+	RemoveLabel(ctx context.Context, n int, label string) error // nil when the label is absent (404); ErrNotFound if the issue moved
 	CreateLabel(ctx context.Context, l Label) error             // ErrConflict if it exists
 	UpdateLabel(ctx context.Context, name string, l Label) error
 	CreateComment(ctx context.Context, n int, body string) (Comment, error)

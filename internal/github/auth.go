@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,6 +120,8 @@ func (a *AppAuth) installation(ctx context.Context) (*ghinstallation.Transport, 
 	if a.baseURL != "" {
 		t.BaseURL = a.baseURL
 	}
+	// Token refresh must not follow redirects either.
+	t.Client = newAPIClient(base)
 	a.inst = t
 	return t, nil
 }
@@ -141,12 +144,17 @@ func (a *AppAuth) discover(ctx context.Context, base http.RoundTripper) (int64, 
 		return 0, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := (&http.Client{Transport: jwt}).Do(req)
+	resp, err := newAPIClient(jwt).Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("github: discover installation: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		// The JWT cannot read repo endpoints, so the new name is not resolved.
+		return 0, &RepoMovedError{Repo: a.repo, Location: locationPath(resp.Header.Get("Location"))}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("github: discover installation for %s: %w", a.repo, statusError(resp.StatusCode, body))
 	}
@@ -157,6 +165,15 @@ func (a *AppAuth) discover(ctx context.Context, base http.RoundTripper) (int64, 
 		return 0, fmt.Errorf("github: discover installation for %s: unexpected response", a.repo)
 	}
 	return out.ID, nil
+}
+
+// locationPath returns the path of a Location header, never its query or host.
+func locationPath(loc string) string {
+	u, err := url.Parse(loc)
+	if err != nil {
+		return "<none>"
+	}
+	return redirectPath(u)
 }
 
 // appsTransport signs requests with the App JWT (for /app and installation lookup).
