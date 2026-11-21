@@ -175,7 +175,7 @@ overrides:
 	if res.Agent != "kimi" || res.Intervals.Scanners != Duration(6*time.Hour) || res.Intervals.Triage != Duration(20*time.Minute) {
 		t.Errorf("globals = %+v", *res)
 	}
-	if strings.Join(res.ProtectedPaths, ",") != "infra" {
+	if strings.Join(res.ProtectedPaths, ",") != "infra/" {
 		t.Errorf("ProtectedPaths = %v", res.ProtectedPaths)
 	}
 	if sc := res.Sidecars["vpe-specs"]; sc.Repo != "acme/specs" || sc.Ref != "main" {
@@ -323,6 +323,29 @@ func TestLoadErrors(t *testing.T) {
 			name: "protected path escapes the repo",
 			yaml: "merge: {protected_paths: [../outside]}\n",
 			want: []wantErr{{".ard/config.yaml", "merge.protected_paths[0]", "escapes the repo"}},
+		},
+		{
+			name: "protected path names the whole repo",
+			yaml: "merge: {protected_paths: [./]}\n",
+			want: []wantErr{{".ard/config.yaml", "merge.protected_paths[0]", "names the whole repo"}},
+		},
+		{
+			name: "protected prefix with glob characters",
+			yaml: "merge: {protected_paths: [docs/*/]}\n",
+			want: []wantErr{{".ard/config.yaml", "merge.protected_paths[0]", "contains glob characters"}},
+		},
+		{
+			name: "protected invalid glob",
+			yaml: "merge: {protected_paths: [\"src/[a\"]}\n",
+			want: []wantErr{{".ard/config.yaml", "merge.protected_paths[0]", "invalid glob"}},
+		},
+		{
+			name: "protected errors are collected",
+			yaml: "merge: {protected_paths: [.github/, \"src/[a\", ./]}\n",
+			want: []wantErr{
+				{".ard/config.yaml", "merge.protected_paths[1]", "invalid glob"},
+				{".ard/config.yaml", "merge.protected_paths[2]", "names the whole repo"},
+			},
 		},
 		{
 			name: "protected path must be relative",
@@ -480,4 +503,11 @@ func TestErrorFormatting(t *testing.T) {
 		t.Errorf("Errors.Error() = %q, want joined lines", errs.Error())
 	}
 	var _ error = errs
+}
+
+func TestLoadProtectedRoundTrip(t *testing.T) {
+	res := mustLoad(t, withConfig(t, "merge: {protected_paths: [.github/, \"**/*.tf\", CODEOWNERS]}\n"))
+	if got := strings.Join(res.ProtectedPaths, ","); got != ".github/,**/*.tf,CODEOWNERS" {
+		t.Errorf("ProtectedPaths = %q", got)
+	}
 }
