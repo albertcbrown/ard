@@ -72,9 +72,9 @@ func (g *Git) FetchRef(ctx context.Context, repoDir, url, refspec string, token 
 		if err != nil {
 			return fmt.Errorf("gitx: fetch token: %w", err)
 		}
-		env, secrets = pushEnv(tok), []string{tok}
+		env, secrets = pushEnv(tok, url), []string{tok}
 	}
-	_, stderr, err := g.run(ctx, repoDir, env, "", secrets, "fetch", "--no-tags", "--quiet", url, refspec)
+	_, stderr, err := g.run(ctx, repoDir, env, "", secrets, "fetch", "--no-tags", "--no-write-fetch-head", "--quiet", url, refspec)
 	if err != nil {
 		if strings.Contains(stderr, "couldn't find remote ref") {
 			return fmt.Errorf("gitx: fetch %s: %w", refspec, ErrRefNotFound)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -52,7 +53,7 @@ func (g *Git) Commit(ctx context.Context, op CommitOp) (string, error) {
 
 // Push pushes op.Ref. Typed errors: ErrNonFastForward, ErrStaleLease.
 func (g *Git) Push(ctx context.Context, op PushOp) error {
-	args := []string{"-c", "core.hooksPath=/dev/null", "push", "--porcelain"}
+	args := []string{"push", "--porcelain"}
 	if op.ForceWithLease != "" {
 		dst := op.Ref
 		if i := strings.LastIndex(dst, ":"); i >= 0 {
@@ -67,7 +68,7 @@ func (g *Git) Push(ctx context.Context, op PushOp) error {
 		if err != nil {
 			return fmt.Errorf("gitx: push token: %w", err)
 		}
-		env = pushEnv(tok)
+		env = pushEnv(tok, op.Remote)
 		secrets = []string{tok}
 	}
 	stdout, stderr, err := g.run(ctx, op.Dir, env, "", secrets, args...)
@@ -86,11 +87,11 @@ func (g *Git) Push(ctx context.Context, op PushOp) error {
 
 // pushEnv passes the credential to git through the environment (never argv,
 // which is visible in the process list).
-func pushEnv(token string) []string {
+func pushEnv(token, remote string) []string {
 	cred := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 	return []string{
 		"GIT_CONFIG_COUNT=1",
-		"GIT_CONFIG_KEY_0=http.extraheader",
+		"GIT_CONFIG_KEY_0=" + headerKey(remote),
 		"GIT_CONFIG_VALUE_0=Authorization: Basic " + cred,
 	}
 }
@@ -110,4 +111,14 @@ func scrub(s string, secrets ...string) string {
 		}
 	}
 	return s
+}
+
+// headerKey scopes the auth header to the remote's scheme and host, so a
+// redirect to another host never receives the credential.
+func headerKey(remote string) string {
+	u, err := url.Parse(remote)
+	if err != nil || u.Host == "" {
+		return "http.extraheader"
+	}
+	return "http." + u.Scheme + "://" + u.Host + "/.extraheader"
 }

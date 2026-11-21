@@ -45,6 +45,8 @@ internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority cl
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
 internal/committer/ the only commit/push path for .ard/<issue#>/ (main lane, per-branch lanes)
+internal/labels/    the one place that spells an `ard:` label; catalogue from config
+internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
 internal/           controller, config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```

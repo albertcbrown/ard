@@ -25,7 +25,7 @@ type Branches struct {
 
 // NewBranches returns a per-branch committer. cfg.Branch is ignored.
 func NewBranches(cfg Config, fx Effects, g *gitx.Git) *Branches {
-	c, err := newCore(cfg, fx, g)
+	c, err := newCore(cfg, fx, g, false)
 	return &Branches{core: c, cfgErr: err, lanes: map[string]*lane{}}
 }
 
