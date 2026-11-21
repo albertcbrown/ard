@@ -185,3 +185,20 @@ func TestConcurrentWriters(t *testing.T) {
 		t.Errorf("writes = %d, want 60", got)
 	}
 }
+
+func TestSearchInTitleText(t *testing.T) {
+	ctx := context.Background()
+	f := fake.New()
+	f.SeedIssue(github.Issue{Title: "ard status"})
+	f.SeedIssue(github.Issue{Title: "something else"})
+	got, err := f.SearchIssues(ctx, `is:issue in:title "ARD Status"`, github.SearchOpts{})
+	if err != nil || len(got) != 1 || got[0].Title != "ard status" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if _, err := f.SearchIssues(ctx, "in:body", github.SearchOpts{}); err == nil {
+		t.Error("in:body should be unsupported")
+	}
+	if _, err := f.SearchIssues(ctx, `"ard status"`, github.SearchOpts{}); err == nil {
+		t.Error("quoted text without in:title should be rejected")
+	}
+}
