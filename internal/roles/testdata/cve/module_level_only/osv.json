@@ -1,0 +1,60 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "@ROOT@/go.mod",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "golang.org/x/net",
+            "version": "0.0.1",
+            "ecosystem": "Go"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-4374-p667-p6c8",
+              "aliases": [
+                "CVE-2023-39325"
+              ],
+              "summary": "rapid reset",
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Go",
+                    "name": "golang.org/x/net"
+                  },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.17.0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "GHSA-4374-p667-p6c8"
+              ],
+              "aliases": [
+                "CVE-2023-39325"
+              ],
+              "max_severity": "8.1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
