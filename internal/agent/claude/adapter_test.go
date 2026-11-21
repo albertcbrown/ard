@@ -28,14 +28,16 @@ func TestCommandArgv(t *testing.T) {
 		{"triage default", func(*agent.Spec) {}, []string{"claude", "-p", "--output-format=stream-json", "--verbose",
 			"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 			"--permission-mode=dontAsk", "--permission-prompts=none",
-			"--tools=" + readonlyTools, "--allowed-tools=" + readonlyAllowed,
+			"--tools=Read,Glob,Grep,Edit,Write,Bash", "--allowed-tools=Read,Glob,Grep,Edit,Write,Bash",
+			"--disallowed-tools=Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
 			"--max-budget-usd=1.5", "--append-system-prompt-file=/role/prompt.txt", "--", msg}},
 		{"worker model turns readdir", func(s *agent.Spec) {
 			s.Stage, s.Model, s.MaxTurns, s.ReadDirs = agent.StageWorker, "claude-opus-4-5", 5, []string{"/sidecar"}
 		}, []string{"claude", "-p", "--output-format=stream-json", "--verbose",
 			"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 			"--permission-mode=dontAsk", "--permission-prompts=none",
-			"--tools=" + workerTools, "--allowed-tools=" + workerTools, "--disallowed-tools=" + workerDeny,
+			"--tools=Read,Glob,Grep,Edit,Write,Bash", "--allowed-tools=Read,Glob,Grep,Edit,Write,Bash",
+			"--disallowed-tools=Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
 			"--add-dir=/sidecar", "--model=claude-opus-4-5", "--max-budget-usd=1.5", "--max-turns=5",
 			"--append-system-prompt-file=/role/prompt.txt", "--", userMessage(func() agent.Spec { s := spec(); s.Stage = agent.StageWorker; return s }())}},
 		{"tools override", func(s *agent.Spec) { s.Tools = []string{"Read", "Bash(ls *)"} },
@@ -43,6 +45,7 @@ func TestCommandArgv(t *testing.T) {
 				"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 				"--permission-mode=dontAsk", "--permission-prompts=none",
 				"--tools=Read,Bash", "--allowed-tools=Read,Bash(ls *)",
+				"--disallowed-tools=Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
 				"--max-budget-usd=1.5", "--append-system-prompt-file=/role/prompt.txt", "--", msg}},
 	}
 	for _, tc := range tests {
@@ -58,6 +61,44 @@ func TestCommandArgv(t *testing.T) {
 			}
 			if c.Env["CLAUDE_CONFIG_DIR"] != "/cfg" || !reflect.DeepEqual(c.PassEnv, []string{"ANTHROPIC_API_KEY"}) {
 				t.Errorf("env %v pass %v", c.Env, c.PassEnv)
+			}
+		})
+	}
+}
+
+// flag returns the value of --name=value in argv, and whether it appears
+// exactly once.
+func flag(argv []string, name string) (string, bool) {
+	var val string
+	n := 0
+	for _, a := range argv {
+		if strings.HasPrefix(a, name+"=") {
+			val = strings.TrimPrefix(a, name+"=")
+			n++
+		}
+	}
+	return val, n == 1
+}
+
+func TestDefaultProfileEveryStage(t *testing.T) {
+	want := map[string]string{
+		"--tools":            "Read,Glob,Grep,Edit,Write,Bash",
+		"--allowed-tools":    "Read,Glob,Grep,Edit,Write,Bash",
+		"--disallowed-tools": "Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
+	}
+	for _, stage := range []string{agent.StageScanner, agent.StageTriage, agent.StageWorker, agent.StageReview} {
+		t.Run(stage, func(t *testing.T) {
+			s := spec()
+			s.Stage = stage
+			c, err := New(Options{}).Command(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, w := range want {
+				got, ok := flag(c.Argv, name)
+				if !ok || got != w {
+					t.Errorf("%s = %q (exactly once: %v), want %q", name, got, ok, w)
+				}
 			}
 		})
 	}

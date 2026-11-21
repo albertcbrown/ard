@@ -30,12 +30,13 @@ func New(o Options) *Adapter {
 func (*Adapter) Name() string { return "claude" }
 
 const (
-	readonlyAllowed = "Read,Glob,Grep,Edit,Write,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
-	readonlyTools   = "Read,Glob,Grep,Edit,Write,Bash"
-	workerTools     = "Read,Glob,Grep,Edit,Write,Bash"
-	// The deny list is advisory; the real boundaries are the missing GitHub
-	// token, the diff guard and the committer.
-	workerDeny = "Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)"
+	// defaultTools is both --tools and --allowed-tools for every stage (#79).
+	defaultTools = "Read,Glob,Grep,Edit,Write,Bash"
+	// The deny list is advisory: shell indirection gets around it. The real
+	// boundaries are the missing GitHub token, the committer (only
+	// .ard/<issue#>/ is committed from triage and review) and the worker
+	// diff guard.
+	defaultDeny = "Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)"
 )
 
 // Command builds the argv and environment. It touches no filesystem.
@@ -43,21 +44,17 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 	if err := s.Validate(); err != nil {
 		return agent.Command{}, err
 	}
-	tools, allowed, deny := readonlyTools, readonlyAllowed, ""
-	if s.Stage == agent.StageWorker {
-		tools, allowed, deny = workerTools, workerTools, workerDeny
-	}
+	tools, allowed, deny := defaultTools, defaultTools, defaultDeny
 	if s.Tools != nil {
-		allowed, deny = strings.Join(s.Tools, ","), ""
+		// An explicit list replaces the allow list but keeps the deny list.
+		allowed = strings.Join(s.Tools, ",")
 		tools = toolNames(s.Tools)
 	}
 	argv := []string{a.binary, "-p", "--output-format=stream-json", "--verbose",
 		"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 		"--permission-mode=dontAsk", "--permission-prompts=none",
 		"--tools=" + tools, "--allowed-tools=" + allowed}
-	if deny != "" {
-		argv = append(argv, "--disallowed-tools="+deny)
-	}
+	argv = append(argv, "--disallowed-tools="+deny)
 	for _, d := range s.ReadDirs {
 		argv = append(argv, "--add-dir="+d)
 	}
