@@ -14,11 +14,33 @@ import (
 
 func TestLayout(t *testing.T) {
 	l, _ := New(Options{Root: "/r"})
-	if got := l.WorktreePath("o/r", "J1"); got != "/r/work/o-r/J1" {
-		t.Error(got)
+	if got, err := l.WorktreePath("o/r", "J1"); err != nil || got != "/r/work/o/r/J1" {
+		t.Error(got, err)
 	}
-	if got := l.logDir("o/r", 0); got != "/r/logs/o-r/noissue" {
-		t.Error(got)
+	if got, err := l.homePath("o/r", "J1"); err != nil || got != "/r/work/o/r/J1.home" {
+		t.Error(got, err)
+	}
+	if got, err := l.logDir("o/r", 0); err != nil || got != "/r/logs/o/r/noissue" {
+		t.Error(got, err)
+	}
+	for name, f := range map[string]func(string) (string, error){
+		"worktree": func(r string) (string, error) { return l.WorktreePath(r, "J1") },
+		"home":     func(r string) (string, error) { return l.homePath(r, "J1") },
+		"logs":     func(r string) (string, error) { return l.logDir(r, 7) },
+	} {
+		a, _ := f("a-b/c")
+		b, _ := f("a/b-c")
+		if a == b {
+			t.Errorf("%s: a-b/c and a/b-c collide at %s", name, a)
+		}
+		x, _ := f("O/R")
+		y, _ := f("o/r")
+		if x != y {
+			t.Errorf("%s: case differs: %s vs %s", name, x, y)
+		}
+		if _, err := f("../r"); err == nil {
+			t.Errorf("%s: invalid repo accepted", name)
+		}
 	}
 	ts := time.Date(2026, 11, 21, 10, 15, 0, 0, time.UTC)
 	if got := LogBase("worker", "dev", ts); got != "worker-dev-20261121T101500.000Z" {

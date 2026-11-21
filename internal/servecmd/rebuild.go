@@ -62,7 +62,14 @@ func rebuildState(ctx context.Context, e *cli.Env, name string, build readerBuil
 		return fmt.Errorf("ard rebuild-state: find home directory: %w", err)
 	}
 	// A running controller would write from a view this rebuild is replacing.
-	leader, err := controller.AcquireLeader(controller.LockPath(home, repo.Owner, repo.Name))
+	if err := state.CheckLegacy(filepath.Join(home, ".ard"), repo.String()); err != nil {
+		return &cli.ExitError{Code: 1, Err: fmt.Errorf("ard rebuild-state: %w", err)}
+	}
+	lockPath, err := controller.LockPath(home, repo.Owner, repo.Name)
+	if err != nil {
+		return fmt.Errorf("ard rebuild-state: %w", err)
+	}
+	leader, err := controller.AcquireLeader(lockPath)
 	if err != nil {
 		if errors.Is(err, controller.ErrLeaderHeld) {
 			return &cli.ExitError{Code: 1, Err: fmt.Errorf("ard rebuild-state: stop ard serve first: %w", err)}
@@ -73,7 +80,7 @@ func rebuildState(ctx context.Context, e *cli.Env, name string, build readerBuil
 
 	// The live state only: the dry-run database holds synthetic issues that
 	// are not on GitHub, so it is never rebuilt.
-	stateDir, err := state.Dir(filepath.Join(home, ".ard"), repo.Owner+"/"+repo.Name, false)
+	stateDir, err := state.Dir(filepath.Join(home, ".ard"), repo.String(), false)
 	if err != nil {
 		return err
 	}

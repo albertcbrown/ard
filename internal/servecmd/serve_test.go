@@ -20,6 +20,7 @@ import (
 	"github.com/albertcbrown/ard/internal/github/fake"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 	"github.com/albertcbrown/ard/internal/redact"
+	"github.com/albertcbrown/ard/internal/state"
 )
 
 // repoDir writes a minimal valid config and returns its path.
@@ -101,7 +102,8 @@ func TestServeSecondInstanceExits(t *testing.T) {
 	if !errors.As(err, &ee) || ee.Code != 1 {
 		t.Errorf("want ExitError code 1, got %v", err)
 	}
-	if _, statErr := os.Stat(controller.LockPath(home, "o", "r")); statErr != nil {
+	lp, _ := controller.LockPath(home, "o", "r")
+	if _, statErr := os.Stat(lp); statErr != nil {
 		t.Error(statErr)
 	}
 	cancel()
@@ -269,5 +271,29 @@ func TestRedactTextSurvivesCancelledContextAndLogsFlag(t *testing.T) {
 	got = redactText(context.Background(), log, rd, "key "+secret)
 	if strings.Contains(got, secret) || buf.has(secret) {
 		t.Errorf("leak: %q", got)
+	}
+}
+
+func TestServeRefusesLegacyStateDir(t *testing.T) {
+	for _, legacy := range []string{"state/o-r/_controller.db", "state-dryrun/o-r/effects.jsonl"} {
+		t.Run(legacy, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			home, _ := os.UserHomeDir()
+			p := filepath.Join(home, ".ard", legacy)
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := serve(context.Background(), env(t, "o/r", repoDir(t), true), fakeBuilder(fake.New(), true))
+			var ee *cli.ExitError
+			if !errors.Is(err, state.ErrLegacyDir) || !errors.As(err, &ee) || ee.Code != 1 {
+				t.Fatalf("err = %v", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(home, ".ard", "locks")); !os.IsNotExist(statErr) {
+				t.Errorf("a refused start created the locks dir: %v", statErr)
+			}
+		})
 	}
 }

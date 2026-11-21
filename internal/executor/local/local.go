@@ -111,7 +111,10 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 	if err := j.Validate(); err != nil {
 		return h, err
 	}
-	wt := l.WorktreePath(j.Repo, j.ID)
+	wt, err := l.WorktreePath(j.Repo, j.ID)
+	if err != nil {
+		return h, fmt.Errorf("prepare %s: %w", j.ID, err)
+	}
 	if _, err := os.Lstat(wt); err == nil {
 		return h, fmt.Errorf("prepare %s: %w", j.ID, executor.ErrExists)
 	}
@@ -121,8 +124,14 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 	}
 	now := l.now().UTC()
 	base := LogBase(j.Stage, j.Role, now)
-	logDir := l.logDir(j.Repo, j.Issue)
-	home := l.homePath(j.Repo, j.ID)
+	logDir, err := l.logDir(j.Repo, j.Issue)
+	if err != nil {
+		return h, fmt.Errorf("prepare %s: %w", j.ID, err)
+	}
+	home, err := l.homePath(j.Repo, j.ID)
+	if err != nil {
+		return h, fmt.Errorf("prepare %s: %w", j.ID, err)
+	}
 	h = executor.Handle{
 		JobID: j.ID, Kind: "host", Issue: j.Issue, Stage: j.Stage, Role: j.Role,
 		Worktree: wt, Home: home, RepoDir: j.RepoDir, BaseSHA: sha,

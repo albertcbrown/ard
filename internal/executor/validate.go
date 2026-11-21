@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/albertcbrown/ard/internal/repopath"
 )
 
 var (
@@ -23,7 +25,7 @@ func (j Job) Validate() error {
 	switch {
 	case !idRE.MatchString(j.ID):
 		return bad("id %q", j.ID)
-	case strings.Count(j.Repo, "/") != 1 || strings.HasPrefix(j.Repo, "/") || strings.HasSuffix(j.Repo, "/") || strings.Contains(j.Repo, ".."):
+	case !validRepo(j.Repo):
 		return bad("repo %q", j.Repo)
 	case j.Issue < 0:
 		return bad("issue %d", j.Issue)
@@ -52,6 +54,11 @@ func (j Job) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validRepo(repo string) bool {
+	_, _, err := repopath.Parts(repo)
+	return err == nil
 }
 
 // CheckInputPath rejects absolute paths, "..", and anything under .git.

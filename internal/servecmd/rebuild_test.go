@@ -153,7 +153,11 @@ func TestRebuildStateRefusesWhileServeRuns(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := scannerRepo(t)
 	home, _ := os.UserHomeDir()
-	leader, err := controller.AcquireLeader(controller.LockPath(home, "o", "r"))
+	lp, err := controller.LockPath(home, "o", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader, err := controller.AcquireLeader(lp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,4 +196,21 @@ func TestDefaultLoopsIncludeTheScannersLoop(t *testing.T) {
 		t.Error("the scanners loop must set its own tick timeout")
 	}
 	w.closeAll() // nothing was built lazily, so nothing to close
+}
+
+func TestRebuildStateRefusesLegacyStateDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := scannerRepo(t)
+	home, _ := os.UserHomeDir()
+	p := filepath.Join(home, ".ard", "state", "o-r", "_controller.db")
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := rebuildState(context.Background(), rebuildEnv(t, cfg, false, &bytes.Buffer{}), "cve", readerFor(fake.New()))
+	if !errors.Is(err, state.ErrLegacyDir) {
+		t.Errorf("err = %v", err)
+	}
 }

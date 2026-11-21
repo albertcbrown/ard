@@ -4,28 +4,43 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/albertcbrown/ard/internal/repopath"
 )
 
-// repoSlug turns "owner/repo" into "owner-repo", matching the state dir name.
-func repoSlug(repo string) string { return strings.ReplaceAll(repo, "/", "-") }
+// repoDir is <root>/<kind>/<owner>/<repo>, lowercased and validated.
+func (l *Local) repoDir(kind, repo string) (string, error) {
+	return repopath.Join(filepath.Join(l.root, kind), repo)
+}
 
 // WorktreePath is where a job's worktree lives.
-func (l *Local) WorktreePath(repo, jobID string) string {
-	return filepath.Join(l.root, "work", repoSlug(repo), jobID)
+func (l *Local) WorktreePath(repo, jobID string) (string, error) {
+	d, err := l.repoDir("work", repo)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, jobID), nil
 }
 
-func (l *Local) homePath(repo, jobID string) string {
-	return filepath.Join(l.root, "work", repoSlug(repo), jobID+".home")
+func (l *Local) homePath(repo, jobID string) (string, error) {
+	d, err := l.repoDir("work", repo)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, jobID+".home"), nil
 }
 
-func (l *Local) logDir(repo string, issue int) string {
+func (l *Local) logDir(repo string, issue int) (string, error) {
 	seg := "noissue"
 	if issue > 0 {
 		seg = strconv.Itoa(issue)
 	}
-	return filepath.Join(l.root, "logs", repoSlug(repo), seg)
+	d, err := l.repoDir("logs", repo)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, seg), nil
 }
 
 // LogBase is the log file basename (no extension), e.g.

@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/executor/local"
+	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/repopath"
 	"github.com/albertcbrown/ard/internal/scanner"
 )
 
@@ -62,9 +63,12 @@ func (l *lazyCommitter) get(ctx context.Context) (*committer.Committer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identify github user: %w", err)
 	}
-	slug := strings.ToLower(l.w.Repo.Owner + "-" + l.w.Repo.Name)
+	workDir, err := repoWorkDir(l.w.Home, l.w.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("start committer: %w", err)
+	}
 	c, err := committer.NewMain(ctx, committer.Config{
-		RepoDir: l.w.Root, WorkDir: filepath.Join(l.w.Home, ".ard", "work", slug),
+		RepoDir: l.w.Root, WorkDir: workDir,
 		RemoteURL: l.remote, Bot: id, Token: l.w.Token, Log: l.w.Log,
 	}, l.w.Effects, l.g)
 	if err != nil {
@@ -72,6 +76,12 @@ func (l *lazyCommitter) get(ctx context.Context) (*committer.Committer, error) {
 	}
 	l.c = c
 	return c, nil
+}
+
+// repoWorkDir is ~/.ard/work/<owner>/<repo>, shared with the local executor's
+// job worktrees (job IDs can never collide with the committer's lane names).
+func repoWorkDir(home string, r github.Repo) (string, error) {
+	return repopath.Join(filepath.Join(home, ".ard", "work"), r.String())
 }
 
 // Commit implements scanner.Committer.

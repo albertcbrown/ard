@@ -11,7 +11,9 @@ var ErrLeaderHeld = errors.New("another ard serve holds the leader lock")
 type Leader struct{}
 
 // LockPath is unsupported on this platform.
-func LockPath(home, owner, repo string) string { return "" }
+func LockPath(home, owner, repo string) (string, error) {
+	return "", errors.New("leader lock: unsupported platform")
+}
 
 // AcquireLeader is unsupported on this platform.
 func AcquireLeader(string) (*Leader, error) {
