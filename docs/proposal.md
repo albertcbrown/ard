@@ -126,7 +126,7 @@ Short summary of what was done.
 
 **One writer location per issue directory at a time.** Until the worker branch exists, `main` owns `.ard/<issue#>/`; scanners and triage write there. Once the branch is cut, the branch owns it; workers and reviewers commit to the PR, and a scanner with new findings comments on the issue instead. This keeps the PR merge free of conflicts in `.ard/`.
 
-**One committer for main.** Close-outs never push. They hand a file set to the controller's committer, which keeps its own clean worktree of `main`, commits as `ard[bot]` with `ard(<stage>:<role>): #<issue> <summary> [skip ci]`, rebases, pushes, and retries up to 3 times. It refuses any change outside the `.ard/<issue#>/` directories. Because the bot must bypass branch protection on `main`, a CI check also alerts if a bot commit on `main` touches any other path.
+**One committer for main.** Close-outs never push. They hand a file set to the controller's committer, which keeps its own clean worktree of `main`, commits as `ard[bot]` with `ard(<stage>:<role>): #<issue> <summary> [skip ci]`, re-applies its snapshot on the fetched head, pushes with a lease, and retries up to 3 times (re-applying the whole-file snapshot is the rebase; if upstream changed one of its paths the request fails with a conflict instead of overwriting). A replay of an unchanged tree is a no-op that returns the upstream head. It refuses any change outside the `.ard/<issue#>/` directories. Because the bot must bypass branch protection on `main`, a CI check also alerts if a bot commit on `main` touches any other path.
 
 **Directories outlive their issues as the audit trail.** A monthly janitor deletes `.ard/<issue#>/` for issues closed more than 90 days ago; git history keeps them.
 
@@ -255,7 +255,7 @@ Reviewers run like workers against a PR instead of an issue: they read the chang
 2. **Pin the head SHA** and make a worktree there, so the review describes exactly one commit even if the branch moves.
 3. **Run the agent** with `.ard/reviewers/<role>/prompt.txt`, the diff against the merge base, `issue.md`, `plan.md`, the worker log, and the sidecar (security policy, license allowlist). In round 2 and later it also gets its previous findings and must say which are resolved.
 4. **The agent writes `<role>.md`** with `verdict: approve | changes` and findings as `file:line`, severity, blocking or not.
-5. **Close-out.** The controller posts the findings as one PR review with inline comments, commits `<role>.md` and the run's redacted output to the PR branch through the per-branch committer (`[skip ci]`), and swaps `:running` for `:done` or `:changes`.
+5. **Close-out.** The controller posts the findings as one PR review with inline comments, commits `<role>.md` and the run's redacted output to the PR branch through the per-branch committer (no `[skip ci]`: PR-branch commits always run CI so required checks report on the head), and swaps `:running` for `:done` or `:changes`.
 
 **The label is the gate, not GitHub's "request changes".** A bot's request-changes review blocks merge until someone dismisses it, even after the fix. Reviews post as comments; `ard:review:<role>:changes` is what sends the PR back to the worker.
 
