@@ -51,3 +51,24 @@ func TestWarnHost(t *testing.T) {
 		})
 	}
 }
+
+func TestWarnIntakeOncePerValue(t *testing.T) {
+	var logs bytes.Buffer
+	c := &cfgLoader{log: slog.New(slog.NewTextHandler(&logs, nil))}
+	cfg := func(m config.IntakeMode, l string) *config.Resolved {
+		return &config.Resolved{Intake: config.Intake{Mode: m, Label: l}}
+	}
+	for _, r := range []*config.Resolved{
+		cfg(config.IntakeLabel, "ard:needs-human"), cfg(config.IntakeLabel, "ard:needs-human"),
+		cfg(config.IntakeLabel, "ard:hold"), cfg(config.IntakeLabel, "ard:intake"),
+		cfg(config.IntakeLabel, ""), cfg(config.IntakeAll, "ard:pause"),
+	} {
+		c.warnIntake(r)
+	}
+	if n := strings.Count(logs.String(), "config.intake_invalid"); n != 2 {
+		t.Errorf("%d warnings, want 2 (one per distinct invalid value):\n%s", n, logs.String())
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("not at error level:\n%s", logs.String())
+	}
+}

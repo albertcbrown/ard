@@ -5,6 +5,7 @@ package configcmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 // Check is the handler behind `ard config check`. It prints the resolved
@@ -33,6 +35,9 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 		return err
 	}
 	if res != nil {
+		if ie := intakeErr(res); ie != nil {
+			loadErr = errors.Join(loadErr, ie)
+		}
 		for _, r := range res.HostUntrusted() {
 			local.WarnHostRole(e.Log, string(r.Kind), r.Name)
 			// Loud: also straight to stderr, whatever --log-level says.
@@ -43,6 +48,17 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 		}
 	}
 	return loadErr
+}
+
+// intakeErr rejects an intake label that is one of ard's own label names.
+func intakeErr(res *config.Resolved) error {
+	if res.Intake.Mode != config.IntakeLabel {
+		return nil
+	}
+	if err := labels.CheckIntake(res.Intake.Label); err != nil {
+		return &config.Error{File: ".ard/config.yaml", Key: "intake.label", Msg: err.Error()}
+	}
+	return nil
 }
 
 // loadRef loads the config at ref in root. err is a failure to resolve or

@@ -12,6 +12,7 @@ import (
 	"github.com/albertcbrown/ard/internal/configsrc"
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 // maxConfigErrorBytes caps the error text posted to the status issue.
@@ -38,6 +39,8 @@ type cfgLoader struct {
 	last string // the last error text posted
 	// warned holds the roles already warned about as host-mode, by kind/name.
 	warned map[string]bool
+	// badIntake holds the invalid intake labels already logged.
+	badIntake map[string]bool
 }
 
 func (c *cfgLoader) Load(ctx context.Context) (*config.Resolved, error) {
@@ -50,6 +53,7 @@ func (c *cfgLoader) Load(ctx context.Context) (*config.Resolved, error) {
 	c.last = ""
 	c.mu.Unlock()
 	c.warnHost(res)
+	c.warnIntake(res)
 	return res, nil
 }
 
@@ -73,6 +77,28 @@ func (c *cfgLoader) warnHost(res *config.Resolved) {
 			fmt.Fprint(c.stderr, local.HostRoleText(string(r.Kind), r.Name))
 		}
 	}
+}
+
+// warnIntake logs config.intake_invalid once per distinct invalid intake
+// label. The config still loads: intake.Admit skips every issue instead.
+func (c *cfgLoader) warnIntake(res *config.Resolved) {
+	if res.Intake.Mode != config.IntakeLabel {
+		return
+	}
+	err := labels.CheckIntake(res.Intake.Label)
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.badIntake[res.Intake.Label] {
+		return
+	}
+	if c.badIntake == nil {
+		c.badIntake = map[string]bool{}
+	}
+	c.badIntake[res.Intake.Label] = true
+	c.log.Error("config.intake_invalid", "key", "intake.label", "label", res.Intake.Label, "error", err)
 }
 
 func (c *cfgLoader) report(ctx context.Context, err error) {

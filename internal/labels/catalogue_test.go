@@ -79,6 +79,112 @@ func TestDesiredInvariants(t *testing.T) {
 			t.Errorf("Parse(%q) failed: Desired emits a name Parse rejects", l.Name)
 		}
 	}
+	// The same checks with a custom intake label. It is the one name Parse
+	// does not know, so skip the round-trip for it only.
+	sp := exampleSpec
+	sp.Intake = "ard:intake"
+	got, err = Desired(sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range got {
+		if !hex.MatchString(l.Color) {
+			t.Errorf("%s: colour %q", l.Name, l.Color)
+		}
+		if l.Description == "" || strings.Contains(l.Description, "%") || len(l.Description) > maxDescLen {
+			t.Errorf("%s: description %q", l.Name, l.Description)
+		}
+		if l.Name == sp.Intake {
+			continue
+		}
+		if _, ok := Parse(l.Name); !ok {
+			t.Errorf("Parse(%q) failed: Desired emits a name Parse rejects", l.Name)
+		}
+	}
+}
+
+func TestDesiredIntake(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     Spec
+		wantName string // "" = no extra label
+		wantLen  int
+		wantErr  []string
+		noErr    string // must not appear in the error
+	}{
+		{name: "default", spec: Spec{}, wantLen: 9},
+		{name: "pending", spec: Spec{Intake: "ard:pending"}, wantLen: 9},
+		{name: "pending upper", spec: Spec{Intake: "ARD:PENDING"}, wantLen: 9},
+		{name: "custom", spec: Spec{Intake: "ard:intake"}, wantName: "ard:intake", wantLen: 10},
+		{name: "clash static", spec: Spec{Intake: "ard:needs-human"}, wantErr: []string{"intake.label", "uses itself"}, noErr: "duplicate"},
+		{name: "clash stage", spec: Spec{Intake: "ard:worker:engineer", Workers: []string{"engineer"}}, wantErr: []string{"intake.label"}, noErr: "duplicate"},
+		{name: "clash and bad role", spec: Spec{Intake: "ard:needs-human", Workers: []string{"Foo"}}, wantErr: []string{"intake.label", `worker "Foo"`}},
+		{name: "too long", spec: Spec{Intake: "ard:" + strings.Repeat("a", 47)}, wantErr: []string{"intake.label: label"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Desired(tt.spec)
+			if len(tt.wantErr) > 0 {
+				if err == nil {
+					t.Fatalf("want error containing %q, got none", tt.wantErr)
+				}
+				for _, w := range tt.wantErr {
+					if !strings.Contains(err.Error(), w) {
+						t.Errorf("err = %v, want containing %q", err, w)
+					}
+				}
+				if tt.noErr != "" && strings.Contains(err.Error(), tt.noErr) {
+					t.Errorf("err = %v, must not contain %q", err, tt.noErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != tt.wantLen {
+				t.Errorf("len = %d, want %d", len(got), tt.wantLen)
+			}
+			for i := 1; i < len(got); i++ {
+				if got[i-1].Name >= got[i].Name {
+					t.Errorf("not sorted at %d", i)
+				}
+			}
+			if tt.wantName == "" {
+				return
+			}
+			found := false
+			for _, l := range got {
+				if l.Name == tt.wantName {
+					found = true
+					if l.Color != "ededed" || l.Description != intakeStyle.desc {
+						t.Errorf("intake label = %+v", l)
+					}
+				}
+			}
+			if !found {
+				t.Errorf("%s missing from the catalogue", tt.wantName)
+			}
+		})
+	}
+}
+
+func TestSpecFromIntake(t *testing.T) {
+	tests := []struct{ name, cfg, want string }{
+		{"label mode with label", "intake: {mode: label, label: \"ard:intake\"}\n", "ard:intake"},
+		{"label mode default", "intake: {mode: label}\n", ""},
+		{"all mode", "intake: {mode: all}\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := config.LoadFS(fstest.MapFS{".ard/config.yaml": {Data: []byte(tt.cfg)}}, "/repo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := SpecFrom(res).Intake; got != tt.want {
+				t.Errorf("Intake = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestDesiredLimits(t *testing.T) {
@@ -129,7 +235,7 @@ func TestValidate(t *testing.T) {
 		{"duplicate case-insensitive", []Label{{Name: "ard:hold"}, {Name: "ARD:Hold"}}, "duplicate"},
 	}
 	for _, tt := range tests {
-		err := validate(tt.in)
+		err := validate(tt.in, "")
 		switch {
 		case tt.wantErr == "" && err != nil:
 			t.Errorf("%s: %v", tt.name, err)

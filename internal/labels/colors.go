@@ -38,6 +38,14 @@ var staticStyles = map[string]style{
 	Pause:          {"5c5c5c", "ard: on the status issue, stops all new claims"},
 }
 
+// intakeStyle is the custom intake label's style. It shares ard:pending's
+// colour because both mean "ready for triage".
+var intakeStyle = style{"ededed", "ard: intake label; a maintainer adds it to admit the issue to triage"}
+
+func intakeLabel(name string) Label {
+	return Label{Name: name, Color: intakeStyle.color, Description: intakeStyle.desc}
+}
+
 func roleLabel(s Stage, role string, st State) Label {
 	sty := roleStyles[s][st]
 	return Label{Name: Name(s, role, st), Color: sty.color, Description: fmt.Sprintf(sty.desc, role)}
