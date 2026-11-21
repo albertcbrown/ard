@@ -14,6 +14,8 @@ func TestCommitPath(t *testing.T) {
 	}{
 		{12, "/x/worker-engineer-20261121T101500Z.log", ".ard/12/logs/worker-engineer-20261121T101500Z.log", false},
 		{3, "/h/review-security-review-20261121T101500Z.log", ".ard/3/logs/review-security-review-20261121T101500Z.log", false},
+		{12, "/x/worker-engineer-20261121T101500.123Z.log", ".ard/12/logs/worker-engineer-20261121T101500.123Z.log", false},
+		{1, "/x/worker-engineer-20261121T101500.12Z.log", "", true},
 		{0, "/x/a.log", "", true},
 		{-1, "/x/a.log", "", true},
 		{1, "", "", true},

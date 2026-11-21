@@ -19,7 +19,7 @@ func (s *Secrets) stream(ctx context.Context, r io.Reader, w io.Writer, chunk in
 	counts := map[string]int{}
 	var total int64
 	buf := make([]byte, s.maxLen+chunk)
-	have := 0 // carried bytes at the start of buf; always < maxLen
+	have := 0 // carried bytes at the start of buf; ≤ maxLen-1
 	eof := false
 	spanOpen := false // a redacted span (marker already written) continues into b
 	spanRem := 0      // its end, as an offset into b, while spanOpen
