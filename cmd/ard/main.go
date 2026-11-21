@@ -8,6 +8,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/configcmd"
+	"github.com/albertcbrown/ard/internal/labels/labelsync"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -26,5 +27,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 func handlers() cli.Handlers {
 	return cli.Handlers{
 		ConfigCheck: configcmd.Check,
+		LabelsSync:  labelsync.Command,
 	}
 }

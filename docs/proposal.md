@@ -78,7 +78,7 @@ stateDiagram-v2
 | `ard:needs-approval` | Merger | PR touches a protected path; merges after a human approves |
 | `ard:hold` | Human | Controller ignores this issue or PR entirely |
 
-Four more labels sit outside the grammar: `ard:approved` (human go-ahead before a worker starts), `ard:tests:failed` (worker could not get tests green), `ard:keep` (hold failed-job resources past 24 h) and `ard:pause` (on the pinned status issue, stops all new claims).
+Four more labels sit outside the grammar: `ard:approved` (human go-ahead before a worker starts), `ard:tests:failed` (worker could not get tests green), `ard:keep` (hold failed-job resources past 24 h) and `ard:pause` (on the pinned status issue, stops all new claims). `ard labels sync` creates and updates the full set from the resolved config, idempotently, and never deletes a label: stale `ard:` labels are only reported. `--repo owner/name` names the repository; when omitted, it is read from the `origin` remote. Role names are at most 31 characters and scanner names at most 38, because GitHub caps a label at 50 characters.
 
 **One query per role per poll.** For example: `is:open label:"ard:triage:architect" -label:"ard:triage:architect:running" -label:"ard:triage:architect:done" -label:ard:executor:failed -label:ard:needs-human -label:ard:hold`. Six triage roles every 15 minutes, plus four reviewers, a worker and the merger every 5, is about 100 searches an hour, well under GitHub's limits.
 
