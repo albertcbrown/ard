@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"s","model":"claude-test","claude_code_version":"2.1.328","tools":["Read"],"mcp_servers":[]}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795000000,"rateLimitType":"five_hour"},"uuid":"u1","session_id":"s"}
+{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your session limit · resets 3:45pm"}]},"session_id":"s"}
+{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"terminal_reason":"api_error","duration_ms":900,"num_turns":1,"total_cost_usd":0,"session_id":"s","result":"You've hit your session limit · resets 3:45pm"}

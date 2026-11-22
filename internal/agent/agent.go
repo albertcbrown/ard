@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Stage words match the label stage of ard:<stage>:<role>.
@@ -59,6 +60,45 @@ type Command struct {
 	PassEnv []string          // names of secrets the caller supplies from its credential store
 }
 
+// LimitScope is which subscription limit a run hit, in the CLI's own words.
+type LimitScope string
+
+// The scopes. Session and weekly limits cover the whole account; a model
+// limit covers one model family.
+const (
+	ScopeUnknown LimitScope = ""        // a limit signal with no scope
+	ScopeSession LimitScope = "session" // the rolling session (5-hour) window
+	ScopeWeekly  LimitScope = "weekly"
+	ScopeModel   LimitScope = "model" // one model family; LimitHit.Family says which
+)
+
+// LimitSignal is the strongest evidence of a limit the stream held.
+type LimitSignal string
+
+// The signals, strongest first.
+const (
+	SignalRateLimitEvent LimitSignal = "rate_limit_event" // rate_limit_event with status "rejected"
+	SignalLimitMessage   LimitSignal = "limit_message"    // CLI error text "You've hit your ... limit" on a CLI-synthesised error
+	SignalRateLimitError LimitSignal = "rate_limit_error" // api_retry or assistant error rate_limit/billing_error, or a final 429
+)
+
+// LimitHit says the run met a usage or rate limit. Consumers act on it only
+// when !Result.OK: a run that saw a rejection and then succeeded keeps it.
+type LimitHit struct {
+	Scope    LimitScope
+	Family   string    // "opus" | "sonnet" | "" (whole account or unknown)
+	ResetsAt time.Time // UTC; zero when the stream gave no machine-readable reset
+	Signal   LimitSignal
+}
+
+// Usage is token counts. Missing or null fields count as 0.
+type Usage struct{ Input, Output, CacheWrite, CacheRead int64 }
+
+// Add returns the field-wise sum.
+func (u Usage) Add(o Usage) Usage {
+	return Usage{u.Input + o.Input, u.Output + o.Output, u.CacheWrite + o.CacheWrite, u.CacheRead + o.CacheRead}
+}
+
 // Result is what a finished run reported.
 type Result struct {
 	OK                bool // ExitCode == 0 && result event present && !is_error && subtype == "success"
@@ -78,6 +118,17 @@ type Result struct {
 	// Unredacted: log only, never post or prompt with it.
 	Summary      string
 	SkippedLines int // malformed or overlong lines ignored
+	// LimitHit is set when the stream held a usage or rate limit signal. nil
+	// means none. It is also set with ErrNoResult: a job killed while it waited
+	// on a limit has api_retry lines and no result.
+	LimitHit *LimitHit
+	// ModelUsage is result.modelUsage by model id: the whole run, including
+	// subagents and compaction. nil when absent.
+	ModelUsage map[string]Usage
+	// Usage is the run's token total: the sum of ModelUsage when that is
+	// present (the docs prefer it for accounting), otherwise result.usage,
+	// which covers the main loop only. nil when the result had neither.
+	Usage *Usage
 }
 
 // Transient reports whether a failed run looks worth one automatic retry.
