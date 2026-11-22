@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/albertcbrown/ard/internal/agent"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/labels"
@@ -70,8 +71,8 @@ func TestLeadPromptShape(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"role: lead", "attempt: 1", "never triage:lead", "UNTRUSTED", ".ard/N/triage-lead.md",
-		".ard-input/N/issue.md", ".ard-input/N/comments.md", "git push", "gh", "verdict", ".ard/workers/",
+		"role: lead", "attempt: 1", "never triage:lead", "UNTRUSTED", strings.Replace(agent.RoleFilePath(7, "triage", "lead"), "/7/", "/N/", 1),
+		".ard-input/N/issue.md", ".ard-input/N/comments.md", "git push", "gh or any other command", "verdict", ".ard/workers/",
 	} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("prompt lacks %q", want)
@@ -138,18 +139,28 @@ func TestLeadPromptExamples(t *testing.T) {
 // The prompt warns against each of these; the parser must really reject them.
 func TestLeadContractTraps(t *testing.T) {
 	const body = "Routing decision.\n"
-	tests := []struct{ name, file string }{
-		{"scalar next", "---\nrole: lead\nstatus: done\nattempt: 1\nnext: triage:engineer\nworker: engineer\n---\n" + body},
-		{"verdict", "---\nrole: lead\nstatus: done\nattempt: 1\nverdict: approve\nworker: engineer\n---\n" + body},
-		{"extra key", "---\nrole: lead\nstatus: done\nattempt: 1\nrouting: x\nworker: engineer\n---\n" + body},
-		{"quoted attempt", "---\nrole: lead\nstatus: done\nattempt: \"1\"\nworker: engineer\n---\n" + body},
-		{"wrong role", "---\nrole: triage/lead\nstatus: done\nattempt: 1\nworker: engineer\n---\n" + body},
-		{"empty body", "---\nrole: lead\nstatus: done\nattempt: 1\nworker: engineer\n---\n"},
-		{"leading blank line", "\n---\nrole: lead\nstatus: done\nattempt: 1\nworker: engineer\n---\n" + body},
+	tests := []struct {
+		name, file string
+		wantOK     bool
+	}{
+		{"valid", "---\nrole: lead\nstatus: done\nattempt: 1\nworker: engineer\n---\n" + body, true},
+		{"scalar next", "---\nrole: lead\nstatus: done\nattempt: 1\nnext: triage:engineer\nworker: engineer\n---\n" + body, false},
+		{"verdict", "---\nrole: lead\nstatus: done\nattempt: 1\nverdict: approve\nworker: engineer\n---\n" + body, false},
+		{"extra key", "---\nrole: lead\nstatus: done\nattempt: 1\nrouting: x\nworker: engineer\n---\n" + body, false},
+		{"quoted attempt", "---\nrole: lead\nstatus: done\nattempt: \"1\"\nworker: engineer\n---\n" + body, false},
+		{"wrong role", "---\nrole: triage/lead\nstatus: done\nattempt: 1\nworker: engineer\n---\n" + body, false},
+		{"empty body", "---\nrole: lead\nstatus: done\nattempt: 1\nworker: engineer\n---\n", false},
+		{"leading blank line", "\n---\nrole: lead\nstatus: done\nattempt: 1\nworker: engineer\n---\n" + body, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rf, err := closeout.Parse([]byte(tc.file))
+			if tc.wantOK {
+				if err != nil || rf.Role != "lead" || rf.Verdict != "" {
+					t.Fatalf("control did not parse cleanly: %+v, %v", rf, err)
+				}
+				return
+			}
 			if err != nil {
 				return
 			}

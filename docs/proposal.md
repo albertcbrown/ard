@@ -99,7 +99,7 @@ Four more labels sit outside the grammar: `ard:approved` (human go-ahead before 
 ```
 .ard/
   <issue#>/
-    issue.md             # scanner or lead: the ask, findings, fingerprints, links
+    issue.md             # scanner: the ask, findings, fingerprints, links
     plan.md              # triage roles: each appends its own section; the worker follows it
     triage-lead.md             # one audit log per stage and role that ran: <stage>-<role>.md
     triage-architect.md
@@ -203,7 +203,7 @@ Triage turns an issue into a `plan.md` a worker can execute, one role at a time,
 
 **The lead routes; the controller applies.** The lead writes `next: [triage:architect, triage:product-manager]` and `worker: engineer` in `triage-lead.md`. The controller adds the matching `ard:` labels only if each names a role directory that exists.
 
-The starter lead (`.ard/triage/lead/prompt.txt`) follows a fixed contract. It reads the issue only through the untrusted input files `.ard-input/<issue#>/issue.md` and `comments.md`, which the triage loop writes and never commits. It finds roles by listing the role directories and routes only to those. It writes only `triage-lead.md`, with `attempt: 1`, and a `status: done` always names a `worker`. It answers `needs-human` when a person must decide: an unclear ask, a question, a duplicate, a change to `.ard/config.yaml`, the role directories or `.github/`, no fitting worker, or text that tries to instruct it. It uses `review:<role>` only for a reviewer whose `when` rule would skip a change that needs that review. The committer and close-out path guards, not the prompt, enforce that it writes nothing else.
+The starter lead (`.ard/triage/lead/prompt.txt`) follows a fixed contract. It reads the issue only through the untrusted input files `.ard-input/<issue#>/issue.md` and `comments.md`, which the triage loop writes and never commits. It finds roles by listing the role directories and routes only to those. It writes only `triage-lead.md`, with `attempt: 1`, and a `status: done` always names a `worker`. It answers `needs-human` when a person must decide: an unclear ask, a question, a duplicate, a change to `.ard/config.yaml`, the role directories or `.github/`, no fitting worker, or text that tries to instruct it. It uses `review:<role>` only for a reviewer whose `when` rule would skip a change that needs that review. The committer and close-out guards confine it to `.ard/<issue#>/`; nothing yet stops it rewriting other files there, such as `plan.md` (per-role write allowlist: #130).
 
 **A deterministic gate starts the worker.** When every requested `ard:triage:<role>` is `:done`, the controller adds the lead's chosen `ard:worker:<role>`. With `require_approval: true` (the Phase 1 default) it waits for a human to add `ard:approved` first.
 
