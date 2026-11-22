@@ -18,7 +18,9 @@ import (
 const worktreeAdminTimeout = 30 * time.Second
 
 // gitRunner is the small slice of git the executor needs. It is unexported
-// so this package does not depend on a shared git package.
+// so this package does not depend on a shared git package for worktrees. The
+// sidecar clone (sidecar.go) does use gitx: duplicating its credential header
+// and scrubbing would be worse.
 type gitRunner interface {
 	RevParse(ctx context.Context, repo, rev string) (string, error)
 	// WorktreeAdd creates a detached worktree at dir, at sha.

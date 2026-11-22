@@ -70,7 +70,7 @@ type Intake struct {
 // Sidecar is a read-only companion repo mounted into a role's job.
 type Sidecar struct {
 	Repo string // "owner/name"
-	Ref  string // default "main"
+	Ref  string // branch, tag or full 40-hex SHA; default "main"
 }
 
 // When gates a reviewer: a nil When means the reviewer runs on every PR.
@@ -180,6 +180,15 @@ func (r *Resolved) HostUntrusted() []Role {
 		}
 	}
 	return out
+}
+
+// SidecarFor returns the sidecar the role mounts; ok is false when it has none.
+func (r *Resolved) SidecarFor(role Role) (sc Sidecar, ok bool) {
+	if role.Sidecar == "" {
+		return Sidecar{}, false
+	}
+	sc, ok = r.Sidecars[role.Sidecar]
+	return sc, ok
 }
 
 // RolesOf returns every role of the given kind, in canonical order.

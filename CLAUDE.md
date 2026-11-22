@@ -59,6 +59,7 @@ internal/reaper/    the Reaper loop (failed-job detection, retention, :running w
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
+internal/gitref/    ref-name checks shared by config and executor; leaf, stdlib only
 internal/repopath/  owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
 internal/initcmd/   ard init: proposes the starter .ard/ as a PR on ard-init
 internal/roles/     starter .ard/ tree (config.yaml, role dirs) embedded for ard init

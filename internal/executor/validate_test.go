@@ -2,6 +2,7 @@ package executor
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,6 +35,14 @@ func TestValidate(t *testing.T) {
 		{"abs input", func(j *Job) { j.Inputs = []File{{Path: "/etc/x"}} }, false},
 		{"dotdot input", func(j *Job) { j.Inputs = []File{{Path: "a/../../x"}} }, false},
 		{"git input", func(j *Job) { j.Inputs = []File{{Path: ".git/config"}} }, false},
+		{"valid sidecar", func(j *Job) { j.Sidecar = Sidecar{Repo: "acme/specs", Ref: "main"} }, true},
+		{"sidecar sha ref", func(j *Job) { j.Sidecar = Sidecar{Repo: "acme/specs", Ref: strings.Repeat("ab", 20)} }, true},
+		{"bad sidecar repo", func(j *Job) { j.Sidecar = Sidecar{Repo: "specs", Ref: "main"} }, false},
+		{"sidecar ref colon", func(j *Job) { j.Sidecar = Sidecar{Repo: "a/b", Ref: "a:b"} }, false},
+		{"sidecar ref dash", func(j *Job) { j.Sidecar = Sidecar{Repo: "a/b", Ref: "-x"} }, false},
+		{"sidecar ref empty", func(j *Job) { j.Sidecar = Sidecar{Repo: "a/b"} }, false},
+		{"sidecar ref without repo", func(j *Job) { j.Sidecar = Sidecar{Ref: "main"} }, false},
+		{"zero sidecar", func(j *Job) { j.Sidecar = Sidecar{} }, true},
 		{"ok input", func(j *Job) { j.Inputs = []File{{Path: ".ard/1/issue.md"}} }, true},
 	}
 	for _, tc := range tests {

@@ -307,7 +307,7 @@ func (w *wiring) newExecutor() (*local.Local, error) {
 		return w.exec, nil
 	}
 	ex, err := local.New(local.Options{
-		Root: filepath.Join(w.Home, ".ard"), Log: w.Log,
+		Root: filepath.Join(w.Home, ".ard"), Log: w.Log, SidecarToken: w.Token,
 		OnHostUntrusted: recordHostUntrusted(w.Store),
 	})
 	if err != nil {

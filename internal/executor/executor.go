@@ -37,7 +37,7 @@ type Job struct {
 	Ref        string        // commit-ish resolved in RepoDir; the worktree is detached at it
 	RoleDir    string        // abs host path of the role directory
 	Dockerfile string        // abs host path; "" = host subprocess
-	SidecarDir string        // abs host path; "" = none
+	Sidecar    Sidecar       // zero = none; the executor clones, pins and mounts it read-only
 	ReadOnly   bool          // worktree read-only: Docker mounts :ro, host chmod -R a-w after Prepare
 	Inputs     []File        // written into the worktree by Prepare
 	Timeout    time.Duration // > 0
@@ -45,6 +45,12 @@ type Job struct {
 	// scanner); only valid with Stage "scanner". The zero value means it
 	// does, so a builder that forgets the field gets the host-mode warning.
 	TrustedInput bool
+}
+
+// Sidecar is a read-only companion repo the executor clones for the job.
+type Sidecar struct {
+	Repo string // "owner/name"
+	Ref  string // branch, tag or full 40-hex SHA (gitref.Check)
 }
 
 // File is a worktree-relative file written 0644 by Prepare.
@@ -89,8 +95,10 @@ type Handle struct {
 	StartedAt, Deadline time.Time
 	ReadOnly            bool
 	Timeout             time.Duration
-	RoleDir, SidecarDir string // host paths
-	TrustedInput        bool   // copied from Job by Prepare
+	RoleDir, SidecarDir string  // host paths; SidecarDir is the executor's output (<Home>/sidecar), "" = none
+	Sidecar             Sidecar // copied from Job; zero on a handle stored before sidecars
+	SidecarSHA          string  // the commit the job sees; "" = no sidecar
+	TrustedInput        bool    // copied from Job by Prepare
 }
 
 // State is the lifecycle state of a job.
