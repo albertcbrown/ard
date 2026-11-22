@@ -170,3 +170,25 @@ func TestLeadContractTraps(t *testing.T) {
 		})
 	}
 }
+
+// The lead's examples must name a worker the starter tree really has.
+func TestLeadExamplesNameAStarterWorker(t *testing.T) {
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
+	if err != nil {
+		t.Fatalf("LoadFS: %v", err)
+	}
+	b, err := FS.ReadFile(leadPromptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := closeout.Job{ID: "j", Issue: 7, Stage: closeout.StageTriage, Role: "lead", Attempt: 1}
+	for i, blk := range fencedFrontmatter(string(b)) {
+		rf, err := closeout.Parse([]byte(blk))
+		if err != nil || rf.Worker == "" {
+			continue
+		}
+		if p := closeout.Build(job, rf, res); p.Worker != rf.Worker {
+			t.Errorf("example %d: worker %q resolved to %q against the starter tree", i, rf.Worker, p.Worker)
+		}
+	}
+}
