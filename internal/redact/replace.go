@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 )
 
 const defaultChunk = 64 << 10
@@ -127,4 +128,28 @@ func (s *Secrets) spanEnd(b []byte, from, e int, eof bool) (end, wait int, ok bo
 		}
 	}
 	return e, 0, true
+}
+
+// Names returns the names of the known secret values (in any variant) that
+// occur in b, sorted and de-duplicated. It never returns the values, and it
+// does not rewrite b.
+func (s *Secrets) Names(b []byte) []string {
+	if s == nil || len(s.variants) == 0 {
+		return nil
+	}
+	found := map[string]bool{}
+	for i := range b {
+		if len(s.byFirst[b[i]]) == 0 {
+			continue
+		}
+		if w := s.matchAt(b, i); w != nil {
+			found[w.name] = true
+		}
+	}
+	out := make([]string, 0, len(found))
+	for n := range found {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }

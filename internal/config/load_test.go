@@ -548,6 +548,24 @@ func TestLoadErrors(t *testing.T) {
 			want: []wantErr{{".ard/scanners/Bad_Name", "", "invalid role name"}},
 		},
 		{
+			name: "worker name with a trailing number",
+			fs: func() fstest.MapFS {
+				fsys := baseFS()
+				fsys[".ard/workers/eng-12/prompt.txt"] = &fstest.MapFile{Data: []byte("x"), Mode: 0o644}
+				return fsys
+			}(),
+			want: []wantErr{{".ard/workers/eng-12", "", "worker role name must not contain an all-digit segment"}},
+		},
+		{
+			name: "worker name with a middle number",
+			fs: func() fstest.MapFS {
+				fsys := baseFS()
+				fsys[".ard/workers/eng-12-x/prompt.txt"] = &fstest.MapFile{Data: []byte("x"), Mode: 0o644}
+				return fsys
+			}(),
+			want: []wantErr{{".ard/workers/eng-12-x", "", "worker role name must not contain an all-digit segment"}},
+		},
+		{
 			name: "unknown interval key",
 			yaml: "intervals: {scannerz: 4h}\n",
 			want: []wantErr{{".ard/config.yaml", "intervals.scannerz", "unknown key"}},
@@ -719,5 +737,24 @@ func TestSidecarSHARefAndFor(t *testing.T) {
 		if !ok && sc != (Sidecar{}) {
 			t.Errorf("%s: sidecar = %+v, want zero", tc.name, sc)
 		}
+	}
+}
+
+func TestWorkerNamesWithDigits(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"eng2": true, "v2-eng": true, "engineer": true, "eng-12": false, "eng-12-x": false, "12-eng": false,
+	} {
+		fsys := baseFS()
+		fsys[".ard/workers/"+name+"/prompt.txt"] = &fstest.MapFile{Data: []byte("x"), Mode: 0o644}
+		_, err := LoadFS(fsys, "/repo")
+		if (err == nil) != ok {
+			t.Errorf("worker %q: err = %v, want ok=%v", name, err, ok)
+		}
+	}
+	// Only workers are affected.
+	fsys := baseFS()
+	fsys[".ard/triage/eng-12/prompt.txt"] = &fstest.MapFile{Data: []byte("x"), Mode: 0o644}
+	if _, err := LoadFS(fsys, "/repo"); err != nil {
+		t.Errorf("triage role eng-12: %v", err)
 	}
 }

@@ -4,9 +4,15 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// digitSegmentRE matches a role name with a hyphen-separated all-digit
+// segment. A worker branch is worker/<role>-<issue#>-<slug>; without this
+// rule `eng` (issue 12) and a role `eng-12-x` could name the same branch.
+var digitSegmentRE = regexp.MustCompile(`(^|-)[0-9]+(-|$)`)
 
 // discover walks the role directories under .ard/{scanners,triage,workers,
 // reviewers} and returns one Role per valid directory, plus an error per
@@ -41,6 +47,10 @@ func discover(fsys fs.FS) ([]Role, Errors) {
 			roleDir := dir + "/" + name
 			if !validRoleName(name) {
 				errs = append(errs, &Error{File: roleDir, Msg: fmt.Sprintf("invalid role name %q (must match %s)", name, roleNamePattern)})
+				continue
+			}
+			if kind == KindWorker && digitSegmentRE.MatchString(name) {
+				errs = append(errs, &Error{File: roleDir, Msg: "worker role name must not contain an all-digit segment (it would make worker/<role>-<issue#>- ambiguous)"})
 				continue
 			}
 			role, ok := inspectRole(fsys, kind, name, roleDir, &errs)

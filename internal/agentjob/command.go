@@ -1,4 +1,4 @@
-package triage
+package agentjob
 
 import (
 	"fmt"

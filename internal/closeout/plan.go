@@ -49,8 +49,10 @@ type Plan struct {
 	Files       []FileRef
 	LogWithheld bool
 	LogPath     string // committed log path when it is in Files
-	Summary     string // redacted role file summary, for the comment
-	RolePath    string // committed role file path, "" when none
+	// ExtraLogPaths are the committed paths of Job.ExtraLogs, in order.
+	ExtraLogPaths []string
+	Summary       string // redacted role file summary, for the comment
+	RolePath      string // committed role file path, "" when none
 
 	// Tail is the last lines of the redacted log, for a failed or retry
 	// comment. It is "" when there is no log, when the log was withheld, or
@@ -85,6 +87,8 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 		p.Outcome = OutcomeChanges
 		p.Terminal = []Label{{n, labels.Changes(j.Role)}}
 		p.Remove = []Label{{n, labels.Done(labels.Stage(j.Stage), j.Role)}, run}
+	case j.Stage == StageWorker:
+		p = buildWorker(j, rf, rs)
 	default:
 		p.Outcome = OutcomeDone
 		p.Terminal = []Label{{n, labels.Done(labels.Stage(j.Stage), j.Role)}}
@@ -166,8 +170,10 @@ func (j Job) validate() error {
 	if j.Stage == StageReview && j.PR == 0 {
 		return fmt.Errorf("closeout job %s: a review needs a PR", j.ID)
 	}
-	if j.Stage != StageTriage && j.Branch == "" {
-		return fmt.Errorf("closeout job %s: a %s job needs a branch", j.ID, j.Stage)
+	// A worker that stops before its first push has no branch: its role file
+	// and log go to main, as triage's do.
+	if j.Stage == StageReview && j.Branch == "" {
+		return fmt.Errorf("closeout job %s: a review job needs a branch", j.ID)
 	}
 	return nil
 }

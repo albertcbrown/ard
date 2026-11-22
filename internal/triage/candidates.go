@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/query"
@@ -36,7 +37,9 @@ func (t *tick) candidates(ctx context.Context) ([]candidate, []error) {
 	}
 	busy := map[int]bool{}
 	for _, j := range running {
-		if j.Stage == stageTriage {
+		// A running worker job is busy too: a re-run of triage would rewrite
+		// plan.md under it.
+		if j.Stage == stageTriage || j.Stage == "worker" {
 			busy[j.Issue] = true
 		}
 	}
@@ -103,7 +106,7 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 	if strings.EqualFold(is.Author, t.self) { // scanner issues: the App rewrites its own bodies
 		return c, true, nil
 	}
-	hash := BodyHash(is)
+	hash := agentjob.BodyHash(is)
 	var stored *state.Admission
 	if a, err := l.d.Store.Admission(ctx, n); err == nil {
 		stored = &a

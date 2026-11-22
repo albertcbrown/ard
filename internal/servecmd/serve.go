@@ -344,7 +344,7 @@ func (w *wiring) Pool() *pool.Pool {
 }
 
 // registerLoops returns the loops to run: the scanners loop (#23), the stale
-// closer (#25), the triage loop (#29) and the Reaper (#37) so far. Loops that
+// closer (#25), the triage loop (#29), the worker loop (#33) and the Reaper (#37) so far. Loops that
 // run jobs build their executor with w.newExecutor(), end jobs through
 // w.finisher() and share w.closer(). The worker, reviewer and merger loops each
 // add one constructor call here. It is a variable so tests can observe wiring.
@@ -355,6 +355,9 @@ var registerLoops = func(w *wiring) []controller.Loop {
 	}
 	loops = append(loops, stale.New(w.Reader, w.Effects, nil))
 	if l := triageLoop(w); l != nil {
+		loops = append(loops, l)
+	}
+	if l := workerLoop(w); l != nil {
 		loops = append(loops, l)
 	}
 	if l := reaperLoop(w); l != nil {

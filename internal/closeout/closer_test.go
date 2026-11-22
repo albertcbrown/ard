@@ -118,6 +118,7 @@ func TestRunWorkerDoneRequestsReviewOnPR(t *testing.T) {
 	e.write(".ard/7/worker-engineer.md", roleFile("engineer", "done", "next: [review:eng-review]"))
 	j := e.claim(StageWorker, "engineer")
 	j.PR = e.pr
+	j.Worker = &WorkerResult{PR: e.pr, Tests: TestsPassed}
 	if _, err := New(e.d).Run(context.Background(), j); err != nil {
 		t.Fatal(err)
 	}
