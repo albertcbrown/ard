@@ -30,7 +30,7 @@ type Label struct {
 // FileRef is one file of the commit set. Staged is the host path of the
 // cleaned bytes; Resume reads only that, never the worktree.
 type FileRef struct {
-	Path   string // repo-relative, slash form: .ard/<n>/<role>.md
+	Path   string // repo-relative, slash form: .ard/<n>/<stage>-<role>.md
 	Staged string
 	Delete bool
 }

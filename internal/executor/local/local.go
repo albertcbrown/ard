@@ -184,6 +184,9 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		return h, fmt.Errorf("add worktree: %w", err)
 	}
 	worktreeAdded = true
+	if err = scrub(wt, j.Scrub); err != nil {
+		return h, err
+	}
 	if len(j.Inputs) > 0 {
 		// os.Root refuses to follow symlinks out of the worktree, so a
 		// committed symlink at an input path cannot redirect the write.
@@ -328,6 +331,25 @@ func (l *Local) Prune(ctx context.Context, olderThan time.Duration) error {
 	}
 	if err != nil {
 		return fmt.Errorf("prune logs: %w", err)
+	}
+	return nil
+}
+
+// scrub removes each path from the worktree. A missing path is fine. os.Root
+// keeps the removal inside the worktree and never follows a final symlink.
+func scrub(wt string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	r, err := os.OpenRoot(wt)
+	if err != nil {
+		return fmt.Errorf("open worktree: %w", err)
+	}
+	defer r.Close()
+	for _, p := range paths {
+		if err := r.Remove(filepath.FromSlash(p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("scrub %s: %w", p, err)
+		}
 	}
 	return nil
 }

@@ -34,6 +34,12 @@ func TestValidate(t *testing.T) {
 		{"abs input", func(j *Job) { j.Inputs = []File{{Path: "/etc/x"}} }, false},
 		{"dotdot input", func(j *Job) { j.Inputs = []File{{Path: "a/../../x"}} }, false},
 		{"git input", func(j *Job) { j.Inputs = []File{{Path: ".git/config"}} }, false},
+		{"scrub role file", func(j *Job) { j.Issue = 7; j.Scrub = []string{".ard/7/worker-dev.md"} }, true},
+		{"scrub without issue", func(j *Job) { j.Scrub = []string{".ard/7/worker-dev.md"} }, false},
+		{"scrub other issue", func(j *Job) { j.Issue = 7; j.Scrub = []string{".ard/8/worker-dev.md"} }, false},
+		{"scrub outside .ard", func(j *Job) { j.Issue = 7; j.Scrub = []string{"README.md"} }, false},
+		{"scrub nested", func(j *Job) { j.Issue = 7; j.Scrub = []string{".ard/7/logs/x.log"} }, false},
+		{"scrub dotdot", func(j *Job) { j.Issue = 7; j.Scrub = []string{".ard/7/../8/x.md"} }, false},
 		{"ok input", func(j *Job) { j.Inputs = []File{{Path: ".ard/1/issue.md"}} }, true},
 	}
 	for _, tc := range tests {

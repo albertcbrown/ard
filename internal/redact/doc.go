@@ -21,7 +21,7 @@
 //   - Treat an error from Log exactly like a hit: commit nothing, add
 //     ard:needs-human, and comment the rule IDs and line numbers, never text.
 //   - Run Redactor.Text on every agent-written file in the commit set
-//     (<role>.md, plan.md, issue.md) and on the summary comment before posting.
+//     (<stage>-<role>.md, plan.md, issue.md) and on the summary comment before posting.
 //   - Never post or commit raw log lines. The reaper's "last 50 log lines"
 //     comment must come from LogResult.RedactedPath.
 //

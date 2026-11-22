@@ -2,7 +2,8 @@
 // commits. It is a library: the loops (Phase 1) call it; there is no CLI.
 //
 // Prepare is the pure half. It reads the job's worktree and host log, parses
-// and validates .ard/<issue#>/<role>.md, collects the changed .ard/<issue#>/
+// and validates .ard/<issue#>/<stage>-<role>.md (trusted only if the job wrote
+// it: the executor scrubs a stale one before the agent runs), collects the changed .ard/<issue#>/
 // files, redacts and secret-scans every one, stages the cleaned bytes under
 // Deps.StagingDir and returns a Record holding the Plan. Closer is the
 // effectful half. It runs the plan in a fixed order (commit, request labels,

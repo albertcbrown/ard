@@ -601,3 +601,37 @@ func TestCleanupRunsWhenCancelled(t *testing.T) {
 		t.Errorf("%d worktrees, want 1", n)
 	}
 }
+
+func TestScrubRemovesCommittedFileBeforeStart(t *testing.T) {
+	f := newFixture(t)
+	if err := os.MkdirAll(filepath.Join(f.repo, ".ard/7"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(f.repo, ".ard/7/worker-dev.md"), []byte("stale\n"), 0o644)
+	sh(t, f.repo, "git", "add", ".")
+	sh(t, f.repo, "git", "commit", "-q", "-m", "role file")
+	tests := []struct {
+		name   string
+		scrub  []string
+		exists bool
+	}{
+		{"scrubbed", []string{".ard/7/worker-dev.md"}, false},
+		{"missing path is fine", []string{".ard/7/worker-other.md"}, true},
+		{"no scrub keeps it", nil, true},
+	}
+	for _, c := range tests {
+		t.Run(c.name, func(t *testing.T) {
+			j := f.job(time.Minute)
+			j.Scrub = c.scrub
+			h, err := f.l.Prepare(context.Background(), j)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { f.l.Cleanup(context.Background(), h, executor.CleanupOptions{}) })
+			_, err = os.Lstat(filepath.Join(h.Worktree, ".ard/7/worker-dev.md"))
+			if (err == nil) != c.exists {
+				t.Errorf("exists = %v, want %v (%v)", err == nil, c.exists, err)
+			}
+		})
+	}
+}

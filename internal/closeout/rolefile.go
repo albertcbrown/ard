@@ -39,7 +39,7 @@ var (
 	ErrMalformed = errors.New("closeout: malformed role file")
 )
 
-// RoleFile is the parsed .ard/<issue#>/<role>.md.
+// RoleFile is the parsed .ard/<issue#>/<stage>-<role>.md.
 type RoleFile struct {
 	Role, Status, Verdict, Worker string
 	Attempt                       int
