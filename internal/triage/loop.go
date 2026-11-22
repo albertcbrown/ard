@@ -55,6 +55,7 @@ type Store interface {
 	StartAttempt(ctx context.Context, id string) (int, error)
 	Fail(ctx context.Context, id, reason string, keepUntil time.Time) error
 	RunningJobs(ctx context.Context) ([]state.Job, error)
+	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
 	Admission(ctx context.Context, issue int) (state.Admission, error)
 	SetAdmission(ctx context.Context, a state.Admission) error
 	AppendEvent(ctx context.Context, e state.Event) error
@@ -190,6 +191,7 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 	}
 	t := &tick{l: l, cfg: cfg, log: log, self: id.Login, enabledAt: enabledAt, dry: dry}
 	errs = append(errs, t.sweep(ctx)...)
+	errs = append(errs, t.fanIn(ctx)...)
 	cands, cerrs := t.candidates(ctx)
 	errs = append(errs, cerrs...)
 

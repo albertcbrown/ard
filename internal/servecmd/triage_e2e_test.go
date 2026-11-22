@@ -302,3 +302,85 @@ func TestTriageEndToEndCloneFailureRetriesOnce(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// A fake claude for the gate test: the first run (no lead file on main yet) is
+// the lead, which requests the engineer and names the engineer worker; the
+// next run is the engineer, which adds its plan section.
+const gateAgent = `#!/bin/sh
+test -f .ard-input/*/issue.md || exit 3
+for d in .ard-input/*; do n=${d##*/}; done
+mkdir -p ".ard/$n"
+if [ ! -f ".ard/$n/triage-lead.md" ]; then
+cat > ".ard/$n/triage-lead.md" <<'EOF2'
+---
+role: lead
+status: done
+attempt: 1
+next: [triage:engineer]
+worker: engineer
+---
+Routed to the engineer.
+EOF2
+else
+cat > ".ard/$n/triage-engineer.md" <<'EOF2'
+---
+role: engineer
+status: done
+attempt: 1
+---
+Implementation steps written.
+EOF2
+printf '\n## Implementation\n\n1. Do it.\n' >> ".ard/$n/plan.md"
+fi
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"num_turns":1,"total_cost_usd":0.01,"session_id":"s","result":"ok"}'
+`
+
+// TestTriageEndToEndGate runs the lead, then the engineer it requested, then
+// shows the gate waiting for approval and starting the worker once a
+// collaborator approves after triage finished.
+func TestTriageEndToEndGate(t *testing.T) {
+	e := newE2E(t, gateAgent)
+	dir := ".ard/triage/engineer"
+	if err := os.MkdirAll(filepath.Join(e.cfg.Repo, dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.cfg.Repo, dir, "prompt.txt"), []byte("prompt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.cfg.Roles = append(e.cfg.Roles, config.Role{Kind: config.KindTriage, Name: "engineer", Dir: dir, Agent: "claude", Timeout: time.Minute, PlanSection: config.BuiltinPlanSections["engineer"]})
+	e.cfg.RequireApproval = true
+	worker := labels.Request(labels.StageWorker, "engineer")
+
+	e.tick() // the lead runs and requests the engineer
+	if !e.has(labels.Done(labels.StageTriage, "lead")) || !e.has(labels.Request(labels.StageTriage, "engineer")) {
+		t.Fatalf("after the lead: labels %v", e.labels())
+	}
+	// The engineer's worktree must start from main with the lead's commit.
+	gittest.Run(t, e.w.Root, "fetch", "origin")
+	e.cfg.SHA = strings.TrimSpace(gittest.Run(t, e.w.Root, "rev-parse", "origin/main"))
+	e.tick() // the gate waits; the engineer runs
+	if !e.has(labels.Done(labels.StageTriage, "engineer")) || e.has(worker) {
+		t.Fatalf("after the engineer: labels %v comments %+v", e.labels(), e.comments())
+	}
+	e.tick() // triage is done: ask for approval
+	if e.has(worker) {
+		t.Fatalf("worker started without approval: %v", e.labels())
+	}
+	asked := 0
+	for _, c := range e.comments() {
+		if strings.Contains(c.Body, "ready for approval") {
+			asked++
+		}
+	}
+	if asked != 1 {
+		t.Fatalf("approval comments = %d", asked)
+	}
+	time.Sleep(1100 * time.Millisecond) // the approval must come after the last :done, at second resolution
+	if err := e.gh.As("maint").AddLabels(context.Background(), e.issueN, labels.Approved); err != nil {
+		t.Fatal(err)
+	}
+	e.tick()
+	if !e.has(worker) {
+		t.Fatalf("worker not started after approval: %v", e.labels())
+	}
+}

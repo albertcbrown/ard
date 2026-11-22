@@ -166,6 +166,31 @@ func Deferred(ctx context.Context, s interface {
 	return out, nil
 }
 
+// LeadWorker returns the validated worker choice of the newest closed, done
+// triage:lead close-out of issue, and that job's id. ok is false when there is
+// none. worker is "" when that lead named no valid worker. The triage fan-in
+// gate reads the choice here, not from the committed role file, which a later
+// triage agent could rewrite.
+func LeadWorker(ctx context.Context, s interface {
+	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+}, issue int) (worker, jobID string, ok bool, err error) {
+	jobs, err := s.CloseoutsOf(ctx, issue, StageTriage)
+	if err != nil {
+		return "", "", false, fmt.Errorf("lead worker of issue %d: %w", issue, err)
+	}
+	for _, sj := range jobs {
+		rec, err := decode(sj)
+		if err != nil {
+			return "", "", false, fmt.Errorf("lead worker of issue %d: %w", issue, err)
+		}
+		if rec.Job.Role != "lead" || rec.Phase != PhaseClosed || rec.Plan.Outcome != OutcomeDone {
+			continue
+		}
+		worker, jobID, ok = rec.Plan.Worker, rec.Job.ID, true
+	}
+	return worker, jobID, ok, nil
+}
+
 // Deps are the collaborators of a Closer. Prepare needs Roles, NewRedactor,
 // Changed, BaseFile and StagingDir; the rest are for Closer.
 type Deps struct {

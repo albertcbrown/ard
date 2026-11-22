@@ -134,6 +134,9 @@ func applyOverrides(res *Resolved, raw rawConfig, discovered []Role, cfgPath str
 		}
 		owner[r.PlanSection] = r.Name
 	}
+
+	errs = append(errs, checkAfter(roles, cfgPath)...)
+
 	res.Roles = roles
 	return errs
 }

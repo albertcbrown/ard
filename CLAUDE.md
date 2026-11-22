@@ -57,7 +57,7 @@ internal/committer/ the only commit/push path: .ard/<issue#>/ (main lane, per-br
 internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); per-role write allowlist (WritableFor); every job ends through its Closer
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
-internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), claim, watcher; closes out through the shared Finisher
+internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
 internal/gitref/    ref-name checks shared by config and executor; leaf, stdlib only
