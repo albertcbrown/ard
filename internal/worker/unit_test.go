@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -186,5 +188,44 @@ Opened by ard from issue #7. The summary below was written by an agent and is un
 	}
 	if got, _ := Title("fix", "Fixes #5 now", 7, "J1"); strings.Contains(got, "#5") {
 		t.Errorf("title keeps a closing ref: %q", got)
+	}
+}
+
+func TestTriageInputsIssueMD(t *testing.T) {
+	const issue = ".ard/7/issue.md"
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, wt string)
+		want  bool
+	}{
+		{"present", func(t *testing.T, wt string) {
+			if err := os.WriteFile(filepath.Join(wt, issue), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"absent", func(t *testing.T, wt string) {}, false},
+		{"symlink", func(t *testing.T, wt string) {
+			if err := os.Symlink("/etc/passwd", filepath.Join(wt, issue)); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wt := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(wt, ".ard/7"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.setup(t, wt)
+			jb := &job{is: github.Issue{Number: 7}}
+			got := false
+			for _, p := range jb.triageInputs(wt) {
+				if p == issue {
+					got = true
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("listed = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
