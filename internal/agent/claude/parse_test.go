@@ -133,7 +133,7 @@ func TestParseDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.CLIVersion != TestedVersion || r.Model != "claude-test" || r.PermissionDenials != 1 || r.DurationMS != 4200 || r.Summary != "done" {
+	if r.CLIVersion != "2.1.328" || r.Model != "claude-test" || r.PermissionDenials != 1 || r.DurationMS != 4200 || r.Summary != "done" {
 		t.Errorf("got %+v", r)
 	}
 	long := `{"type":"result","subtype":"success","result":"` + strings.Repeat("é", 3000) + `"}` + "\n"
