@@ -404,7 +404,7 @@ flowchart LR
     P2 -->|"Gate 3: 50% merged with no human code edits"| P3["Phase 3: Scale<br/>k8s executor<br/>second repo<br/>shared roles repo<br/>budgets and digest"]
 ```
 
-**Where it runs (decided, #5).** `ard serve` runs first on the owner's Mac with the local executor, including the Gate 1 soak week. In Phase 3 it moves to the "spark" Kubernetes cluster with the k8s executor and a Lease lock in place of the `flock`.
+**Where it runs (decided, #5).** `ard serve` runs first on the owner's Mac with the local executor, including the Gate 1 soak week. In Phase 3 it moves to the "spark" Kubernetes cluster with the k8s executor and a Lease lock in place of the `flock`. ard supports macOS and Linux only; Windows is unsupported.
 
 Phase 0 runs in dry-run: the controller logs every issue, label and commit it would make, and does none of them. Dry-run keeps its own state (`~/.ard/state-dryrun/`) and records would-file findings under synthetic negative issue numbers, so repeated scans don't re-propose them and `max_open` is exercised. The ledger is `effects.jsonl` in that directory: every intended effect (issue, label, comment, commit, push, merge) is appended as one JSON line, and Gate 1 counts duplicate issues there by repeated `<!-- ard:fp=... -->` markers in `CreateIssue` bodies. Gate 1 needs only the deterministic path (CLI, config, GitHub client, effects, state, labels, executor, committer, controller, pool and the cve and stale scanners); the agent adapter, close-out and redaction are built during the soak week.
 
