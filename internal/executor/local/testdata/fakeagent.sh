@@ -9,5 +9,6 @@ stubborn) trap '' TERM; sleep 300 & wait ;;
 env)    env ;;
 talk)   i=0; while [ $i -lt 30 ]; do echo tick $i; i=$((i+1)); sleep 0.1; done ;;
 write)  echo x > probe.txt ;;
+sidecar-write) echo x > "$ARD_SIDECAR/probe" ;;
 *)      exit 99 ;;
 esac

@@ -28,18 +28,18 @@ type Executor interface {
 
 // Job describes one run.
 type Job struct {
-	ID         string // ULID minted at claim; ^[0-9A-Za-z]{1,64}$
-	Repo       string // "owner/repo"
-	Issue      int    // 0 = scanner run with no issue
-	Stage      string // "scanner" | "triage" | "worker" | "review"
-	Role       string // ^[a-z0-9][a-z0-9-]*$
-	RepoDir    string // abs path of the controller's clone, already fetched
-	Ref        string // commit-ish resolved in RepoDir; the worktree is detached at it
-	RoleDir    string // abs host path of the role directory
-	Dockerfile string // abs host path; "" = host subprocess
-	SidecarDir string // abs host path; "" = none
-	ReadOnly   bool   // worktree read-only: Docker mounts :ro, host chmod -R a-w after Prepare
-	Inputs     []File // written into the worktree by Prepare
+	ID         string  // ULID minted at claim; ^[0-9A-Za-z]{1,64}$
+	Repo       string  // "owner/repo"
+	Issue      int     // 0 = scanner run with no issue
+	Stage      string  // "scanner" | "triage" | "worker" | "review"
+	Role       string  // ^[a-z0-9][a-z0-9-]*$
+	RepoDir    string  // abs path of the controller's clone, already fetched
+	Ref        string  // commit-ish resolved in RepoDir; the worktree is detached at it
+	RoleDir    string  // abs host path of the role directory
+	Dockerfile string  // abs host path; "" = host subprocess
+	Sidecar    Sidecar // zero = none; the executor clones, pins and mounts it read-only
+	ReadOnly   bool    // worktree read-only: Docker mounts :ro, host chmod -R a-w after Prepare
+	Inputs     []File  // written into the worktree by Prepare
 	// Scrub lists repo-relative paths Prepare removes from the worktree after
 	// checkout and before Start, so a file at Ref cannot pass for this job's
 	// own output. Use it for the job's role file: close-out then trusts that
@@ -51,6 +51,13 @@ type Job struct {
 	// scanner); only valid with Stage "scanner". The zero value means it
 	// does, so a builder that forgets the field gets the host-mode warning.
 	TrustedInput bool
+}
+
+// Sidecar is a read-only companion repo the executor clones for the job.
+type Sidecar struct {
+	Name string // config key, for messages
+	Repo string // "owner/name"
+	Ref  string // branch, tag or full 40-hex SHA (gitref.Check)
 }
 
 // File is a worktree-relative file written 0644 by Prepare.
@@ -95,8 +102,10 @@ type Handle struct {
 	StartedAt, Deadline time.Time
 	ReadOnly            bool
 	Timeout             time.Duration
-	RoleDir, SidecarDir string // host paths
-	TrustedInput        bool   // copied from Job by Prepare
+	RoleDir, SidecarDir string  // host paths; SidecarDir is the executor's output (<Home>/sidecar), "" = none
+	Sidecar             Sidecar // copied from Job; zero on a handle stored before sidecars
+	SidecarSHA          string  // the commit the job sees; "" = no sidecar
+	TrustedInput        bool    // copied from Job by Prepare
 	// Scrubbed lists the Job.Scrub paths Prepare removed from the worktree.
 	// Close-out trusts an unchanged role file only if it is listed here.
 	Scrubbed []string

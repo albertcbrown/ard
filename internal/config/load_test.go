@@ -528,6 +528,36 @@ func TestLoadErrors(t *testing.T) {
 			want: []wantErr{{".ard/config.yaml", "sidecars.specs.repo", `"owner/name"`}},
 		},
 		{
+			name: "bad sidecar empty ref",
+			yaml: "sidecars: {specs: {repo: a/b, ref: \"\"}}\n",
+			want: []wantErr{{".ard/config.yaml", "sidecars.specs.ref", "must not be empty"}},
+		},
+		{
+			name: "bad sidecar ref leading dash",
+			yaml: "sidecars: {specs: {repo: a/b, ref: -x}}\n",
+			want: []wantErr{{".ard/config.yaml", "sidecars.specs.ref", "must not start with"}},
+		},
+		{
+			name: "bad sidecar ref colon",
+			yaml: "sidecars: {specs: {repo: a/b, ref: \"a:b\"}}\n",
+			want: []wantErr{{".ard/config.yaml", "sidecars.specs.ref", `":"`}},
+		},
+		{
+			name: "bad sidecar ref double dot",
+			yaml: "sidecars: {specs: {repo: a/b, ref: \"a..b\"}}\n",
+			want: []wantErr{{".ard/config.yaml", "sidecars.specs.ref", `".."`}},
+		},
+		{
+			name: "bad sidecar ref abbreviated sha",
+			yaml: "sidecars: {specs: {repo: a/b, ref: abc1234}}\n",
+			want: []wantErr{{".ard/config.yaml", "sidecars.specs.ref", "abbreviated SHA"}},
+		},
+		{
+			name: "bad sidecar repo with space",
+			yaml: "sidecars: {specs: {repo: \"a b/c\"}}\n",
+			want: []wantErr{{".ard/config.yaml", "sidecars.specs.repo", `"owner/name"`}},
+		},
+		{
 			name: "invalid YAML",
 			yaml: "max_pods: [unclosed\n",
 			want: []wantErr{{".ard/config.yaml", "", "invalid YAML"}},
@@ -622,5 +652,32 @@ func TestLoadProtectedRoundTrip(t *testing.T) {
 	res := mustLoad(t, withConfig(t, "merge: {protected_paths: [.github/, \"**/*.tf\", CODEOWNERS]}\n"))
 	if got := strings.Join(res.ProtectedPaths, ","); got != ".github/,**/*.tf,CODEOWNERS" {
 		t.Errorf("ProtectedPaths = %q", got)
+	}
+}
+
+func TestSidecarSHARefAndFor(t *testing.T) {
+	sha := strings.Repeat("0a", 20)
+	res := mustLoad(t, withConfig(t, "sidecars: {specs: {repo: Acme/Specs, ref: "+sha+"}}\noverrides:\n  triage/lead: {sidecar: specs}\n"))
+	lead, _ := res.Role(KindTriage, "lead")
+	other, _ := res.Role(KindTriage, "engineer")
+	tests := []struct {
+		name   string
+		role   Role
+		wantOK bool
+	}{
+		{"role without sidecar", other, false},
+		{"role with sidecar", lead, true},
+	}
+	for _, tc := range tests {
+		sc, ok := res.SidecarFor(tc.role)
+		if ok != tc.wantOK {
+			t.Errorf("%s: ok = %v", tc.name, ok)
+		}
+		if ok && (sc.Repo != "Acme/Specs" || sc.Ref != sha) {
+			t.Errorf("%s: sidecar = %+v", tc.name, sc)
+		}
+		if !ok && sc != (Sidecar{}) {
+			t.Errorf("%s: sidecar = %+v, want zero", tc.name, sc)
+		}
 	}
 }

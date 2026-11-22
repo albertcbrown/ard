@@ -47,6 +47,11 @@ func (g *Git) worktreeLock(ctx context.Context, repoDir string) (func(), error) 
 // ErrRefNotFound means a fetch named a remote ref that does not exist.
 var ErrRefNotFound = errors.New("gitx: remote ref not found")
 
+// ErrRepoAccess means a fetch got a 404 or 403 from the remote: the
+// repository does not exist or the credential cannot read it. Retrying
+// cannot help.
+var ErrRepoAccess = errors.New("repository not found or access denied")
+
 // Change is one entry of the staged diff.
 type Change struct {
 	Path    string
@@ -115,6 +120,18 @@ func (g *Git) WorktreeRemove(ctx context.Context, repoDir, path string) error {
 // FetchRef fetches refspec from url into repoDir. token may be nil. A remote
 // ref that does not exist returns ErrRefNotFound.
 func (g *Git) FetchRef(ctx context.Context, repoDir, url, refspec string, token TokenFunc) error {
+	return g.fetch(ctx, repoDir, url, refspec, token, false)
+}
+
+// FetchShallow is FetchRef with --depth=1 and -c gc.auto=0 (no detached
+// gc --auto is left running, and cache hits stay deterministic). A remote ref
+// that does not exist ("couldn't find remote ref") or a SHA the remote does
+// not have ("not our ref") returns ErrRefNotFound.
+func (g *Git) FetchShallow(ctx context.Context, repoDir, url, refspec string, token TokenFunc) error {
+	return g.fetch(ctx, repoDir, url, refspec, token, true)
+}
+
+func (g *Git) fetch(ctx context.Context, repoDir, url, refspec string, token TokenFunc, shallow bool) error {
 	var env, secrets []string
 	if token != nil {
 		tok, err := token(ctx)
@@ -123,12 +140,47 @@ func (g *Git) FetchRef(ctx context.Context, repoDir, url, refspec string, token 
 		}
 		env, secrets = pushEnv(tok, url), []string{tok}
 	}
-	_, stderr, err := g.run(ctx, repoDir, env, "", secrets, "fetch", "--no-tags", "--no-write-fetch-head", "--quiet", url, refspec)
+	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--quiet"}
+	if shallow {
+		args = []string{"-c", "gc.auto=0", "fetch", "--depth=1", "--no-tags", "--no-write-fetch-head", "--quiet"}
+	}
+	_, stderr, err := g.run(ctx, repoDir, env, "", secrets, append(args, url, refspec)...)
 	if err != nil {
-		if strings.Contains(stderr, "couldn't find remote ref") {
-			return fmt.Errorf("gitx: fetch %s: %w", refspec, ErrRefNotFound)
+		if cerr := classifyFetch(stderr, shallow); cerr != nil {
+			return fmt.Errorf("gitx: fetch %s: %w", refspec, cerr)
 		}
 		return fmt.Errorf("gitx: fetch %s: %w", refspec, err)
+	}
+	return nil
+}
+
+// classifyFetch maps git's stderr to a typed cause, or nil when it is none
+// of them.
+func classifyFetch(stderr string, shallow bool) error {
+	if shallow {
+		for _, m := range []string{"Repository not found", "returned error: 403", "returned error: 404"} {
+			if strings.Contains(stderr, m) {
+				return ErrRepoAccess
+			}
+		}
+		if strings.Contains(stderr, "fatal: repository '") && strings.Contains(stderr, "' not found") {
+			return ErrRepoAccess
+		}
+	}
+	if strings.Contains(stderr, "couldn't find remote ref") || (shallow && strings.Contains(stderr, "not our ref")) {
+		return ErrRefNotFound
+	}
+	return nil
+}
+
+// InitBare creates an empty bare repository at dir (git init --bare --quiet).
+// An existing repository at dir is left as it is.
+func (g *Git) InitBare(ctx context.Context, dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("gitx: init bare %s: %w", dir, err)
+	}
+	if _, _, err := g.run(ctx, dir, nil, "", nil, "init", "--bare", "--quiet", "."); err != nil {
+		return fmt.Errorf("gitx: init bare %s: %w", dir, err)
 	}
 	return nil
 }
@@ -253,7 +305,18 @@ var maxExportBytes int64 = 64 << 20
 // It reads blobs straight from the object store rather than through git
 // archive, which applies export-ignore and export-subst from .gitattributes
 // and could drop or rewrite role files.
-func (g *Git) ExportPaths(ctx context.Context, repoDir, sha, dest string, paths ...string) (err error) {
+func (g *Git) ExportPaths(ctx context.Context, repoDir, sha, dest string, paths ...string) error {
+	return g.exportPaths(ctx, repoDir, sha, dest, false, paths)
+}
+
+// ExportTree is ExportPaths for the whole tree at sha: the same symlink,
+// submodule, mode and 64 MiB rules, no .git, dest must not exist. (Passing
+// "." to ExportPaths does not work: no entry is "under" it.)
+func (g *Git) ExportTree(ctx context.Context, repoDir, sha, dest string) error {
+	return g.exportPaths(ctx, repoDir, sha, dest, true, nil)
+}
+
+func (g *Git) exportPaths(ctx context.Context, repoDir, sha, dest string, whole bool, paths []string) (err error) {
 	if _, serr := os.Lstat(dest); serr == nil {
 		return fmt.Errorf("gitx: export to %s: already exists", dest)
 	} else if !errors.Is(serr, fs.ErrNotExist) {
@@ -265,6 +328,9 @@ func (g *Git) ExportPaths(ctx context.Context, repoDir, sha, dest string, paths 
 		}
 	}
 	args := append([]string{"--literal-pathspecs", "ls-tree", "-r", "-l", "-z", "--full-tree", sha, "--"}, paths...)
+	if whole {
+		args = []string{"ls-tree", "-r", "-l", "-z", "--full-tree", sha}
+	}
 	out, _, err := g.run(ctx, repoDir, nil, "", nil, args...)
 	if err != nil {
 		return fmt.Errorf("gitx: export %.12s: %w", sha, err)
@@ -285,7 +351,7 @@ func (g *Git) ExportPaths(ctx context.Context, repoDir, sha, dest string, paths 
 			return fmt.Errorf("gitx: export %.12s: bad ls-tree record %q", sha, rec)
 		}
 		mode, typ, obj := f[0], f[1], f[2]
-		if !underAny(path, paths) {
+		if !whole && !underAny(path, paths) {
 			return fmt.Errorf("gitx: export %.12s: %q is outside the requested paths", sha, path)
 		}
 		switch {
@@ -301,6 +367,9 @@ func (g *Git) ExportPaths(ctx context.Context, repoDir, sha, dest string, paths 
 			return fmt.Errorf("gitx: export %.12s: bad size in %q", sha, rec)
 		}
 		if total += size; total > maxExportBytes {
+			if whole {
+				return fmt.Errorf("gitx: export %.12s: more than %d MiB in the tree", sha, maxExportBytes>>20)
+			}
 			return fmt.Errorf("gitx: export %.12s: more than %d MiB under %v", sha, maxExportBytes>>20, paths)
 		}
 		entries = append(entries, entry{path: path, obj: obj, exec: mode == "100755"})

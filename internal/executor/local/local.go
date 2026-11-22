@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/gitx"
 )
 
 // Options configures Local.
@@ -36,6 +37,12 @@ type Options struct {
 	// untrusted input, right after the process starts. serve records an
 	// events row through it. nil = log only.
 	OnHostUntrusted func(ctx context.Context, h executor.Handle) error
+
+	// Sidecar clone (see sidecar.go).
+	SidecarGit     sidecarGit               // default gitx.New("")
+	SidecarURL     func(repo string) string // default https://github.com/<repo>.git
+	SidecarToken   gitx.TokenFunc           // nil = no auth header (local remotes in tests)
+	SidecarTimeout time.Duration            // init + fetch + export bound; default 2m
 }
 
 // Local implements executor.Executor on this host.
@@ -49,8 +56,14 @@ type Local struct {
 	log                      *slog.Logger
 	onHostUntrusted          func(ctx context.Context, h executor.Handle) error
 
-	mu     sync.Mutex
-	tracks map[string]*track
+	sgit           sidecarGit
+	sidecarURL     func(repo string) string
+	sidecarToken   gitx.TokenFunc
+	sidecarTimeout time.Duration
+
+	mu           sync.Mutex
+	tracks       map[string]*track
+	sidecarLocks map[string]chan struct{} // per cache dir, 1-buffer slot; guarded by mu
 }
 
 var _ executor.Executor = (*Local)(nil)
@@ -104,6 +117,15 @@ func New(o Options) (*Local, error) {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
+	if o.SidecarGit == nil {
+		o.SidecarGit = gitx.New("")
+	}
+	if o.SidecarURL == nil {
+		o.SidecarURL = defaultSidecarURL
+	}
+	if o.SidecarTimeout <= 0 {
+		o.SidecarTimeout = defaultSidecarTimeout
+	}
 	allow := map[string]bool{}
 	for _, n := range o.AllowEnv {
 		allow[n] = true
@@ -114,7 +136,8 @@ func New(o Options) (*Local, error) {
 	}
 	return &Local{configDirEnv: o.ConfigDirEnv, allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
 		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log, onHostUntrusted: o.OnHostUntrusted,
-		tracks: map[string]*track{}}, nil
+		tracks: map[string]*track{}, sgit: o.SidecarGit, sidecarURL: o.SidecarURL, sidecarToken: o.SidecarToken,
+		sidecarTimeout: o.SidecarTimeout}, nil
 }
 
 // configDirName is the per-job agent config dir inside the job home. Under
@@ -153,8 +176,8 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		JobID: j.ID, Kind: "host", Issue: j.Issue, Stage: j.Stage, Role: j.Role,
 		Worktree: wt, Home: home, RepoDir: j.RepoDir, BaseSHA: sha,
 		LogPath: filepath.Join(logDir, base+".log"), StdoutPath: filepath.Join(logDir, base+".stdout"),
-		View:    executor.Paths{Work: wt, Role: j.RoleDir, Sidecar: j.SidecarDir},
-		RoleDir: j.RoleDir, SidecarDir: j.SidecarDir, ReadOnly: j.ReadOnly,
+		View:    executor.Paths{Work: wt, Role: j.RoleDir},
+		RoleDir: j.RoleDir, ReadOnly: j.ReadOnly,
 		TrustedInput: j.TrustedInput, PreparedAt: now, Timeout: j.Timeout,
 	}
 	var created []string // paths to remove on failure
@@ -172,6 +195,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 			l.git.WorktreePrune(context.WithoutCancel(ctx), j.RepoDir)
 		}
 		for _, p := range created {
+			chmodWritable(p) // a sidecar tree under home is a-w
 			os.RemoveAll(p)
 		}
 		h = executor.Handle{}
@@ -223,6 +247,19 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		return h, fmt.Errorf("create config dir: %w", err)
 	}
 	h.View.ConfigDir = cfg
+	// --- sidecar (#28): the executor clones, pins and mounts it read-only ---
+	if j.Sidecar != (executor.Sidecar{}) {
+		dest := filepath.Join(home, sidecarDirName)
+		var scSHA string
+		var fetched bool
+		if scSHA, fetched, err = l.materialise(ctx, j.Repo, j.Sidecar, dest); err != nil {
+			return h, err
+		}
+		h.SidecarDir, h.Sidecar, h.SidecarSHA = dest, j.Sidecar, scSHA
+		h.View.Sidecar = dest
+		l.log.Info("executor.sidecar_ready", "job", j.ID, "repo", j.Sidecar.Repo, "ref", j.Sidecar.Ref, "sha", scSHA, "fetched", fetched)
+	}
+	// --- end sidecar ---
 	if err = os.MkdirAll(logDir, 0o700); err != nil {
 		return h, fmt.Errorf("create log dir: %w", err)
 	}
@@ -234,6 +271,11 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		f.Close()
 		created = append(created, p)
 	}
+	if h.SidecarDir != "" { // #28: read-only in both modes; Docker also mounts :ro
+		if err = chmodReadOnly(h.SidecarDir); err != nil {
+			return h, fmt.Errorf("make sidecar read-only: %w", err)
+		}
+	}
 	if j.Dockerfile != "" {
 		h.Kind = "docker"
 		h.Container = "ard-" + j.ID
@@ -241,7 +283,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 			return h, err
 		}
 		h.View = executor.Paths{Work: "/work", Role: "/role", ConfigDir: "/ard-config"}
-		if j.SidecarDir != "" {
+		if h.SidecarDir != "" {
 			h.View.Sidecar = "/sidecar"
 		}
 	} else if j.ReadOnly {

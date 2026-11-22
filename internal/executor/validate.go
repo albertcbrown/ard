@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/albertcbrown/ard/internal/gitref"
 	"github.com/albertcbrown/ard/internal/repopath"
 )
 
@@ -45,9 +46,17 @@ func (j Job) Validate() error {
 			return bad("%s %q is not absolute", name, p)
 		}
 	}
-	for name, p := range map[string]string{"dockerfile": j.Dockerfile, "sidecar dir": j.SidecarDir} {
+	for name, p := range map[string]string{"dockerfile": j.Dockerfile} {
 		if p != "" && !filepath.IsAbs(p) {
 			return bad("%s %q is not absolute", name, p)
+		}
+	}
+	if j.Sidecar != (Sidecar{}) {
+		if !validRepo(j.Sidecar.Repo) {
+			return bad("sidecar repo %q", j.Sidecar.Repo)
+		}
+		if err := gitref.Check(j.Sidecar.Ref); err != nil {
+			return bad("sidecar ref: %v", err)
 		}
 	}
 	for _, f := range j.Inputs {
