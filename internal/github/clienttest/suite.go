@@ -22,6 +22,43 @@ type Option func(*config)
 type config struct {
 	newPR    func(t *testing.T, c github.Client) (n int, headSHA string)
 	transfer func(t *testing.T, c github.Client, n int)
+	// settle and every are the eventual-consistency deadline and poll
+	// interval; zero settle means a single call.
+	settle, every time.Duration
+	pin           bool
+	pinCleanup    func(t *testing.T, c github.Client, n int)
+}
+
+// WithEventualConsistency makes the list assertions in ListIssuesFilters and
+// IssuesAndPRsShareNumbers retry every interval until they match or timeout
+// passes, then fail with the last result. Real GitHub's label and state
+// filters lag a new write by tens of seconds; the fake needs no polling.
+func WithEventualConsistency(timeout, interval time.Duration) Option {
+	return func(cfg *config) { cfg.settle, cfg.every = timeout, interval }
+}
+
+// WithPin enables the PinIssue case. GitHub allows at most three pinned issues
+// per repository and the client cannot unpin, so cleanup (if not nil) runs when
+// the case ends, typically closing the issue.
+func WithPin(cleanup func(t *testing.T, c github.Client, n int)) Option {
+	return func(cfg *config) { cfg.pin, cfg.pinCleanup = true, cleanup }
+}
+
+// listUntil calls list until ok accepts the result or the deadline passes,
+// returning the last result. Without WithEventualConsistency it calls once.
+func (cfg *config) listUntil(t *testing.T, list func() ([]github.Issue, error), ok func([]github.Issue) bool) []github.Issue {
+	t.Helper()
+	deadline := time.Now().Add(cfg.settle)
+	for {
+		got, err := list()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok(got) || !time.Now().Add(cfg.every).Before(deadline) {
+			return got
+		}
+		time.Sleep(cfg.every)
+	}
 }
 
 // WithTransfer supplies a way to move issue n out of the repository, as an
@@ -135,22 +172,25 @@ func Run(t *testing.T, newClient func(t *testing.T) github.Client, opts ...Optio
 		if err := c.UpdateIssue(ctx, i3.Number, github.IssueUpdate{State: &closed}); err != nil {
 			t.Fatal(err)
 		}
-		open, err := c.ListIssues(ctx, github.ListIssuesOpts{Labels: []string{a, b}})
-		if err != nil {
-			t.Fatal(err)
+		list := func(o github.ListIssuesOpts) func() ([]github.Issue, error) {
+			return func() ([]github.Issue, error) { return c.ListIssues(ctx, o) }
 		}
+		open := cfg.listUntil(t, list(github.ListIssuesOpts{Labels: []string{a, b}}), func(g []github.Issue) bool { return len(g) == 1 })
 		if nums(open) != fmt.Sprint([]int{i1.Number}) {
 			t.Errorf("open AND = %s, want [%d]", nums(open), i1.Number)
 		}
-		all, _ := c.ListIssues(ctx, github.ListIssuesOpts{Labels: []string{a, b}, State: github.StateAll})
+		all := cfg.listUntil(t, list(github.ListIssuesOpts{Labels: []string{a, b}, State: github.StateAll}), func(g []github.Issue) bool { return len(g) == 2 })
 		if len(all) != 2 {
 			t.Errorf("state=all returned %d, want 2", len(all))
 		}
-		since, _ := c.ListIssues(ctx, github.ListIssuesOpts{Labels: []string{a}, Since: time.Now().Add(time.Hour)})
+		since, err := c.ListIssues(ctx, github.ListIssuesOpts{Labels: []string{a}, Since: time.Now().Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(since) != 0 {
 			t.Errorf("future since returned %d", len(since))
 		}
-		capped, _ := c.ListIssues(ctx, github.ListIssuesOpts{Labels: []string{a}, State: github.StateAll, Max: 2})
+		capped := cfg.listUntil(t, list(github.ListIssuesOpts{Labels: []string{a}, State: github.StateAll, Max: 2}), func(g []github.Issue) bool { return len(g) == 2 })
 		if len(capped) != 2 {
 			t.Errorf("Max=2 returned %d", len(capped))
 		}
@@ -167,19 +207,54 @@ func Run(t *testing.T, newClient func(t *testing.T) github.Client, opts ...Optio
 		if pr <= is.Number || is2.Number <= pr {
 			t.Errorf("numbers not from one sequence: issue %d, pr %d, issue %d", is.Number, pr, is2.Number)
 		}
-		list, _ := c.ListIssues(ctx, github.ListIssuesOpts{State: github.StateAll})
-		for _, x := range list {
+		plain := cfg.listUntil(t, func() ([]github.Issue, error) {
+			return c.ListIssues(ctx, github.ListIssuesOpts{State: github.StateAll})
+		}, func(g []github.Issue) bool {
+			for _, x := range g {
+				if x.Number == is2.Number {
+					return true
+				}
+			}
+			return false
+		})
+		for _, x := range plain {
 			if x.IsPR {
 				t.Errorf("PR #%d leaked into ListIssues by default", x.Number)
 			}
 		}
-		withPRs, _ := c.ListIssues(ctx, github.ListIssuesOpts{State: github.StateAll, IncludePRs: true})
+		withPRs := cfg.listUntil(t, func() ([]github.Issue, error) {
+			return c.ListIssues(ctx, github.ListIssuesOpts{State: github.StateAll, IncludePRs: true})
+		}, func(g []github.Issue) bool {
+			for _, x := range g {
+				if x.Number == pr && x.IsPR {
+					return true
+				}
+			}
+			return false
+		})
 		found := false
 		for _, x := range withPRs {
 			found = found || (x.Number == pr && x.IsPR)
 		}
 		if !found {
 			t.Errorf("PR #%d missing with IncludePRs", pr)
+		}
+	})
+
+	t.Run("PinIssue", func(t *testing.T) {
+		if !cfg.pin {
+			t.Skip("pin case not enabled (GitHub caps pinned issues at 3 and the client cannot unpin)")
+		}
+		c := newClient(t)
+		is := mustIssue(t, c, "pin me")
+		if cfg.pinCleanup != nil {
+			t.Cleanup(func() { cfg.pinCleanup(t, c, is.Number) })
+		}
+		if err := c.PinIssue(ctx, is.Number); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.PinIssue(ctx, 999999); !errors.Is(err, github.ErrNotFound) {
+			t.Errorf("pin unknown issue err = %v, want ErrNotFound", err)
 		}
 	})
 

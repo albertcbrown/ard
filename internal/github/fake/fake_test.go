@@ -21,6 +21,7 @@ func TestConformance(t *testing.T) {
 			n := f.SeedPR(github.PullRequest{Title: "pr", HeadRef: "feat", HeadSHA: "abc123", BaseRef: "main"})
 			return n, "abc123"
 		}),
+		clienttest.WithPin(nil),
 		clienttest.WithTransfer(func(t *testing.T, c github.Client, n int) { c.(*fake.Fake).TransferIssue(n) }),
 	)
 }
