@@ -64,8 +64,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
-	// The root is handed to git and to executor.Job.RepoDir, which must be
-	// absolute; RepoRoot returns "." when --config is omitted.
+	// root is the operator's checkout, made absolute because RepoRoot returns "." when --config is omitted. It is read only (origin fallback, local paused); git worktrees and commits use the controller clone (#113).
 	if root, err = filepath.Abs(root); err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
@@ -112,6 +111,12 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	}
 
 	log := e.Log
+	// The controller's own bare clone: every config fetch, committer lane and
+	// executor worktree uses it, never the operator's checkout (#113).
+	clone, err := openClone(ctx, gitx.New(""), home, repo, d.RemoteURL, d.Token, log)
+	if err != nil {
+		return fmt.Errorf("ard serve: %w", err)
+	}
 	// Config comes from origin/main, not from the working tree (#87): a merged
 	// change applies on the next tick without a pull, and every job of a tick
 	// runs against one commit.
@@ -120,13 +125,14 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		return fmt.Errorf("ard serve: %w", err)
 	}
 	src, err := configsrc.New(configsrc.Options{
-		Git: gitx.New(""), RepoDir: root, RemoteURL: d.RemoteURL, Token: d.Token,
+		Git: gitx.New(""), RepoDir: clone, RemoteURL: d.RemoteURL, Token: d.Token,
 		CacheDir: cacheDir, Log: log,
 	})
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
 	gate := controller.NewPauseGate(d.Reader, log)
+	// root is the operator's checkout: read only (origin fallback, local paused). ard never writes to it (#113).
 	gate.SetLocalConfig(root)
 	pausePath, err := controller.PauseFilePath(home, repo.Owner, repo.Name)
 	if err != nil {
@@ -140,7 +146,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 
 	w := &wiring{
 		Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: config.DefaultMaxPods,
-		Repo: repo, Root: root, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners, Model: d.Model,
+		Repo: repo, Root: clone, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners, Model: d.Model,
 		StateDir: stateDir, Started: time.Now(),
 	}
 	defer w.closeAll()
@@ -242,7 +248,7 @@ type wiring struct {
 	Store   *state.Store
 	MaxPods int
 	Repo    github.Repo
-	Root    string // absolute path of the local clone; the object store for worktrees and commits
+	Root    string // absolute path of the controller's own bare clone (~/.ard/repos/<owner>/<repo>.git); every committer and executor worktree is cut from it. Never the operator's checkout.
 	Home    string // the user's home directory; ~/.ard holds state, logs and worktrees
 	// RemoteURL is where main is fetched from and pushed to.
 	RemoteURL string
@@ -312,7 +318,7 @@ func (w *wiring) newExecutor() (*local.Local, error) {
 		return w.exec, nil
 	}
 	ex, err := local.New(local.Options{
-		Root: filepath.Join(w.Home, ".ard"), Log: w.Log, SidecarToken: w.Token,
+		Root: filepath.Join(w.Home, ".ard"), Log: w.Log, SidecarToken: w.Token, CloneDir: w.Root,
 		OnHostUntrusted: recordHostUntrusted(w.Store),
 	})
 	if err != nil {

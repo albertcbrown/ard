@@ -79,7 +79,8 @@ type roleYAML struct {
 	GroupSize int      `yaml:"group_size,omitempty"`
 	Autoclose bool     `yaml:"autoclose,omitempty"`
 
-	After []string `yaml:"after,omitempty"`
+	After       []string `yaml:"after,omitempty"`
+	PlanSection string   `yaml:"plan_section,omitempty"`
 
 	Tests           string   `yaml:"tests,omitempty"`
 	MaxTestFixes    int      `yaml:"max_test_fixes,omitempty"`
@@ -145,6 +146,7 @@ func (r *Resolved) render() resolvedYAML {
 			GroupSize:       role.GroupSize,
 			Autoclose:       role.Autoclose,
 			After:           role.After,
+			PlanSection:     role.PlanSection,
 			Tests:           role.Tests,
 			MaxTestFixes:    role.MaxTestFixes,
 			MaxReviewRounds: role.MaxReviewRounds,

@@ -3,8 +3,11 @@
 //
 // Prepare is the pure half. It reads the job's worktree and host log, parses
 // and validates .ard/<issue#>/<stage>-<role>.md (trusted only if the job wrote
-// it: the executor scrubs a stale one before the agent runs), collects the changed .ard/<issue#>/
-// files, redacts and secret-scans every one, stages the cleaned bytes under
+// it: the executor scrubs a stale one before the agent runs), collects the
+// changed .ard/<issue#>/ files, checks them against the job's write allowlist
+// (WritableFor: its role file, plus plan.md section and design/ files for the
+// triage roles that own them; any other change fails the job as needs-human and
+// only the log is committed), redacts and secret-scans every one, stages the cleaned bytes under
 // Deps.StagingDir and returns a Record holding the Plan. Closer is the
 // effectful half. It runs the plan in a fixed order (commit, request labels,
 // comment, terminal label swap) and persists the phase after each step, so

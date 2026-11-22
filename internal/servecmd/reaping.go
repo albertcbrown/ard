@@ -54,6 +54,7 @@ func (w *wiring) closer() *closeout.Closer {
 			return redact.New(redact.FromEnviron(os.Environ()), redact.Options{})
 		},
 		Changed:    gitx.New("").ChangedSince,
+		BaseFile:   gitx.New("").FileAt,
 		Repo:       w.Repo,
 		StagingDir: staging,
 		Log:        w.Log,

@@ -16,6 +16,10 @@
 // request's paths. That is what `git rebase` would produce, without ever
 // leaving rebase state behind.
 //
+// Branches.CommitCode is the only path for worker code. It commits only paths
+// CheckCodePath accepts, only to worker/ branches, never to main. The
+// .ard/<issue#>/ lane (Commit, CheckPath) is unchanged.
+//
 // Commit messages, PR titles and PR bodies that embed untrusted text must pass
 // it through NeutraliseRefs so it cannot close an issue. ard's own
 // "Closes #<issue>" line in a worker PR body is written by the caller after
@@ -183,24 +187,63 @@ func (l *lane) commit(ctx context.Context, req Request) (res Result, err error) 
 	if l.isClosed() {
 		return Result{}, ErrClosed
 	}
-	res, err = l.run(ctx, snap, msg)
+	res, err = l.run(ctx, snapOf(snap, msg))
 	if err != nil {
 		err = fmt.Errorf("commit issue %d (%s:%s): %w", req.Issue, req.Stage, req.Role, err)
 	}
 	return res, err
 }
 
-func (l *lane) run(ctx context.Context, req Request, msg string) (Result, error) {
+// snapFile is one validated change, ready to apply.
+type snapFile struct {
+	path string
+	data []byte
+	exec bool
+	del  bool
+}
+
+// snap is a validated request in the form the lane applies, whichever lane
+// (.ard or worker code) produced it.
+type snap struct {
+	files    []snapFile
+	declared []string
+	msg      string
+	// base, when set, is the commit the caller's content was derived from:
+	// the first attempt refuses to overwrite a declared path that changed
+	// between base and the fetched head.
+	base string
+}
+
+func (s snap) wantMode(path string) string {
+	for _, f := range s.files {
+		if f.path == path {
+			if f.del {
+				return "000000"
+			}
+			return modeOf(f.exec)
+		}
+	}
+	return ""
+}
+
+// snapOf converts a validated .ard Request. Its files are never executable.
+func snapOf(req Request, msg string) snap {
+	s := snap{msg: msg, declared: make([]string, len(req.Files))}
+	for i, f := range req.Files {
+		s.declared[i] = f.Path
+		s.files = append(s.files, snapFile{path: f.Path, data: f.Data, del: f.Delete})
+	}
+	return s
+}
+
+func (l *lane) run(ctx context.Context, s snap) (Result, error) {
 	if !l.persistent {
 		if err := l.addWorktree(ctx); err != nil {
 			return Result{}, err
 		}
 		defer func() { _ = l.g.WorktreeRemove(context.WithoutCancel(ctx), l.cfg.RepoDir, l.wt) }()
 	}
-	declared := make([]string, len(req.Files))
-	for i, f := range req.Files {
-		declared[i] = f.Path
-	}
+	declared := s.declared
 
 	var base, prev string
 	for attempt := 1; ; attempt++ {
@@ -209,8 +252,12 @@ func (l *lane) run(ctx context.Context, req Request, msg string) (Result, error)
 			l.reset(ctx, prev)
 			return Result{Attempts: attempt - 1}, err
 		}
-		if attempt > 1 {
-			changed, err := l.g.ChangedPaths(ctx, l.wt, prev, base, declared...)
+		from := prev
+		if attempt == 1 {
+			from = s.base
+		}
+		if from != "" {
+			changed, err := l.g.ChangedPaths(ctx, l.wt, from, base, declared...)
 			if err != nil {
 				l.reset(ctx, base)
 				return Result{Attempts: attempt - 1}, err
@@ -220,7 +267,7 @@ func (l *lane) run(ctx context.Context, req Request, msg string) (Result, error)
 				return Result{Attempts: attempt - 1}, fmt.Errorf("%w: %s", ErrConflict, strings.Join(changed, ", "))
 			}
 		}
-		res, retry, err := l.attempt(ctx, req, declared, msg, base)
+		res, retry, err := l.attempt(ctx, s, base, false)
 		res.Attempts = attempt
 		if err == nil {
 			if res.NoOp || res.Synthetic {
@@ -243,34 +290,52 @@ func (l *lane) run(ctx context.Context, req Request, msg string) (Result, error)
 }
 
 // attempt applies the snapshot on base, commits and pushes. retry reports
-// whether a failure is worth another fetch-and-apply round.
-func (l *lane) attempt(ctx context.Context, req Request, declared []string, msg, base string) (res Result, retry bool, err error) {
+// whether a failure is worth another fetch-and-apply round. With create, base
+// is the commit a new branch is cut from: nothing staged is ErrInvalid (a
+// branch with no commit cannot become a PR) and the push's lease expects the
+// ref to be absent, so a branch that exists is ErrBranchExists, never retried.
+func (l *lane) attempt(ctx context.Context, s snap, base string, create bool) (res Result, retry bool, err error) {
 	if err := l.g.ResetHard(ctx, l.wt, base); err != nil {
 		return res, false, err
 	}
 	if err := l.g.CleanAll(ctx, l.wt); err != nil {
 		return res, false, err
 	}
-	var writes, deletes []string
-	for _, f := range req.Files {
-		full := filepath.Join(l.wt, filepath.FromSlash(f.Path))
-		if err := checkParents(l.wt, f.Path); err != nil {
+	declared, msg := s.declared, s.msg
+	var writes, deletes, execs []string
+	for _, f := range s.files {
+		full := filepath.Join(l.wt, filepath.FromSlash(f.path))
+		// Defence in depth behind CheckCodePath/CheckPath: never touch a
+		// path that resolves outside the worktree.
+		if rel, err := filepath.Rel(l.wt, full); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			ge := &GuardError{}
+			ge.add(f.path, "escapes the worktree")
+			return res, false, ge
+		}
+		if err := checkParents(l.wt, f.path); err != nil {
 			return res, false, err
 		}
-		if f.Delete {
+		if f.del {
 			if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return res, false, fmt.Errorf("remove %s: %w", f.Path, err)
+				return res, false, fmt.Errorf("remove %s: %w", f.path, err)
 			}
-			deletes = append(deletes, f.Path)
+			deletes = append(deletes, f.path)
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			return res, false, fmt.Errorf("mkdir for %s: %w", f.Path, err)
+			return res, false, fmt.Errorf("mkdir for %s: %w", f.path, err)
 		}
-		if err := os.WriteFile(full, f.Data, 0o644); err != nil {
-			return res, false, fmt.Errorf("write %s: %w", f.Path, err)
+		if err := os.WriteFile(full, f.data, 0o644); err != nil {
+			return res, false, fmt.Errorf("write %s: %w", f.path, err)
 		}
-		writes = append(writes, f.Path)
+		// WriteFile keeps the mode of an existing file, so set it explicitly.
+		if err := os.Chmod(full, fileMode(f.exec)); err != nil {
+			return res, false, fmt.Errorf("chmod %s: %w", f.path, err)
+		}
+		writes = append(writes, f.path)
+		if f.exec {
+			execs = append(execs, f.path)
+		}
 	}
 	if len(writes) > 0 {
 		if err := l.g.AddForce(ctx, l.wt, writes...); err != nil {
@@ -282,6 +347,11 @@ func (l *lane) attempt(ctx context.Context, req Request, declared []string, msg,
 			return res, false, err
 		}
 	}
+	if len(execs) > 0 {
+		if err := l.g.SetExec(ctx, l.wt, execs...); err != nil {
+			return res, false, err
+		}
+	}
 	changes, err := l.g.StagedChanges(ctx, l.wt)
 	if err != nil {
 		return res, false, err
@@ -289,18 +359,34 @@ func (l *lane) attempt(ctx context.Context, req Request, declared []string, msg,
 	if err := CheckStaged(declared, changes); err != nil {
 		return res, false, err
 	}
-	if len(changes) == 0 {
+	if err := checkModes(s, changes); err != nil {
+		return res, false, err
+	}
+	nothing := func() (Result, bool, error) {
+		if create {
+			return res, false, fmt.Errorf("%w: nothing to commit on a new branch", ErrInvalid)
+		}
 		return Result{SHA: base, NoOp: true}, false, nil
+	}
+	if len(changes) == 0 {
+		return nothing()
 	}
 	cr, err := l.fx.Commit(ctx, effects.CommitOp{Dir: l.wt, Message: msg, Author: l.author})
 	if errors.Is(err, effects.ErrNothingToCommit) {
-		return Result{SHA: base, NoOp: true}, false, nil
+		return nothing()
 	}
 	if err != nil {
 		return res, false, err
 	}
+	lease := base
+	if create {
+		lease = zeroSHA
+	}
 	err = l.fx.Push(ctx, effects.PushOp{Dir: l.wt, Remote: l.cfg.RemoteURL, Ref: "HEAD:refs/heads/" + l.branch,
-		ForceWithLease: base, Token: l.cfg.Token})
+		ForceWithLease: lease, Token: l.cfg.Token})
+	if create && (errors.Is(err, effects.ErrNonFastForward) || errors.Is(err, effects.ErrStaleLease)) {
+		return res, false, fmt.Errorf("%w: %v", ErrBranchExists, err)
+	}
 	if err != nil {
 		return res, errors.Is(err, effects.ErrNonFastForward) || errors.Is(err, effects.ErrStaleLease), err
 	}
@@ -431,3 +517,24 @@ func (c *Committer) Commit(ctx context.Context, req Request) (Result, error) {
 // Close waits for the in-flight request and removes the worktree. Later
 // Commit calls return ErrClosed.
 func (c *Committer) Close(ctx context.Context) error { return c.l.close(ctx) }
+
+func fileMode(exec bool) os.FileMode {
+	if exec {
+		return 0o755
+	}
+	return 0o644
+}
+
+// checkModes verifies every staged entry has the mode the request asked for.
+func checkModes(s snap, changes []gitx.Change) error {
+	ge := &GuardError{}
+	for _, c := range changes {
+		if want := s.wantMode(c.Path); c.NewMode != want {
+			ge.add(c.Path, fmt.Sprintf("staged mode %s, want %s", c.NewMode, want))
+		}
+	}
+	if len(ge.Paths) > 0 {
+		return ge
+	}
+	return nil
+}

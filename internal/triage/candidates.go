@@ -93,6 +93,12 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 		hasAny(is.Labels, excluded(role.Name)) {
 		return candidate{}, false, nil
 	}
+	if dep, held := heldBy(role, is.Labels); held {
+		// Not a candidate, so it does not mark the issue busy: the prerequisite
+		// may still claim it this tick. Held before intake, so it costs no reads.
+		t.log.Info("triage.held", "issue", n, "role", role.Name, "waiting_for", dep)
+		return candidate{}, false, nil
+	}
 	c := candidate{role: role, issue: is, reason: intake.ReasonAppAuthored}
 	if strings.EqualFold(is.Author, t.self) { // scanner issues: the App rewrites its own bodies
 		return c, true, nil

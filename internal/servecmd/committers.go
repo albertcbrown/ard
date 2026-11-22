@@ -17,7 +17,7 @@ func (w *wiring) committerConfig(ctx context.Context) (committer.Config, error) 
 	if err != nil {
 		return committer.Config{}, fmt.Errorf("identify github user: %w", err)
 	}
-	workDir, err := repoWorkDir(w.Home, w.Repo)
+	workDir, err := laneWorkDir(w.Home, w.Repo)
 	if err != nil {
 		return committer.Config{}, fmt.Errorf("start committer: %w", err)
 	}

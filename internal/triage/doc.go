@@ -13,6 +13,11 @@
 // .ard-input/<issue#>/ in the worktree. That directory is outside the
 // .ard/<issue#>/ pathspec close-out collects, so it is never committed.
 //
-// In --dry-run the loop logs triage.would_claim and stops: no job row, no pool
+// A role with after: is held (triage.held) until its prerequisites, if
+// requested, are :done. When every requested ard:triage:<role> is :done, the
+// fan-in gate adds the lead's chosen ard:worker:<role>, after the
+// require_approval wait; see fanin.go.
+//
+// In --dry-run the loop logs triage.would_claim and triage.would_gate and stops: no job row, no pool
 // slot, no label and no comment.
 package triage

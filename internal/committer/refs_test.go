@@ -59,6 +59,19 @@ func TestNeutraliseRefs(t *testing.T) {
 		{"no keyword", "see #12", "see #12", false, false},
 		{"keyword no ref", "fixes the build", "fixes the build", false, false},
 		{"empty", "", "", false, false},
+		{"entity digits", "Fixes &#35;&#49;&#50;", "Fixes issue 12", true, false},
+		{"entity hex digits", "Fixes #&#x31;2", "Fixes issue 12", true, false},
+		{"entity space", "Fixes&#32;#12", "Fixes&#32;issue 12", true, false},
+		{"entity nbsp", "Fixes&nbsp;#12", "Fixes&nbsp;issue 12", true, false},
+		{"entity decimal", "Fixes &#35;12", "Fixes issue 12", true, false},
+		{"entity hex", "fixes &#x23;12", "fixes issue 12", true, false},
+		{"entity padded", "Fixes &#035;7", "Fixes issue 7", true, false},
+		{"entity num", "Fixes &num;12", "Fixes issue 12", true, false},
+		{"backslash", "Fixes \\#12", "Fixes issue 12", true, false},
+		{"entity cross", "Closes o/r&#35;3", "Closes o/r issue 3", true, false},
+		{"entity and backslash list", "Fixes &#35;12 and \\#13", "Fixes issue 12 and issue 13", true, false},
+		{"entity no keyword", "see &#35;12", "see &#35;12", false, false},
+		{"digits in number", "Fixes #35", "Fixes issue 35", true, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,7 +82,7 @@ func TestNeutraliseRefs(t *testing.T) {
 			if rewritten := got != tc.in; rewritten != (tc.closes || tc.conservative) {
 				t.Errorf("rewritten = %v, but GitHub closes = %v (conservative %v)", rewritten, tc.closes, tc.conservative)
 			}
-			if tc.closes && strings.Contains(got, "#") {
+			if tc.closes && strings.Contains(sepEntityRe.ReplaceAllString(got, ""), "#") {
 				t.Errorf("linkable reference remains in %q", got)
 			}
 			if again := NeutraliseRefs(got); again != got {

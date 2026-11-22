@@ -185,6 +185,27 @@ func (g *Git) InitBare(ctx context.Context, dir string) error {
 	return nil
 }
 
+// IsBareRepo reports whether dir is itself a bare repository. It runs
+// git --git-dir=. rev-parse --is-bare-repository in dir, so git never walks
+// up into a parent repository (for example a dotfiles repo in $HOME). A dir
+// that is not a git directory is an error.
+func (g *Git) IsBareRepo(ctx context.Context, dir string) (bool, error) {
+	out, _, err := g.run(ctx, dir, nil, "", nil, "--git-dir=.", "rev-parse", "--is-bare-repository")
+	if err != nil {
+		return false, fmt.Errorf("gitx: is bare %s: %w", dir, err)
+	}
+	return strings.TrimSpace(out) == "true", nil
+}
+
+// SetConfig sets key to value in the repository config of gitDir. key is a
+// constant from ard's code, never input.
+func (g *Git) SetConfig(ctx context.Context, gitDir, key, value string) error {
+	if _, _, err := g.run(ctx, gitDir, nil, "", nil, "--git-dir=.", "config", "--local", key, value); err != nil {
+		return fmt.Errorf("gitx: set config %s in %s: %w", key, gitDir, err)
+	}
+	return nil
+}
+
 // ResetHard moves the worktree, index and HEAD to ref.
 func (g *Git) ResetHard(ctx context.Context, dir, ref string) error {
 	if _, _, err := g.run(ctx, dir, nil, "", nil, "reset", "--hard", "--quiet", ref); err != nil {
@@ -290,6 +311,48 @@ func (g *Git) ChangedSince(ctx context.Context, dir, base string, paths ...strin
 	}
 	sort.Slice(cs, func(i, j int) bool { return cs[i].Path < cs[j].Path })
 	return cs, nil
+}
+
+// FileAt returns the contents of path at commit rev in the repository at dir.
+// ok is false (and err nil) when path does not exist at rev. A path that is a
+// tree, symlink or submodule at rev, or a blob larger than maxBytes, is an
+// error.
+func (g *Git) FileAt(ctx context.Context, dir, rev, path string, maxBytes int64) ([]byte, bool, error) {
+	if path == "" || strings.HasPrefix(path, "/") || slices.Contains(strings.Split(path, "/"), "..") {
+		return nil, false, fmt.Errorf("gitx: file %q at %.12s: bad path", path, rev)
+	}
+	out, _, err := g.run(ctx, dir, nil, "", nil, "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", rev, "--", path)
+	if err != nil {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %w", path, rev, err)
+	}
+	recs := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	if len(recs) == 1 && recs[0] == "" {
+		return nil, false, nil
+	}
+	if len(recs) != 1 {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %d ls-tree records", path, rev, len(recs))
+	}
+	meta, got, ok := strings.Cut(recs[0], "\t")
+	f := strings.Fields(meta)
+	if !ok || len(f) != 4 || got != path {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: bad ls-tree record %q", path, rev, recs[0])
+	}
+	mode, typ, obj := f[0], f[1], f[2]
+	if typ != "blob" || (mode != "100644" && mode != "100755") {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: not a regular file (mode %s %s)", path, rev, mode, typ)
+	}
+	size, perr := strconv.ParseInt(f[3], 10, 64)
+	if perr != nil {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: bad size in %q", path, rev, recs[0])
+	}
+	if size > maxBytes {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %d bytes, max %d", path, rev, size, maxBytes)
+	}
+	blob, _, err := g.run(ctx, dir, nil, "", nil, "cat-file", "blob", obj)
+	if err != nil {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %w", path, rev, err)
+	}
+	return []byte(blob), true, nil
 }
 
 // maxExportBytes caps the total size ExportPaths will write.

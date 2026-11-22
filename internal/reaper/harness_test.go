@@ -162,6 +162,9 @@ func newHarness(t *testing.T) *harness {
 		Changed: func(context.Context, string, string, ...string) ([]gitx.PathChange, error) {
 			return nil, nil
 		},
+		BaseFile: func(context.Context, string, string, string, int64) ([]byte, bool, error) {
+			return nil, false, nil
+		},
 		Repo: github.Repo{Owner: "o", Name: "r"}, StagingDir: t.TempDir(), Log: quiet, Now: h.clk.now,
 	})
 	h.cfg = &config.Resolved{Roles: []config.Role{
