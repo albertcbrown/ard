@@ -619,6 +619,33 @@ func TestReviewAndPRListing(t *testing.T) {
 	}
 }
 
+func TestListReviewsPaginates(t *testing.T) {
+	var base string
+	s := newStubAPI(t, nil)
+	s.routes = map[string]http.HandlerFunc{
+		"GET /repos/o/r/pulls/9/reviews": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("page") == "2" {
+				fmt.Fprint(w, `[{"id":2,"user":{"login":"b"},"body":"two","state":"CHANGES_REQUESTED","commit_id":"c2"}]`)
+				return
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/pulls/9/reviews?page=2>; rel="next"`, base))
+			fmt.Fprint(w, `[{"id":1,"user":{"login":"a"},"body":"one","state":"COMMENTED","commit_id":"c1","submitted_at":"2026-01-02T03:04:05Z"}]`)
+		},
+	}
+	base = s.URL
+	h := newTestHTTP(t, s, nil)
+	got, err := h.ListReviews(context.Background(), 9)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("reviews = %+v, %v", got, err)
+	}
+	if g := got[0]; g.ID != 1 || g.Author != "a" || g.Body != "one" || g.State != "COMMENTED" || g.CommitSHA != "c1" || g.SubmittedAt.IsZero() {
+		t.Errorf("first = %+v", g)
+	}
+	if g := got[1]; g.ID != 2 || g.State != "CHANGES_REQUESTED" || g.CommitSHA != "c2" {
+		t.Errorf("second = %+v", g)
+	}
+}
+
 // redirect answers with a 3xx whose Location is path on the stub's own host.
 func redirect(t *testing.T, code int, path string) http.HandlerFunc {
 	body := fixture(t, "moved.json")

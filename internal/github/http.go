@@ -615,6 +615,23 @@ func (h *HTTP) ListReviewComments(ctx context.Context, n int) ([]ReviewComment, 
 	return items, h.fail(ctx, fmt.Sprintf("list review comments %d", n), n, err)
 }
 
+func (h *HTTP) ListReviews(ctx context.Context, n int) ([]Review, error) {
+	opts := &gogh.ListOptions{PerPage: 100}
+	items, err := paginate(0, func(page int) ([]Review, int, error) {
+		opts.Page = page
+		rs, resp, err := h.gh.PullRequests.ListReviews(ctx, h.o(), h.r(), n, opts)
+		if err != nil {
+			return nil, 0, err
+		}
+		out := make([]Review, len(rs))
+		for i, r := range rs {
+			out[i] = reviewFrom(r)
+		}
+		return out, nextPage(resp), nil
+	})
+	return items, h.fail(ctx, fmt.Sprintf("list reviews %d", n), n, err)
+}
+
 // ---- Writer ----
 
 func (h *HTTP) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {

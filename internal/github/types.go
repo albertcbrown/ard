@@ -107,6 +107,16 @@ type ReviewComment struct {
 	CreatedAt time.Time
 }
 
+// Review is a submitted pull request review. Body is untrusted.
+type Review struct {
+	ID          int64
+	Author      string
+	Body        string
+	State       string // COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED
+	CommitSHA   string
+	SubmittedAt time.Time
+}
+
 // IssueRef points at another issue or PR.
 type IssueRef struct {
 	Number int
