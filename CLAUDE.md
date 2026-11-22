@@ -53,7 +53,7 @@ internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL l
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths, FileAt); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
 internal/controller/ scheduler, kill switch (pause), leader lock, status issue
 internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, controller
-internal/committer/ the only commit/push path for .ard/<issue#>/ (main lane, per-branch lanes)
+internal/committer/ the only commit/push path: .ard/<issue#>/ (main lane, per-branch lanes) and worker code on worker/ branches (CommitCode, CheckCodePath)
 internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); per-role write allowlist (WritableFor); every job ends through its Closer
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)

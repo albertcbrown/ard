@@ -388,3 +388,50 @@ func TestSetExec(t *testing.T) {
 		t.Error("SetExec on an unstaged path succeeded")
 	}
 }
+
+func TestIsBareRepo(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	bare, clone := gittest.NewRemote(t)
+	empty := filepath.Join(clone, "emptydir")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		dir     string
+		want    bool
+		wantErr bool
+	}{
+		{"bare repo", bare, true, false},
+		{"git dir of a non-bare repo", filepath.Join(clone, ".git"), false, false},
+		{"top of a non-bare repo", clone, false, true},
+		{"empty dir inside a repo does not walk up", empty, false, true},
+		{"missing path", filepath.Join(t.TempDir(), "nope"), false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := g.IsBareRepo(ctx, tc.dir)
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("IsBareRepo = %v, %v; want %v (err %v)", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestSetConfig(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	bare, _ := gittest.NewRemote(t)
+	for i := 0; i < 2; i++ { // idempotent
+		if err := g.SetConfig(ctx, bare, "gc.auto", "0"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.TrimSpace(gittest.Run(t, bare, "config", "--get", "gc.auto")); got != "0" {
+		t.Fatalf("gc.auto = %q", got)
+	}
+	if err := g.SetConfig(ctx, filepath.Join(t.TempDir(), "nope"), "gc.auto", "0"); err == nil {
+		t.Fatal("missing dir accepted")
+	}
+}

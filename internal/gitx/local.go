@@ -185,6 +185,27 @@ func (g *Git) InitBare(ctx context.Context, dir string) error {
 	return nil
 }
 
+// IsBareRepo reports whether dir is itself a bare repository. It runs
+// git --git-dir=. rev-parse --is-bare-repository in dir, so git never walks
+// up into a parent repository (for example a dotfiles repo in $HOME). A dir
+// that is not a git directory is an error.
+func (g *Git) IsBareRepo(ctx context.Context, dir string) (bool, error) {
+	out, _, err := g.run(ctx, dir, nil, "", nil, "--git-dir=.", "rev-parse", "--is-bare-repository")
+	if err != nil {
+		return false, fmt.Errorf("gitx: is bare %s: %w", dir, err)
+	}
+	return strings.TrimSpace(out) == "true", nil
+}
+
+// SetConfig sets key to value in the repository config of gitDir. key is a
+// constant from ard's code, never input.
+func (g *Git) SetConfig(ctx context.Context, gitDir, key, value string) error {
+	if _, _, err := g.run(ctx, gitDir, nil, "", nil, "--git-dir=.", "config", "--local", key, value); err != nil {
+		return fmt.Errorf("gitx: set config %s in %s: %w", key, gitDir, err)
+	}
+	return nil
+}
+
 // ResetHard moves the worktree, index and HEAD to ref.
 func (g *Git) ResetHard(ctx context.Context, dir, ref string) error {
 	if _, _, err := g.run(ctx, dir, nil, "", nil, "reset", "--hard", "--quiet", ref); err != nil {

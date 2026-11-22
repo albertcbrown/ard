@@ -282,9 +282,18 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 		}
 	}
 	if !o.KeepWorktree {
+		foreign := l.cloneDir != "" && filepath.Clean(h.RepoDir) != l.cloneDir
 		if _, err := os.Stat(h.Worktree); err == nil {
 			chmodWritable(h.Worktree)
-			if err := l.git.WorktreeRemove(context.WithoutCancel(ctx), h.RepoDir, h.Worktree, true); err != nil {
+			if foreign {
+				// Stored before #113: RepoDir is the operator's checkout, where
+				// ard never runs git. The registration there dangles until the
+				// operator's own `git worktree prune`.
+				l.log.Info("executor.cleanup_foreign_repo", "job", h.JobID, "repo_dir", h.RepoDir, "clone", l.cloneDir)
+				if err := os.RemoveAll(h.Worktree); err != nil {
+					errs = append(errs, err)
+				}
+			} else if err := l.git.WorktreeRemove(context.WithoutCancel(ctx), h.RepoDir, h.Worktree, true); err != nil {
 				errs = append(errs, err)
 				os.RemoveAll(h.Worktree)
 			}
@@ -293,8 +302,10 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 		if err := os.RemoveAll(h.Home); err != nil {
 			errs = append(errs, err)
 		}
-		if err := l.git.WorktreePrune(context.WithoutCancel(ctx), h.RepoDir); err != nil {
-			errs = append(errs, err)
+		if !foreign {
+			if err := l.git.WorktreePrune(context.WithoutCancel(ctx), h.RepoDir); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	if tr := l.track(h.JobID); tr != nil {
