@@ -141,6 +141,27 @@ func CloseoutJob(sj state.Job, h executor.Handle, st executor.Status, cause clos
 // A Run error is returned as is and the close-out stays resumable. An error
 // wrapping closeout.ErrBusy means someone else is closing the job.
 func (f *Finisher) Finish(ctx context.Context, jobID string, h executor.Handle, st executor.Status, res agent.Result, override closeout.Cause) (closeout.Outcome, error) {
+	return f.FinishWith(ctx, jobID, h, st, res, FinishOptions{Cause: override})
+}
+
+// FinishOptions are the extras of FinishWith.
+type FinishOptions struct {
+	// Cause is Finish's override.
+	Cause closeout.Cause
+	// Worker is the worker loop's result (PR, reviewers, tests, hold). A worker
+	// job that is closed out without it, and whose role file says done, needs a
+	// human.
+	Worker *closeout.WorkerResult
+	// ExtraLogs are further host logs to commit beside the handle's log: the
+	// earlier agent steps of a worker job.
+	ExtraLogs []string
+}
+
+// FinishWith is Finish with a worker result and extra logs. The worker loop
+// calls SetBranch and SetPR on the job row first, then FinishWith with the
+// handle of its final agent step.
+func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Handle, st executor.Status, res agent.Result, o FinishOptions) (closeout.Outcome, error) {
+	override := o.Cause
 	sj, err := f.Store.Job(ctx, jobID)
 	if err != nil {
 		return "", fmt.Errorf("finish job %s: %w", jobID, err)
@@ -158,6 +179,7 @@ func (f *Finisher) Finish(ctx context.Context, jobID string, h executor.Handle, 
 		cause = CauseOf(sj, st, res, f.Start)
 	}
 	cj := CloseoutJob(sj, h, st, cause, res)
+	cj.Worker, cj.ExtraLogs = o.Worker, o.ExtraLogs
 	// End the attempt before close-out: a crash after it leaves a resumable
 	// close-out and an ended attempt, never the reverse.
 	if sj.Attempt > 0 {

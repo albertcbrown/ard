@@ -38,6 +38,12 @@
 //     the request label so the next claim runs the job again as a new job.
 //     Failed and retry comments carry the last 50 redacted log lines and the
 //     time the worktree and host files are kept until (24 h).
+//   - A worker job closes out with Job.Worker (the loop's PR, reviewers and
+//     test result, passed through reaper.Finisher.FinishWith) and Job.ExtraLogs
+//     (its earlier agent steps' logs). A done worker without Worker, or with
+//     Worker.Hold, needs a human; it is never :done without a PR. A worker
+//     that stops before its first push has no Branch: its role file and log
+//     go to main, as triage's do.
 //   - Closer never releases the pool slot or removes the worktree. The caller
 //     does both, keeping the worktree when the outcome is failed, retry or
 //     needs-human and removing it otherwise.
