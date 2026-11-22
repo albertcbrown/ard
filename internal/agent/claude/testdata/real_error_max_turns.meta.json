@@ -1,0 +1,9 @@
+{
+  "case": "error_max_turns",
+  "exit_code": 1,
+  "seconds": 2,
+  "cli_version": "2.1.330",
+  "api_retries": 0,
+  "rate_limit_events": 1,
+  "result_subtype": "error_max_turns"
+}

@@ -39,8 +39,8 @@ bad-token case can take minutes (a 401 makes the CLI retry), so it has a
 meta file. An expired token cannot be produced on demand; the bad token stands
 in for it.
 
-`TestScrubCaptures` replaces `session_id`, `uuid`, `cwd`, timestamps, ids and
-every path of the run with stable placeholders, then fails closed if a UUID, a
+`TestScrubCaptures` replaces `session_id`, `uuid`, `cwd`, timestamps, ids,
+thinking-block `signature`s and every path of the run with stable placeholders, then fails closed if a UUID, a
 home path, an email, `sk-ant-`, the user name or a credential value is left, or
 if a second secret scan over your environment flags anything. It keeps
 `resetsAt`, the `... resets ...` text, `api_error_status`, `terminal_reason`,

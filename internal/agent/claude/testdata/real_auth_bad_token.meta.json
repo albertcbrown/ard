@@ -1,0 +1,9 @@
+{
+  "case": "auth_bad_token",
+  "exit_code": 1,
+  "seconds": 2,
+  "cli_version": "2.1.330",
+  "api_retries": 2,
+  "rate_limit_events": 0,
+  "result_subtype": "success"
+}

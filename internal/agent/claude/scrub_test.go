@@ -32,6 +32,10 @@ var (
 	// idKeys are the keys whose string values are replaced, by namespace.
 	idKeyRE = regexp.MustCompile(`"(session_id|uuid|parent_uuid|request_id|id|tool_use_id|message_id|timestamp|cwd)":"((?:[^"\\]|\\.)*)"`)
 
+	// sigRE matches a thinking block's signature: an opaque, account-bound
+	// blob the parser never reads, replaced with a fixed placeholder.
+	sigRE = regexp.MustCompile(`"signature":"(?:[^"\\]|\\.)*"`)
+
 	uuidRE  = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	emailRE = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
 	homeRE  = regexp.MustCompile(`/Users/|/home/[A-Za-z0-9_][A-Za-z0-9._-]*`)
@@ -87,6 +91,7 @@ func scrubTranscript(raw []byte, env scrubEnv) ([]byte, error) {
 			}
 			return []byte(`"` + key + `":"` + repl + `"`)
 		})
+		line = sigRE.ReplaceAll(line, []byte(`"signature":"sig-redacted"`))
 		for _, p := range paths {
 			line = bytes.ReplaceAll(line, []byte(p.from), []byte(p.to))
 		}
@@ -167,6 +172,7 @@ func TestScrubTranscript(t *testing.T) {
 		PromptPath: "/var/prompt/p.txt", UserHome: "/Users/jane", User: "janedoe", Secrets: []string{"tok-live-123"}}
 	raw := `{"type":"system","subtype":"init","cwd":"/var/work/job1","session_id":"a1b2c3d4-0000-4000-8000-000000000001","uuid":"11111111-2222-4333-8444-555555555555","tools":["Read"]}
 {"type":"assistant","uuid":"66666666-7777-4888-8999-000000000000","session_id":"a1b2c3d4-0000-4000-8000-000000000001","timestamp":"2026-11-22T10:11:12.345Z","message":{"id":"msg_01ABC","content":[{"type":"tool_use","id":"toolu_01XYZ","name":"Read","input":{"file_path":"/var/work/job1/README.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"","signature":"CAQSnh+/AbC=="}]}}
 {"type":"user","parent_uuid":"11111111-2222-4333-8444-555555555555","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01XYZ","content":"capture fixture in /var/tmp/x/z and /var/cfg/job1/s"}]}}
 {"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795000000},"uuid":"11111111-2222-4333-8444-555555555555","session_id":"a1b2c3d4-0000-4000-8000-000000000001"}
 {"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm","total_cost_usd":0.01,"duration_ms":12,"usage":{"input_tokens":5},"session_id":"a1b2c3d4-0000-4000-8000-000000000001"}
@@ -176,12 +182,13 @@ func TestScrubTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
-	if len(lines) != 5 {
+	if len(lines) != 6 {
 		t.Fatalf("lines = %d", len(lines))
 	}
 	want := []string{
 		`{"type":"system","subtype":"init","cwd":"/work","session_id":"session-1","uuid":"uuid-0001","tools":["Read"]}`,
 		`{"type":"assistant","uuid":"uuid-0002","session_id":"session-1","timestamp":"2026-01-01T00:00:00Z","message":{"id":"msg-0001","content":[{"type":"tool_use","id":"msg-0002","name":"Read","input":{"file_path":"/work/README.md"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"","signature":"sig-redacted"}]}}`,
 		`{"type":"user","parent_uuid":"uuid-0001","message":{"content":[{"type":"tool_result","tool_use_id":"msg-0002","content":"capture fixture in /tmp/z and /config/s"}]}}`,
 		`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795000000},"uuid":"uuid-0001","session_id":"session-1"}`,
 		`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm","total_cost_usd":0.01,"duration_ms":12,"usage":{"input_tokens":5},"session_id":"session-1"}`,

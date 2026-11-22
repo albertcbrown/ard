@@ -1,0 +1,9 @@
+{
+  "case": "budget_exceeded",
+  "exit_code": 1,
+  "seconds": 3,
+  "cli_version": "2.1.330",
+  "api_retries": 0,
+  "rate_limit_events": 0,
+  "result_subtype": "error_max_budget_usd"
+}
