@@ -27,13 +27,13 @@ func TestRenderComment(t *testing.T) {
 			Outcome: OutcomeDone, Summary: "Routed to the architect.",
 			Requests: []Label{{7, "ard:triage:architect"}}, Deferred: []NextReq{{"review", "license-review"}},
 			Skipped:  []Skip{{"review:nope", "no such role"}, {"triage:lead", "not requestable"}},
-			RolePath: ".ard/7/lead.md", LogPath: ".ard/7/logs/triage-lead-20260102T030405Z.log"}}, false},
+			RolePath: ".ard/7/triage-lead.md", LogPath: ".ard/7/logs/triage-lead-20260102T030405Z.log"}}, false},
 		{"done_dry_run", Record{Job: lead, Plan: Plan{Outcome: OutcomeDone, Summary: "Routed.",
-			RolePath: ".ard/7/lead.md", LogPath: ".ard/7/logs/triage-lead-20260102T030405Z.log"}}, true},
+			RolePath: ".ard/7/triage-lead.md", LogPath: ".ard/7/logs/triage-lead-20260102T030405Z.log"}}, true},
 		{"changes", Record{Job: review, SHA: "abc123", Plan: Plan{Outcome: OutcomeChanges, Summary: "Two blocking issues.",
-			RolePath: ".ard/7/eng-review.md", LogPath: ".ard/7/logs/review-eng-review-20260102T030405Z.log"}}, false},
+			RolePath: ".ard/7/review-eng-review.md", LogPath: ".ard/7/logs/review-eng-review-20260102T030405Z.log"}}, false},
 		{"blocked", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeNeedsHuman, Status: StatusBlocked,
-			Summary: "Cannot decide.", RolePath: ".ard/7/lead.md"}}, false},
+			Summary: "Cannot decide.", RolePath: ".ard/7/triage-lead.md"}}, false},
 		{"needs_human_secret", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeNeedsHuman, Status: StatusDone,
 			Reason: "secret scan flagged .ard/7/plan.md (rules: github-token)", LogPath: ".ard/7/logs/triage-lead-20260102T030405Z.log"}}, false},
 		{"failed_log_withheld", Record{Job: lead, Plan: Plan{Outcome: OutcomeFailed, Reason: "agent exited 1; log withheld: secret scan flagged it",
@@ -52,7 +52,7 @@ func TestRenderComment(t *testing.T) {
 		{"usage_limit_account_no_time", Record{Job: Job{ID: "01JTEST", Issue: 7, Stage: StageWorker, Role: "eng", Attempt: 1,
 			Cause: Cause{Kind: CauseUsageLimit}},
 			Plan: Plan{Outcome: OutcomeLimited, Reason: "usage_limit: usage limit"}}, false},
-		{"truncated", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeDone, Summary: long, RolePath: ".ard/7/lead.md"}}, false},
+		{"truncated", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeDone, Summary: long, RolePath: ".ard/7/triage-lead.md"}}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

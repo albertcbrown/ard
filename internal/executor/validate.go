@@ -55,6 +55,31 @@ func (j Job) Validate() error {
 			return bad("input: %v", err)
 		}
 	}
+	for _, p := range j.Scrub {
+		for _, f := range j.Inputs {
+			if path.Clean(filepath.ToSlash(f.Path)) == p {
+				return bad("scrub: %q is also an input", p)
+			}
+		}
+		if err := checkScrubPath(j.Issue, p); err != nil {
+			return bad("scrub: %v", err)
+		}
+	}
+	return nil
+}
+
+// checkScrubPath requires p to be a file directly inside .ard/<issue>/.
+func checkScrubPath(issue int, p string) error {
+	if err := CheckInputPath(p); err != nil {
+		return err
+	}
+	if issue < 1 {
+		return fmt.Errorf("path %q needs an issue", p)
+	}
+	dir := fmt.Sprintf(".ard/%d", issue)
+	if path.Clean(p) != p || path.Dir(p) != dir || path.Base(p) == "logs" {
+		return fmt.Errorf("path %q must be a file directly under %s/", p, dir)
+	}
 	return nil
 }
 

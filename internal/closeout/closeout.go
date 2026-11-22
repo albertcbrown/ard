@@ -42,6 +42,10 @@ type Job struct {
 	Worktree string // executor handle Worktree
 	BaseSHA  string // executor handle BaseSHA: what the worktree started from
 	LogPath  string // executor handle LogPath; "" when there is no log
+	// Scrubbed is copied from the executor handle: the paths it removed from
+	// the worktree before the agent ran. An unchanged role file is trusted
+	// only if listed here.
+	Scrubbed []string
 	ExitCode int
 	CostUSD  float64 // 0 when unknown
 	// Cause, when Kind is set, says why the job ended without a usable result.

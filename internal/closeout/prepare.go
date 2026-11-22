@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/albertcbrown/ard/internal/agent"
 	"github.com/albertcbrown/ard/internal/redact"
 )
 
@@ -23,6 +26,12 @@ const (
 // bytes of every file to commit are staged there, and the returned Record
 // (phase prepared) holds the plan. From here on Resume uses only the staged
 // bytes and the plan, never the worktree.
+//
+// The role file counts only if this job wrote it. The executor scrubs the
+// job's role file from the worktree before the agent runs (executor.Job.Scrub),
+// so a file that exists now was written by the agent, even when its bytes match
+// the base commit. A role file the job removed and did not write again fails
+// the job as "role file not written by this job" and is never parsed.
 //
 // Only files under .ard/<issue#>/ that changed since the worktree's base
 // commit are collected, so a newer issue.md that landed on main during the
@@ -52,7 +61,7 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		n = -n
 	}
 	dir := fmt.Sprintf(".ard/%d/", n)
-	rolePath := dir + j.Role + ".md"
+	rolePath := agent.RoleFilePath(n, j.Stage, j.Role)
 
 	// 1. Decide whether the agent's result is usable.
 	var (
@@ -70,19 +79,35 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	case j.ExitCode != 0:
 		failed = fmt.Sprintf("agent exited %d", j.ExitCode)
 	default:
-		rf, failed, err = readResult(j, rolePath, d.log())
-		if err != nil {
-			return Record{}, err
-		}
-	}
-	if failed == "" {
 		cands, failed, err = collect(ctx, j, d, dir)
 		if err != nil {
 			return Record{}, err
 		}
-		for _, c := range cands {
-			if c.path == rolePath && !c.delete {
-				roleSeen = true
+		if failed == "" {
+			var deleted bool
+			for _, c := range cands {
+				if c.path == rolePath {
+					roleSeen, deleted = !c.delete, c.delete
+				}
+			}
+			if !roleSeen {
+				// Unchanged against base but present: the executor scrubbed
+				// it, so the agent wrote it again, byte for byte.
+				var extra *candidate
+				extra, failed, err = rewritten(j, rolePath, deleted)
+				if err != nil {
+					return Record{}, err
+				}
+				if extra != nil {
+					cands = append(cands, *extra)
+					roleSeen = true
+				}
+			}
+		}
+		if failed == "" {
+			rf, failed, err = readResult(j, rolePath, d.log())
+			if err != nil {
+				return Record{}, err
 			}
 		}
 	}
@@ -99,6 +124,9 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 				files = append(files, FileRef{Path: c.path, Delete: true})
 				continue
 			}
+			if c.noCommit && c.path != rolePath {
+				continue
+			}
 			res, terr := red.Text(ctx, c.data)
 			if terr != nil || res.Flagged {
 				hit = fmt.Sprintf("secret scan %s %s", verdictWord(terr), c.path)
@@ -107,16 +135,19 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 				}
 				break
 			}
-			ref, werr := stageFile(stage, c.path, res.Clean)
-			if werr != nil {
-				return Record{}, fmt.Errorf("closeout job %s: %w", j.ID, werr)
-			}
-			files = append(files, ref)
 			if c.path == rolePath {
 				if crf, perr := Parse(res.Clean); perr == nil {
 					summary = crf.Summary
 				}
 			}
+			if c.noCommit {
+				continue
+			}
+			ref, werr := stageFile(stage, c.path, res.Clean)
+			if werr != nil {
+				return Record{}, fmt.Errorf("closeout job %s: %w", j.ID, werr)
+			}
+			files = append(files, ref)
 		}
 		if hit != "" {
 			files = nil
@@ -232,6 +263,35 @@ type candidate struct {
 	path   string
 	data   []byte
 	delete bool
+	// noCommit: scanned for the summary but not committed (the role file is
+	// already at base byte for byte).
+	noCommit bool
+}
+
+// rewritten handles a role file with no change against base. deleted says
+// the changed set holds its deletion. A file that is absent fails the job; one
+// that exists is trusted (see Prepare) and returned for scanning only.
+func rewritten(j Job, rolePath string, deleted bool) (*candidate, string, error) {
+	full := filepath.Join(j.Worktree, filepath.FromSlash(rolePath))
+	_, err := os.Lstat(full)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && deleted:
+		return nil, "role file not written by this job", nil
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, "role file missing", nil
+	case err != nil:
+		return nil, "", fmt.Errorf("closeout job %s: stat role file: %w", j.ID, err)
+	}
+	if !slices.Contains(j.Scrubbed, rolePath) {
+		return nil, "role file not scrubbed by executor", nil
+	}
+	// readResult reports a symlink or other non-regular file as malformed;
+	// here only a regular file can be scanned.
+	b, err := readRoleFile(full)
+	if err != nil {
+		return nil, "", nil // readResult states the reason
+	}
+	return &candidate{path: rolePath, data: b, noCommit: true}, "", nil
 }
 
 // collect lists the changed files under dir and reads them.

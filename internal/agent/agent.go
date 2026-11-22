@@ -25,6 +25,14 @@ const (
 	StageReview  = "review"
 )
 
+// RoleFilePath is the report file a role writes:
+// .ard/<issue>/<stage>-<role>.md. stage is a label stage (triage, worker,
+// review; config.Kind spells the last one "reviewer"); issue is the positive
+// issue number. It does not validate.
+func RoleFilePath(issue int, stage, role string) string {
+	return fmt.Sprintf(".ard/%d/%s-%s.md", issue, stage, role)
+}
+
 // Auth names which model credential the job receives. Adapters map it to
 // their CLI's env var; the value never reaches the adapter.
 type Auth string
@@ -40,7 +48,7 @@ const (
 type Spec struct {
 	Stage        string   // one of the Stage* constants; named in the user message; every stage gets the same default tool profile
 	Role         string   // ^[a-z0-9][a-z0-9-]*$
-	Issue        int      // >= 1; output file is .ard/<Issue>/<Role>.md
+	Issue        int      // >= 1; output file is RoleFilePath(Issue, Stage, Role)
 	PromptFile   string   // absolute runtime path of the role's prompt.txt from the role mount
 	Untrusted    []string // slash paths relative to the job's cwd, max 64
 	ReadDirs     []string // absolute extra dirs the agent may read

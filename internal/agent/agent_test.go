@@ -54,3 +54,20 @@ func TestValidateAuth(t *testing.T) {
 		}
 	}
 }
+
+func TestRoleFilePath(t *testing.T) {
+	tests := []struct {
+		issue       int
+		stage, role string
+		want        string
+	}{
+		{42, "triage", "lead", ".ard/42/triage-lead.md"},
+		{7, "worker", "engineer", ".ard/7/worker-engineer.md"},
+		{7, "review", "eng-review", ".ard/7/review-eng-review.md"},
+	}
+	for _, c := range tests {
+		if got := agent.RoleFilePath(c.issue, c.stage, c.role); got != c.want {
+			t.Errorf("RoleFilePath(%d, %q, %q) = %q, want %q", c.issue, c.stage, c.role, got, c.want)
+		}
+	}
+}
