@@ -146,3 +146,9 @@ func TestCommandClaudeArgv(t *testing.T) {
 		t.Errorf("fixed = %s", got)
 	}
 }
+
+func TestCommentsEmpty(t *testing.T) {
+	if got := string(Comments(nil)); !strings.Contains(got, "UNTRUSTED INPUT") || !strings.Contains(got, "No comments.") {
+		t.Errorf("Comments(nil) = %q", got)
+	}
+}

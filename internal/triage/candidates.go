@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
@@ -125,7 +126,7 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 			return candidate{}, false, err
 		}
 	}
-	tmpl := state.Admission{Issue: n, Mode: string(t.cfg.Intake.Mode), BodyHash: hash, LabeledAt: is.CreatedAt}
+	tmpl := state.Admission{Issue: n, Mode: string(t.cfg.Intake.Mode), BodyHash: hash, LabeledAt: later(is.CreatedAt, is.UpdatedAt)}
 	v, rec := gate(lead, stored, d, lr, tmpl)
 	t.log.Info("triage.gate", "issue", n, "role", role.Name, "verdict", v.String(), "outcome", string(d.Outcome), "reason", string(d.Reason), "actor", d.Actor)
 	switch v {
@@ -141,4 +142,14 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 		c.reason = intake.Reason(rec.Reason)
 	}
 	return c, true, nil
+}
+
+// later returns the later of two times. In all mode an admission has no
+// labeled event, so its LabeledAt is the issue's updated_at: any label event
+// before the admission is at or before it.
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }

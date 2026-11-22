@@ -319,3 +319,37 @@ func TestRegateInAllModeNeedsAHumanLabel(t *testing.T) {
 		t.Fatalf("not re-gated: prepared %d labels %v", len(h.ex.prepared), h.issue(n).Labels)
 	}
 }
+
+// A relabel that predates the edit does not re-admit it; only one after the
+// re-gate does.
+func TestRelabelBeforeEditStaysRegated(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	m := h.human("t", "original", lead)
+	h.labelledBy(m, lead, "maint", "maintain", t0.Add(time.Hour))
+	h.mustTick()
+	if err := h.store.Complete(ctx, h.jobsOf(m)[0].ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range []string{lead, labels.Running(labels.StageTriage, "lead")} {
+		_ = h.gh.RemoveLabel(ctx, m, l)
+	}
+	if err := h.gh.AddLabels(ctx, m, labels.Done(labels.StageTriage, "lead"), labels.Request(labels.StageTriage, "architect")); err != nil {
+		t.Fatal(err)
+	}
+	// The maintainer relabels first, then the author edits.
+	h.labelledBy(m, lead, "maint", "maintain", t0.Add(2*time.Hour))
+	body := "edited after the relabel"
+	if err := h.gh.UpdateIssue(ctx, m, github.IssueUpdate{Body: &body}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(h.ex.prepared)
+	h.mustTick()
+	if len(h.ex.prepared) != before || !h.has(m, labels.NeedsHuman) {
+		t.Fatalf("not re-gated: prepared %d labels %v", len(h.ex.prepared), h.issue(m).Labels)
+	}
+	a, err := h.store.Admission(ctx, m)
+	if err != nil || a.RegatedAt.IsZero() || a.RegatedHash != BodyHash(h.issue(m)) {
+		t.Errorf("admission = %+v, %v", a, err)
+	}
+}

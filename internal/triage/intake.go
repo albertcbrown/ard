@@ -117,8 +117,8 @@ func (v verdict) String() string { return [...]string{"pass", "skip", "refuse", 
 // issue's creation time (as LabeledAt) for a new record. The returned record,
 // when not nil, replaces the stored one.
 //
-// A body edit re-gates unless a maintainer re-applied the label after the
-// admission we hold. An app-labeled event never re-admits, or the sweep's own
+// A body edit re-gates (and records RegatedAt) unless a maintainer re-applied
+// the label after the edit was first seen. An app-labeled event never re-admits, or the sweep's own
 // ard:pending would defeat the re-gate in all mode.
 func gate(lead bool, stored *state.Admission, d, labelRules intake.Decision, tmpl state.Admission) (verdict, *state.Admission) {
 	if lead && d.Outcome != intake.OutcomeAdmit {
@@ -141,7 +141,7 @@ func gate(lead bool, stored *state.Admission, d, labelRules intake.Decision, tmp
 	if stored.BodyHash == tmpl.BodyHash {
 		return vPass, nil
 	}
-	if labelRules.Outcome == intake.OutcomeAdmit && labelRules.Reason == intake.ReasonAuthorised && labelRules.At.After(stored.LabeledAt) {
+	if labelRules.Outcome == intake.OutcomeAdmit && labelRules.Reason == intake.ReasonAuthorised && !stored.RegatedAt.IsZero() && labelRules.At.After(stored.RegatedAt) {
 		r := tmpl
 		r.Reason, r.LabeledBy, r.LabeledAt = string(labelRules.Reason), labelRules.Actor, labelRules.At
 		return vPass, &r
@@ -293,6 +293,9 @@ func (t *tick) regate(ctx context.Context, is github.Issue, hash string) error {
 		t.log.Info("triage.would_regate", "issue", n)
 		return nil
 	}
+	if err := t.markRegated(ctx, is, hash); err != nil {
+		return err
+	}
 	marker := fmt.Sprintf("<!-- %striage regate body=%s -->", labels.Prefix, hash[:12])
 	text := fmt.Sprintf("**ard · triage · paused**\n\nThe title or body of this issue changed after it was admitted for triage, so ard stopped. "+
 		"A maintainer can review the change, re-apply `%s` and remove `%s` to continue.", label, labels.NeedsHuman)
@@ -303,5 +306,23 @@ func (t *tick) regate(ctx context.Context, is github.Issue, hash string) error {
 		return fmt.Errorf("triage issue %d: add %s: %w", n, labels.NeedsHuman, err)
 	}
 	t.event(ctx, n, "regate", "regate", "body-changed", "")
+	return nil
+}
+
+// markRegated records, the first time an issue is re-gated for a hash, the
+// issue's updated_at: a re-admitting relabel must come after it.
+func (t *tick) markRegated(ctx context.Context, is github.Issue, hash string) error {
+	st := t.l.d.Store
+	a, err := st.Admission(ctx, is.Number)
+	if err != nil {
+		return fmt.Errorf("triage issue %d: read admission: %w", is.Number, err)
+	}
+	if a.RegatedHash == hash && !a.RegatedAt.IsZero() {
+		return nil
+	}
+	a.RegatedAt, a.RegatedHash = is.UpdatedAt, hash
+	if err := st.SetAdmission(ctx, a); err != nil {
+		return fmt.Errorf("triage issue %d: %w", is.Number, err)
+	}
 	return nil
 }

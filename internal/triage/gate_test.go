@@ -13,11 +13,12 @@ func TestGate(t *testing.T) {
 	h1, h2 := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	at := t0.Add(time.Hour)
 	stored := func(hash string) *state.Admission {
-		return &state.Admission{Issue: 5, Mode: "label", Reason: "authorised-labeler", LabeledBy: "maint", LabeledAt: at, BodyHash: hash}
+		return &state.Admission{Issue: 5, Mode: "label", Reason: "authorised-labeler", LabeledBy: "maint", LabeledAt: at, BodyHash: hash, RegatedAt: at}
 	}
 	admit := func(r intake.Reason, when time.Time) intake.Decision {
 		return intake.Decision{Outcome: intake.OutcomeAdmit, Reason: r, Actor: "maint", At: when}
 	}
+	noRegate := func(a *state.Admission) *state.Admission { a.RegatedAt = time.Time{}; return a }
 	tmpl := state.Admission{Issue: 5, Mode: "label", BodyHash: h2, LabeledAt: t0}
 	tests := []struct {
 		name       string
@@ -37,6 +38,10 @@ func TestGate(t *testing.T) {
 		{"lead skipped", true, nil, intake.Decision{Outcome: intake.OutcomeSkip, Reason: intake.ReasonLabelAbsent}, intake.Decision{}, vSkip, false, "", ""},
 		{"lead, changed hash, no newer relabel: re-gate", true, stored(h1), admit(intake.ReasonAuthorised, at), admit(intake.ReasonAuthorised, at), vRegate, false, "", ""},
 		{"lead, changed hash, older relabel: re-gate", true, stored(h1), admit(intake.ReasonAuthorised, at.Add(-time.Minute)), admit(intake.ReasonAuthorised, at.Add(-time.Minute)), vRegate, false, "", ""},
+		{"lead, changed hash, never re-gated yet: re-gate even with a later relabel", true, noRegate(stored(h1)), admit(intake.ReasonAuthorised, at.Add(time.Hour)), admit(intake.ReasonAuthorised, at.Add(time.Hour)), vRegate, false, "", ""},
+		{"all mode record, authorised relabel between creation and admission, changed hash: re-gate", true,
+			&state.Admission{Issue: 5, Mode: "all", Reason: "all-mode", LabeledAt: at, BodyHash: h1},
+			intake.Decision{Outcome: intake.OutcomeAdmit, Reason: intake.ReasonAllMode}, admit(intake.ReasonAuthorised, t0.Add(time.Minute)), vRegate, false, "", ""},
 		{"lead, changed hash, newer authorised relabel: pass and replace", true, stored(h1), admit(intake.ReasonAuthorised, at.Add(time.Hour)), admit(intake.ReasonAuthorised, at.Add(time.Hour)), vPass, true, "maint", "authorised-labeler"},
 		{"all mode, changed hash, no relabel: re-gate", true, stored(h1), intake.Decision{Outcome: intake.OutcomeAdmit, Reason: intake.ReasonAllMode},
 			intake.Decision{Outcome: intake.OutcomeSkip, Reason: intake.ReasonLabelAbsent}, vRegate, false, "", ""},

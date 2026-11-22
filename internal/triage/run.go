@@ -45,10 +45,8 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 	}
 	inputs := []executor.File{{Path: inputDir(n) + "/issue.md", Data: Snapshot(c.issue)}}
 	untrusted := []string{inputDir(n) + "/issue.md"}
-	if len(comments) > 0 {
-		inputs = append(inputs, executor.File{Path: inputDir(n) + "/comments.md", Data: Comments(comments)})
-		untrusted = append(untrusted, inputDir(n)+"/comments.md")
-	}
+	inputs = append(inputs, executor.File{Path: inputDir(n) + "/comments.md", Data: Comments(comments)})
+	untrusted = append(untrusted, inputDir(n)+"/comments.md")
 
 	// 2. The claim record.
 	data, _ := json.Marshal(map[string]string{"admission_reason": string(c.reason), "labeled_by": labeledBy(c)})

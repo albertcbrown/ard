@@ -33,22 +33,32 @@ type Admission struct {
 	BodyHash   string
 	AdmittedAt time.Time // controller clock, informational
 	JobID      string    // the lead job claimed on this admission
+	// RegatedAt is the issue's updated_at (GitHub clock) when the edit that
+	// changed the hash was first seen and the issue was re-gated; zero when
+	// not re-gated. A re-admitting relabel must come after it.
+	RegatedAt time.Time
+	// RegatedHash is the body hash RegatedAt was recorded for.
+	RegatedHash string
 }
 
 // Admission returns the admission of issue, or ErrNotFound.
 func (s *Store) Admission(ctx context.Context, issue int) (Admission, error) {
 	var a Admission
-	var by, job sql.NullString
+	var by, job, rhash sql.NullString
 	var labeled, admitted int64
-	err := s.db.QueryRowContext(ctx, `SELECT issue, mode, reason, labeled_by, labeled_at, body_hash, admitted_at, job_id
-		FROM admissions WHERE issue = ?`, issue).Scan(&a.Issue, &a.Mode, &a.Reason, &by, &labeled, &a.BodyHash, &admitted, &job)
+	var regated sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT issue, mode, reason, labeled_by, labeled_at, body_hash, admitted_at, job_id, regated_at, regated_hash
+		FROM admissions WHERE issue = ?`, issue).Scan(&a.Issue, &a.Mode, &a.Reason, &by, &labeled, &a.BodyHash, &admitted, &job, &regated, &rhash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Admission{}, fmt.Errorf("admission of issue %d: %w", issue, ErrNotFound)
 	}
 	if err != nil {
 		return Admission{}, fmt.Errorf("read admission of issue %d: %w", issue, err)
 	}
-	a.LabeledBy, a.JobID = by.String, job.String
+	a.LabeledBy, a.JobID, a.RegatedHash = by.String, job.String, rhash.String
+	if regated.Valid {
+		a.RegatedAt = time.Unix(regated.Int64, 0).UTC()
+	}
 	a.LabeledAt, a.AdmittedAt = time.Unix(labeled, 0).UTC(), time.Unix(admitted, 0).UTC()
 	return a, nil
 }
@@ -69,18 +79,25 @@ func (s *Store) SetAdmission(ctx context.Context, a Admission) error {
 	if at.IsZero() {
 		at = s.now()
 	}
-	var by, job any
+	var by, job, regated, rhash any
+	if !a.RegatedAt.IsZero() {
+		regated = a.RegatedAt.Unix()
+	}
+	if a.RegatedHash != "" {
+		rhash = a.RegatedHash
+	}
 	if a.LabeledBy != "" {
 		by = a.LabeledBy
 	}
 	if a.JobID != "" {
 		job = a.JobID
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO admissions(issue, mode, reason, labeled_by, labeled_at, body_hash, admitted_at, job_id)
-		VALUES(?,?,?,?,?,?,?,?)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO admissions(issue, mode, reason, labeled_by, labeled_at, body_hash, admitted_at, job_id, regated_at, regated_hash)
+		VALUES(?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(issue) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, labeled_by=excluded.labeled_by,
-			labeled_at=excluded.labeled_at, body_hash=excluded.body_hash, admitted_at=excluded.admitted_at, job_id=excluded.job_id`,
-		a.Issue, a.Mode, a.Reason, by, a.LabeledAt.Unix(), a.BodyHash, at.Unix(), job); err != nil {
+			labeled_at=excluded.labeled_at, body_hash=excluded.body_hash, admitted_at=excluded.admitted_at, job_id=excluded.job_id,
+			regated_at=excluded.regated_at, regated_hash=excluded.regated_hash`,
+		a.Issue, a.Mode, a.Reason, by, a.LabeledAt.Unix(), a.BodyHash, at.Unix(), job, regated, rhash); err != nil {
 		return fmt.Errorf("set admission of issue %d: %w", a.Issue, err)
 	}
 	return nil

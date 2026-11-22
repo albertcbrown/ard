@@ -69,6 +69,9 @@ func Comments(cs []github.Comment) []byte {
 	if omitted > 0 {
 		fmt.Fprintf(&b, "[%d earlier comments omitted]\n\n", omitted)
 	}
+	if len(parts) == 0 {
+		b.WriteString("No comments.\n")
+	}
 	for i := len(parts) - 1; i >= 0; i-- {
 		b.WriteString(parts[i] + "\n")
 	}

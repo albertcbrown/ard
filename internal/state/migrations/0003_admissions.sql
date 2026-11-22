@@ -6,5 +6,7 @@ CREATE TABLE admissions(
   labeled_at INTEGER NOT NULL,
   body_hash TEXT NOT NULL,
   admitted_at INTEGER NOT NULL,
-  job_id TEXT
+  job_id TEXT,
+  regated_at INTEGER,
+  regated_hash TEXT
 );
