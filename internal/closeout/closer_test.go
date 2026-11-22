@@ -18,7 +18,7 @@ import (
 )
 
 func (e *env) lead() Job {
-	e.write(".ard/7/lead.md", roleFile("lead", "done", "next: [triage:architect, review:license-review]", "worker: engineer"))
+	e.write(".ard/7/triage-lead.md", roleFile("lead", "done", "next: [triage:architect, review:license-review]", "worker: engineer"))
 	e.write(".ard/7/plan.md", "the plan")
 	return e.claim(StageTriage, "lead")
 }
@@ -60,7 +60,7 @@ func TestRunLeadDone(t *testing.T) {
 		t.Fatalf("Run = %s, %v", out, err)
 	}
 	e.assertLeadClosed(j)
-	for _, want := range []string{".ard/7/lead.md", ".ard/7/plan.md", logPath} {
+	for _, want := range []string{".ard/7/triage-lead.md", ".ard/7/plan.md", logPath} {
 		found := false
 		for _, files := range e.cm.commits {
 			if _, ok := files[want]; ok {
@@ -93,7 +93,7 @@ func TestRunLeadDone(t *testing.T) {
 
 func TestRunReviewChangesTargetsPR(t *testing.T) {
 	e := newEnv(t)
-	e.write(".ard/7/eng-review.md", roleFile("eng-review", "done", "verdict: changes"))
+	e.write(".ard/7/review-eng-review.md", roleFile("eng-review", "done", "verdict: changes"))
 	j := e.claim(StageReview, "eng-review")
 	out, err := New(e.d).Run(context.Background(), j)
 	if err != nil || out != OutcomeChanges {
@@ -116,7 +116,7 @@ func TestRunReviewChangesTargetsPR(t *testing.T) {
 
 func TestRunWorkerDoneRequestsReviewOnPR(t *testing.T) {
 	e := newEnv(t)
-	e.write(".ard/7/engineer.md", roleFile("engineer", "done", "next: [review:eng-review]"))
+	e.write(".ard/7/worker-engineer.md", roleFile("engineer", "done", "next: [review:eng-review]"))
 	j := e.claim(StageWorker, "engineer")
 	j.PR = e.pr
 	if _, err := New(e.d).Run(context.Background(), j); err != nil {
@@ -152,7 +152,7 @@ func TestRunFailedAndNeedsHuman(t *testing.T) {
 	})
 	t.Run("blocked", func(t *testing.T) {
 		e := newEnv(t)
-		e.write(".ard/7/lead.md", roleFile("lead", "blocked", "next: [triage:architect]"))
+		e.write(".ard/7/triage-lead.md", roleFile("lead", "blocked", "next: [triage:architect]"))
 		j := e.claim(StageTriage, "lead")
 		out, err := New(e.d).Run(context.Background(), j)
 		if err != nil || out != OutcomeNeedsHuman {
@@ -169,7 +169,7 @@ func TestRunFailedAndNeedsHuman(t *testing.T) {
 	})
 	t.Run("secret in plan.md", func(t *testing.T) {
 		e := newEnv(t)
-		e.write(".ard/7/lead.md", roleFile("lead", "done"))
+		e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
 		e.write(".ard/7/plan.md", planted())
 		j := e.claim(StageTriage, "lead")
 		out, err := New(e.d).Run(context.Background(), j)
@@ -195,7 +195,7 @@ func TestRunFailedAndNeedsHuman(t *testing.T) {
 
 func TestRawLogKept(t *testing.T) {
 	e := newEnv(t)
-	e.write(".ard/7/lead.md", roleFile("lead", "done"))
+	e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
 	j := e.claim(StageTriage, "lead")
 	if err := os.WriteFile(j.LogPath, []byte(planted()), 0o600); err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestRawLogKept(t *testing.T) {
 	// Redaction failure also keeps it.
 	e2 := newEnv(t)
 	e2.d.NewRedactor = func(Job) (Redactor, error) { return brokenRedactor{}, nil }
-	e2.write(".ard/7/lead.md", roleFile("lead", "done"))
+	e2.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
 	j2 := e2.claim(StageTriage, "lead")
 	if _, err := New(e2.d).Run(context.Background(), j2); err != nil {
 		t.Fatal(err)
@@ -304,7 +304,7 @@ func TestResumeUsesStagedCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The agent's file changes after Prepare; the worktree is even removed.
-	e.write(".ard/7/lead.md", roleFile("lead", "blocked"))
+	e.write(".ard/7/triage-lead.md", roleFile("lead", "blocked"))
 	e.write(".ard/7/plan.md", "tampered")
 	if err := os.RemoveAll(e.repo); err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestResumeUsesStagedCopy(t *testing.T) {
 	}
 	e.assertLeadClosed(j)
 	for _, files := range e.cm.commits {
-		if files[".ard/7/plan.md"] != "the plan" || !strings.Contains(files[".ard/7/lead.md"], "status: done") {
+		if files[".ard/7/plan.md"] != "the plan" || !strings.Contains(files[".ard/7/triage-lead.md"], "status: done") {
 			t.Errorf("committed changed bytes: %v", files)
 		}
 	}

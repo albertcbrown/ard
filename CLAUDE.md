@@ -10,7 +10,7 @@ ard is a controller that automates repository development: scanners → triage �
 
 ## Invariants — never violate
 
-1. **The controller owns every side effect.** Only controller code calls GitHub or runs `git commit`/`push`/`merge`. Agents edit files in a worktree and report through `.ard/<issue#>/<role>.md` frontmatter; they never touch labels, comments or branches.
+1. **The controller owns every side effect.** Only controller code calls GitHub or runs `git commit`/`push`/`merge`. Agents edit files in a worktree and report through `.ard/<issue#>/<stage>-<role>.md` frontmatter; they never touch labels, comments or branches.
 2. **Agents hold no GitHub token.** Credentials stay in the controller and executor.
 3. **The main-branch committer writes only `.ard/<issue#>/`.** Config (`.ard/config.yaml`) and role directories (`.ard/<type>/<name>/`) are human-owned. Only `ard init` may *propose* them, on the `ard-init` branch through `committer.Init` and a PR a human merges; it never writes main. Workers' diff guard, the committer's path guards and the merger's protected paths enforce it.
 4. **Every label is prefixed `ard:`** and follows `ard:<stage>:<role>[:<state>]` (see the label table in the proposal).

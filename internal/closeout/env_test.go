@@ -228,6 +228,26 @@ func (e *env) write(rel, body string) {
 	}
 }
 
+// commitAll commits the clone's working tree and returns the new HEAD, so a
+// test can put files at the job's base: set j.BaseSHA to the result.
+func (e *env) commitAll(msg string) string {
+	e.t.Helper()
+	gittest.Run(e.t, e.repo, "add", "-A")
+	gittest.Run(e.t, e.repo, "commit", "-m", msg)
+	e.base = strings.TrimSpace(gittest.Run(e.t, e.repo, "rev-parse", "HEAD"))
+	return e.base
+}
+
+// scrub does what executor.Job.Scrub does before the agent runs and records
+// it in j.Scrubbed, as the handle does.
+func (e *env) scrub(j *Job, rel string) {
+	e.t.Helper()
+	if err := os.Remove(filepath.Join(e.repo, filepath.FromSlash(rel))); err != nil {
+		e.t.Fatal(err)
+	}
+	j.Scrubbed = append(j.Scrubbed, rel)
+}
+
 func roleFile(role, status string, extra ...string) string {
 	return "---\nrole: " + role + "\nstatus: " + status + "\nattempt: 1\n" + strings.Join(extra, "\n") + "\n---\nSummary of the work.\n"
 }
