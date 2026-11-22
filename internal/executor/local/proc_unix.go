@@ -82,6 +82,9 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 	if err := l.checkFixed(c.Fixed); err != nil {
 		return h, err
 	}
+	if err := l.checkConfigDir(h, c.Fixed); err != nil {
+		return h, err
+	}
 	var cmd *exec.Cmd
 	if h.Kind == "docker" {
 		cmd = exec.Command(l.dockerBin, l.runArgv(h, c, c.Stdin != nil)...)

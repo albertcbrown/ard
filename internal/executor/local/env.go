@@ -2,6 +2,8 @@ package local
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,6 +50,11 @@ func (l *Local) hostEnv(h executor.Handle) []string {
 
 // checkEnv validates Command.Env: only AllowEnv names may be added.
 func (l *Local) checkEnv(env []string) error {
+	// One credential per job: the CLI prefers the API key, so a second
+	// entry would silently win or be ignored.
+	if len(env) > 1 {
+		return fmt.Errorf("%w: at most one credential per job", executor.ErrForbiddenEnv)
+	}
 	for _, kv := range env {
 		name, _, ok := strings.Cut(kv, "=")
 		switch {
@@ -77,6 +84,55 @@ func (l *Local) checkFixed(env []string) error {
 		case !l.allowFixed[name]:
 			return fmt.Errorf("%w: %s is not in the fixed allow list", executor.ErrForbiddenEnv, name)
 		}
+	}
+	return nil
+}
+
+// checkConfigDir keeps a job on its own config dir. A Fixed entry for the
+// config-dir variable must equal View.ConfigDir, and a prepared dir must
+// still be the empty 0700 directory Prepare made.
+func (l *Local) checkConfigDir(h executor.Handle, fixed []string) error {
+	for _, kv := range fixed {
+		name, val, _ := strings.Cut(kv, "=")
+		if name == l.configDirEnv && (h.View.ConfigDir == "" || val != h.View.ConfigDir) {
+			return fmt.Errorf("%w: %s must be the job config dir", executor.ErrForbiddenEnv, name)
+		}
+	}
+	if h.View.ConfigDir == "" {
+		return nil
+	}
+	p := filepath.Join(h.Home, configDirName)
+	want := p
+	if h.Kind == "docker" {
+		want = "/ard-config"
+	}
+	if h.View.ConfigDir != want {
+		return fmt.Errorf("%w: config dir %q, want %q", executor.ErrNotPrepared, h.View.ConfigDir, want)
+	}
+	if rel, err := filepath.Rel(l.root, h.Home); err != nil || rel == ".." || strings.HasPrefix(rel, "../") || rel == "." {
+		return fmt.Errorf("%w: job home %s is not under %s", executor.ErrNotPrepared, h.Home, l.root)
+	}
+	if hst, err := os.Lstat(h.Home); err != nil || !hst.IsDir() {
+		return fmt.Errorf("%w: job home %s is not a directory", executor.ErrNotPrepared, h.Home)
+	}
+	fail := func(why string) error {
+		return fmt.Errorf("%w: config dir %s: %s", executor.ErrNotPrepared, p, why)
+	}
+	st, err := os.Lstat(p)
+	switch {
+	case err != nil:
+		return fail(err.Error())
+	case !st.IsDir():
+		return fail("not a directory")
+	case st.Mode().Perm() != 0o700:
+		return fail(fmt.Sprintf("mode %o, want 700", st.Mode().Perm()))
+	}
+	ents, err := os.ReadDir(p)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if len(ents) != 0 {
+		return fail("not empty")
 	}
 	return nil
 }

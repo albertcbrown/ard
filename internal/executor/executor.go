@@ -53,8 +53,10 @@ type File struct {
 	Data []byte
 }
 
-// Paths are the locations as the job process sees them.
-type Paths struct{ Work, Role, Sidecar string }
+// Paths are the locations as the job process sees them. ConfigDir is the
+// job's empty agent-CLI config dir (host: <home>/.claude; Docker:
+// /ard-config); it is empty on a handle stored before it existed.
+type Paths struct{ Work, Role, Sidecar, ConfigDir string }
 
 // Command is what to run. Paths must come from Handle.View.
 type Command struct {

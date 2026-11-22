@@ -2,6 +2,7 @@
 package claude
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -44,6 +45,23 @@ const (
 	isolationSettings = `{"includeGitInstructions":false,"disableAllHooks":true}`
 )
 
+// credentialEnv is the env var the CLI reads for each Auth. Exactly one is
+// passed: the CLI prefers ANTHROPIC_API_KEY over CLAUDE_CODE_OAUTH_TOKEN, so
+// passing both would silently bill the API key.
+var credentialEnv = map[agent.Auth]string{
+	agent.AuthAPIKey:     "ANTHROPIC_API_KEY",
+	agent.AuthOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN",
+}
+
+// CredentialEnv returns the env var name the CLI reads for a.
+func (*Adapter) CredentialEnv(a agent.Auth) (string, error) {
+	n, ok := credentialEnv[a]
+	if !ok {
+		return "", fmt.Errorf("spec Auth: %q: %w", a, agent.ErrInvalidSpec)
+	}
+	return n, nil
+}
+
 // Command builds the argv and environment. It touches no filesystem.
 func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 	if err := s.Validate(); err != nil {
@@ -77,6 +95,10 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 		argv = append(argv, "--max-turns="+strconv.Itoa(s.MaxTurns))
 	}
 	argv = append(argv, "--append-system-prompt-file="+s.PromptFile, "--", userMessage(s))
+	cred, err := a.CredentialEnv(s.Auth)
+	if err != nil {
+		return agent.Command{}, err
+	}
 	return agent.Command{
 		Argv: argv,
 		Env: map[string]string{
@@ -85,7 +107,7 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 			"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":     "1",
 		},
-		PassEnv: []string{"ANTHROPIC_API_KEY"},
+		PassEnv: []string{cred},
 	}, nil
 }
 

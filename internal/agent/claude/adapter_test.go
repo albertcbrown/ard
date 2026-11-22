@@ -15,7 +15,7 @@ import (
 
 func spec() agent.Spec {
 	return agent.Spec{Stage: agent.StageTriage, Role: "default", Issue: 42, PromptFile: "/role/prompt.txt",
-		Untrusted: []string{".ard/42/issue.md"}, ConfigDir: "/cfg", MaxBudgetUSD: 1.5}
+		Untrusted: []string{".ard/42/issue.md"}, ConfigDir: "/cfg", MaxBudgetUSD: 1.5, Auth: agent.AuthAPIKey}
 }
 
 func TestCommandArgv(t *testing.T) {
@@ -135,6 +135,8 @@ func TestCommandRejects(t *testing.T) {
 		name string
 		mod  func(*agent.Spec)
 	}{
+		{"auth empty", func(s *agent.Spec) { s.Auth = "" }},
+		{"auth unknown", func(s *agent.Spec) { s.Auth = "bogus" }},
 		{"stage", func(s *agent.Spec) { s.Stage = "merger" }},
 		{"role", func(s *agent.Spec) { s.Role = "Bad_Role" }},
 		{"issue 0", func(s *agent.Spec) { s.Issue = 0 }},
@@ -220,4 +222,44 @@ func FuzzUntrustedPath(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestCredentialEnv(t *testing.T) {
+	tests := []struct {
+		auth agent.Auth
+		want string
+	}{
+		{agent.AuthAPIKey, "ANTHROPIC_API_KEY"},
+		{agent.AuthOAuthToken, "CLAUDE_CODE_OAUTH_TOKEN"},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.auth), func(t *testing.T) {
+			a := New(Options{})
+			if n, err := a.CredentialEnv(tc.auth); err != nil || n != tc.want {
+				t.Fatalf("CredentialEnv = %q, %v", n, err)
+			}
+			s := spec()
+			s.Auth = tc.auth
+			c, err := a.Command(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(c.PassEnv, []string{tc.want}) {
+				t.Errorf("PassEnv = %v, want exactly [%s]", c.PassEnv, tc.want)
+			}
+			// CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is deliberately not set: on
+			// 2.1.328 it flips init.permissionMode from dontAsk to default.
+			if _, ok := c.Env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"]; ok {
+				t.Errorf("env scrub set: %v", c.Env)
+			}
+			if _, ok := c.Env[tc.want]; ok {
+				t.Errorf("credential value slot in Env")
+			}
+		})
+	}
+	for _, bad := range []agent.Auth{"", "bogus"} {
+		if _, err := New(Options{}).CredentialEnv(bad); !errors.Is(err, agent.ErrInvalidSpec) {
+			t.Errorf("CredentialEnv(%q) err = %v", bad, err)
+		}
+	}
 }

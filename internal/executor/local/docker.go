@@ -69,6 +69,9 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 	if h.SidecarDir != "" {
 		a = append(a, "-v", h.SidecarDir+":/sidecar:ro")
 	}
+	if h.View.ConfigDir != "" {
+		a = append(a, "-v", filepath.Join(h.Home, configDirName)+":/ard-config")
+	}
 	a = append(a, "-w", "/work", "-e", "HOME=/tmp", "-e", "LANG=C.UTF-8", "-e", "GIT_TERMINAL_PROMPT=0")
 	for _, kv := range ardEnv(h) {
 		a = append(a, "-e", kv)

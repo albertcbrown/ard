@@ -41,6 +41,7 @@ internal/executor/    Executor interface and plain-data job types
 internal/executor/local/  git worktree + host subprocess or docker run, watchdog, logs
 internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
 internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
+internal/modelauth/ picks the one model credential (OAuth token or API key) from the controller env and carries its value to the executor; never logged
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
 internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues

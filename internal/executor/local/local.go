@@ -19,12 +19,15 @@ import (
 
 // Options configures Local.
 type Options struct {
-	Root         string        // default $HOME/.ard
-	Git          gitRunner     // default: the git binary on PATH
-	DockerBin    string        // default "docker"
-	PathEnv      string        // PATH for host jobs; default the controller's PATH
-	AllowEnv     []string      // model-key names; default ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
-	AllowFixed   []string      // names allowed in Command.Fixed; default CLAUDE_CONFIG_DIR, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
+	Root       string    // default $HOME/.ard
+	Git        gitRunner // default: the git binary on PATH
+	DockerBin  string    // default "docker"
+	PathEnv    string    // PATH for host jobs; default the controller's PATH
+	AllowEnv   []string  // model-key names; default ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+	AllowFixed []string  // names allowed in Command.Fixed; default CLAUDE_CONFIG_DIR, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
+	// ConfigDirEnv is the Fixed name whose value must equal View.ConfigDir,
+	// the job's own config dir. Default CLAUDE_CONFIG_DIR.
+	ConfigDirEnv string
 	KillGrace    time.Duration // default 10s
 	BuildTimeout time.Duration // default 15m
 	Now          func() time.Time
@@ -40,6 +43,7 @@ type Local struct {
 	root, dockerBin, pathEnv string
 	git                      gitRunner
 	allowEnv, allowFixed     map[string]bool
+	configDirEnv             string
 	grace, buildTimeout      time.Duration
 	now                      func() time.Time
 	log                      *slog.Logger
@@ -85,6 +89,9 @@ func New(o Options) (*Local, error) {
 	if o.AllowFixed == nil {
 		o.AllowFixed = []string{"CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"}
 	}
+	if o.ConfigDirEnv == "" {
+		o.ConfigDirEnv = "CLAUDE_CONFIG_DIR"
+	}
 	if o.KillGrace <= 0 {
 		o.KillGrace = 10 * time.Second
 	}
@@ -105,10 +112,15 @@ func New(o Options) (*Local, error) {
 	for _, n := range o.AllowFixed {
 		fixed[n] = true
 	}
-	return &Local{allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
+	return &Local{configDirEnv: o.ConfigDirEnv, allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
 		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log, onHostUntrusted: o.OnHostUntrusted,
 		tracks: map[string]*track{}}, nil
 }
+
+// configDirName is the per-job agent config dir inside the job home. Under
+// HOME, the CLI's default ~/.claude resolves to the same fresh dir even if
+// the config-dir variable were dropped.
+const configDirName = ".claude"
 
 // Prepare creates the worktree, writes inputs, creates log files and, for a
 // Dockerfile role, ensures the image. It starts no process.
@@ -197,6 +209,16 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		return h, fmt.Errorf("create home: %w", err)
 	}
 	created = append(created, home)
+	// The config dir lives inside home, so Cleanup and this function's
+	// failure path remove it with home. 0700 is forced past the umask.
+	cfg := filepath.Join(home, configDirName)
+	if err = os.Mkdir(cfg, 0o700); err != nil {
+		return h, fmt.Errorf("create config dir: %w", err)
+	}
+	if err = os.Chmod(cfg, 0o700); err != nil {
+		return h, fmt.Errorf("create config dir: %w", err)
+	}
+	h.View.ConfigDir = cfg
 	if err = os.MkdirAll(logDir, 0o700); err != nil {
 		return h, fmt.Errorf("create log dir: %w", err)
 	}
@@ -214,7 +236,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		if h.Image, err = l.ensureImage(ctx, j, h.LogPath); err != nil {
 			return h, err
 		}
-		h.View = executor.Paths{Work: "/work", Role: "/role"}
+		h.View = executor.Paths{Work: "/work", Role: "/role", ConfigDir: "/ard-config"}
 		if j.SidecarDir != "" {
 			h.View.Sidecar = "/sidecar"
 		}
