@@ -68,6 +68,9 @@ internal/repopath/  owner/repo to lowercased, nested local path segments (state,
 internal/initcmd/   ard init: proposes the starter .ard/ as a PR on ard-init
 internal/roles/     starter .ard/ tree (config.yaml, role dirs) embedded for ard init
 internal/           config, github, committer, executor, agent, scanner, state, ...
+Dockerfile          the ard image (ghcr.io/albertcbrown/ard): ard plus the cve tools; no RUN on the target platform
+deploy/argocd/      ard-root app-of-apps chart (one Application per target repo); deploy/charts/ard-serve/ one ard serve
+deploy/test-*.sh    chart, image and repo checks for the above (`make chart-test`, `make image-test`)
 docs/proposal.md    design source of truth
 ```
 

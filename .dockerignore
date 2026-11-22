@@ -1,0 +1,16 @@
+# Build context for the root Dockerfile: Go sources only.
+.git
+.github
+.specs
+.worktrees
+.claude
+.ard
+bin
+dist
+deploy
+docs
+*.test
+*.out
+coverage.*
+*.db
+*.db-journal

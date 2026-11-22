@@ -1,0 +1,80 @@
+{{- include "ard-serve.guard" . -}}
+{{- $image := include "ard-serve.image" . -}}
+{{- $name := include "ard-serve.name" . -}}
+{{- /*
+One ard serve per repository. Recreate, never RollingUpdate: the leader lock is an flock under ~/.ard/locks, so a new
+pod beside the old one would block on it. Pause: kubectl -n ard exec deploy/<name> -- touch
+/home/ard/.ard/pause/<owner>/<repo> (the kill switch; rm to resume).
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ard-serve.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ard-serve.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ard
+          image: {{ $image }}
+          args:
+            - serve
+            - --dry-run
+            - --repo
+            - {{ .Values.instance.repo }}
+          # ard serve seeds and owns its bare clone at ~/.ard/repos/<owner>/<repo>.git (#113); the working directory is
+          # only read for the local `paused` key.
+          workingDir: /home/ard
+          env:
+            - {name: HOME, value: /home/ard}
+            - {name: TMPDIR, value: /var/tmp}
+            - {name: GIT_TERMINAL_PROMPT, value: "0"}
+            - name: ARD_GITHUB_APP_ID
+              valueFrom: {secretKeyRef: {name: {{ .Values.githubApp.secretName }}, key: ARD_GITHUB_APP_ID}}
+            - name: ARD_GITHUB_INSTALLATION_ID
+              valueFrom: {secretKeyRef: {name: {{ .Values.githubApp.secretName }}, key: ARD_GITHUB_INSTALLATION_ID}}
+            - {name: ARD_GITHUB_PRIVATE_KEY_FILE, value: /var/run/ard/github-app/private-key.pem}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: home, mountPath: /home/ard}
+            - {name: tmp, mountPath: /var/tmp}
+            - {name: github-app, mountPath: /var/run/ard/github-app, readOnly: true}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: {{ $name }}-home
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.tmpSizeLimit }}
+        - name: github-app
+          secret:
+            secretName: {{ .Values.githubApp.secretName }}
+            items:
+              - {key: private-key.pem, path: private-key.pem}
+            defaultMode: 0400

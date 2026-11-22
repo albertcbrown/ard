@@ -1,0 +1,58 @@
+{{- /*
+One child Application per instance. The child's chart is read at the pinned commit (image.commit), so the
+chart and the image move together and only commits that passed CI and were published are deployed.
+Children are named ard-<instance> and belong to .Values.project; a cluster should admit nothing else from
+this chart (an admission policy on the Argo CD tracking id does that, since a child may name any project).
+*/ -}}
+{{- $img := .Values.image -}}
+{{- if $img.digest }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $img.digest) }}
+{{- fail (printf "image.digest must be sha256:<64 hex>, got %q" $img.digest) }}
+{{- end }}
+{{- if not (regexMatch "^[0-9a-f]{40}$" ($img.commit | default "")) }}
+{{- fail (printf "image.commit must be a 40-character sha, got %q" $img.commit) }}
+{{- end }}
+{{- range .Values.instances }}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$" .name) }}
+{{- fail (printf "instance name %q must be a DNS label of at most 42 characters" .name) }}
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ard-{{ .name }}
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: ard
+    ard.instance: {{ .name }}
+spec:
+  project: {{ $.Values.project }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    path: deploy/charts/ard-serve
+    targetRevision: {{ $img.commit }}
+    helm:
+      releaseName: ard-{{ .name }}
+      valuesObject:
+        {{- $v := deepCopy ($.Values.site | default dict) }}
+        {{- $_ := set $v "instance" (dict "name" .name "repo" .repo "dryRun" .dryRun) }}
+        {{- $_ := set $v "image" (dict "repository" $img.repository "digest" $img.digest) }}
+        {{- toYaml $v | nindent 8 }}
+  destination:
+    server: {{ $.Values.destination.server }}
+    namespace: {{ $.Values.destination.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 2
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 2m
+    syncOptions:
+      - FailOnSharedResource=true
+      - PrunePropagationPolicy=foreground
+{{- end }}
+{{- end }}

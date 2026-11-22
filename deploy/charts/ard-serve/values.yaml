@@ -1,0 +1,36 @@
+instance:
+  name: albertcbrown-ard
+  repo: albertcbrown/ard
+  # dry-run only for now: live ard serve in a cluster needs the k8s executor (#54) and a Lease lock.
+  dryRun: true
+
+image:
+  repository: ghcr.io/albertcbrown/ard
+  # Set from the image pin (by ard-root); the chart refuses to render without a digest.
+  digest: ""
+
+# The ard GitHub App credentials: a Secret with keys ARD_GITHUB_APP_ID, ARD_GITHUB_INSTALLATION_ID and
+# private-key.pem. Either create it yourself, or let External Secrets create it from one item of a secret
+# store whose fields carry those three names (externalSecret.enabled).
+githubApp:
+  secretName: ard-github-app
+  externalSecret:
+    enabled: false
+    storeKind: ClusterSecretStore
+    storeName: ""          # required when enabled
+    itemId: ""             # required when enabled: the store's key for the item
+    itemTitle: ""          # written as a comment beside the key
+    refreshInterval: 4h
+
+storage:
+  size: 20Gi
+  storageClassName: ""     # empty: the cluster's default StorageClass
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 4Gi
+
+tmpSizeLimit: 4Gi

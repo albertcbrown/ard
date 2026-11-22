@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test lint fmt clean cve-fixtures
+.PHONY: build test lint fmt clean cve-fixtures chart-test image-test
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ard ./cmd/ard
@@ -15,6 +15,16 @@ lint:
 
 fmt:
 	gofmt -w .
+
+# Renders the two Argo CD charts under deploy/ and checks them (needs helm and yq;
+# run by the ard-ci pipeline, not part of `make test`).
+chart-test:
+	deploy/test-charts.sh
+
+# Builds the ard image for both platforms and checks it (needs Docker buildx and
+# network; not part of `make test`).
+image-test:
+	deploy/test-image.sh
 
 # Regenerates the real cve scanner fixtures inside the pinned tool image.
 # Needs Docker and network; not part of `make test`.
