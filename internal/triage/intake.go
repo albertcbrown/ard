@@ -141,7 +141,7 @@ func gate(lead bool, stored *state.Admission, d, labelRules intake.Decision, tmp
 	if stored.BodyHash == tmpl.BodyHash {
 		return vPass, nil
 	}
-	if labelRules.Outcome == intake.OutcomeAdmit && labelRules.Reason == intake.ReasonAuthorised && !stored.RegatedAt.IsZero() && labelRules.At.After(stored.RegatedAt) {
+	if labelRules.Outcome == intake.OutcomeAdmit && labelRules.Reason == intake.ReasonAuthorised && !stored.RegatedAt.IsZero() && stored.RegatedHash == tmpl.BodyHash && labelRules.At.After(stored.RegatedAt) {
 		r := tmpl
 		r.Reason, r.LabeledBy, r.LabeledAt = string(labelRules.Reason), labelRules.Actor, labelRules.At
 		return vPass, &r

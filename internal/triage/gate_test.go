@@ -13,7 +13,7 @@ func TestGate(t *testing.T) {
 	h1, h2 := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	at := t0.Add(time.Hour)
 	stored := func(hash string) *state.Admission {
-		return &state.Admission{Issue: 5, Mode: "label", Reason: "authorised-labeler", LabeledBy: "maint", LabeledAt: at, BodyHash: hash, RegatedAt: at}
+		return &state.Admission{Issue: 5, Mode: "label", Reason: "authorised-labeler", LabeledBy: "maint", LabeledAt: at, BodyHash: hash, RegatedAt: at, RegatedHash: h2}
 	}
 	admit := func(r intake.Reason, when time.Time) intake.Decision {
 		return intake.Decision{Outcome: intake.OutcomeAdmit, Reason: r, Actor: "maint", At: when}
@@ -38,6 +38,7 @@ func TestGate(t *testing.T) {
 		{"lead skipped", true, nil, intake.Decision{Outcome: intake.OutcomeSkip, Reason: intake.ReasonLabelAbsent}, intake.Decision{}, vSkip, false, "", ""},
 		{"lead, changed hash, no newer relabel: re-gate", true, stored(h1), admit(intake.ReasonAuthorised, at), admit(intake.ReasonAuthorised, at), vRegate, false, "", ""},
 		{"lead, changed hash, older relabel: re-gate", true, stored(h1), admit(intake.ReasonAuthorised, at.Add(-time.Minute)), admit(intake.ReasonAuthorised, at.Add(-time.Minute)), vRegate, false, "", ""},
+		{"lead, edited again after the re-gate (other hash), later relabel: re-gate", true, func() *state.Admission { a := stored(h1); a.RegatedHash = h1; return a }(), admit(intake.ReasonAuthorised, at.Add(time.Hour)), admit(intake.ReasonAuthorised, at.Add(time.Hour)), vRegate, false, "", ""},
 		{"lead, changed hash, never re-gated yet: re-gate even with a later relabel", true, noRegate(stored(h1)), admit(intake.ReasonAuthorised, at.Add(time.Hour)), admit(intake.ReasonAuthorised, at.Add(time.Hour)), vRegate, false, "", ""},
 		{"all mode record, authorised relabel between creation and admission, changed hash: re-gate", true,
 			&state.Admission{Issue: 5, Mode: "all", Reason: "all-mode", LabeledAt: at, BodyHash: h1},
