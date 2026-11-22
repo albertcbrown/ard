@@ -59,6 +59,15 @@ func TestNeutraliseRefs(t *testing.T) {
 		{"no keyword", "see #12", "see #12", false, false},
 		{"keyword no ref", "fixes the build", "fixes the build", false, false},
 		{"empty", "", "", false, false},
+		{"entity decimal", "Fixes &#35;12", "Fixes issue 12", true, false},
+		{"entity hex", "fixes &#x23;12", "fixes issue 12", true, false},
+		{"entity padded", "Fixes &#035;7", "Fixes issue 7", true, false},
+		{"entity num", "Fixes &num;12", "Fixes issue 12", true, false},
+		{"backslash", "Fixes \\#12", "Fixes issue 12", true, false},
+		{"entity cross", "Closes o/r&#35;3", "Closes o/r issue 3", true, false},
+		{"entity and backslash list", "Fixes &#35;12 and \\#13", "Fixes issue 12 and issue 13", true, false},
+		{"entity no keyword", "see &#35;12", "see &#35;12", false, false},
+		{"digits in number", "Fixes #35", "Fixes issue 35", true, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

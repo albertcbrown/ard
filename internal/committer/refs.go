@@ -8,9 +8,12 @@ import (
 )
 
 const (
-	refHash  = `[#\x{FF03}]\d+`
+	// hashMark is "#" in its plain, full-width, HTML-entity and
+	// backslash-escaped forms; GitHub renders each of them as "#" in markdown.
+	hashMark = `(?:[#\x{FF03}]|&#0*35;|&#[xX]0*23;|&num;|\\#)`
+	refHash  = hashMark + `\d+`
 	refGH    = `GH-\d+`
-	refCross = `[\w.-]+/[\w.-]+[#\x{FF03}]\d+`
+	refCross = `[\w.-]+/[\w.-]+` + hashMark + `\d+`
 	refURL   = `(?:https?://)?[\w.-]+(?::\d+)?/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+`
 	// refAny tries the longest forms first so "o/r#12" is not read as "#12".
 	refAny = `(?:` + refURL + `|` + refCross + `|` + refGH + `|` + refHash + `)`
@@ -26,16 +29,18 @@ var (
 		// Optional markdown link text: "Fixes [text](url)".
 		`(?:[^\]\[\n]*\]\()?` +
 		refAny + `(?:[\s\p{Z}\p{Cf}]*(?:,|and|&)[\s\p{Z}\p{Cf}]*` + refAny + `)*`)
-	refRe      = regexp.MustCompile(`(?i)` + refAny)
-	urlRefRe   = regexp.MustCompile(`(?i)^(?:https?://)?[\w.-]+(?::\d+)?/([\w.-]+/[\w.-]+)/(?:issues|pull)/(\d+)$`)
-	crossRefRe = regexp.MustCompile(`^([\w.-]+/[\w.-]+)[#\x{FF03}](\d+)$`)
+	refRe       = regexp.MustCompile(`(?i)` + refAny)
+	urlRefRe    = regexp.MustCompile(`(?i)^(?:https?://)?[\w.-]+(?::\d+)?/([\w.-]+/[\w.-]+)/(?:issues|pull)/(\d+)$`)
+	crossRefRe  = regexp.MustCompile(`^([\w.-]+/[\w.-]+)` + hashMark + `(\d+)$`)
+	trailingNum = regexp.MustCompile(`\d+$`)
 )
 
 // NeutraliseRefs rewrites every issue or PR reference that sits directly
 // after a GitHub closing keyword (close, fix, resolve and their forms), so the
 // text can go in a commit message, PR title or PR body without closing
 // anything: "Fixes #12" becomes "Fixes issue 12". It handles #N, owner/repo#N,
-// GH-N and issue or PR URLs, with optional ":" or markdown emphasis between
+// GH-N and issue or PR URLs (the "#" may also be written as an HTML entity,
+// &#35; &#x23; &num;, or backslash-escaped, \#, which markdown renders as "#"), with optional ":" or markdown emphasis between
 // keyword and reference, and reference lists. References with no keyword
 // directly before them are left alone, as GitHub does not close on them.
 // It is idempotent.
@@ -67,5 +72,5 @@ func plainRef(r string) string {
 	if sm := crossRefRe.FindStringSubmatch(r); sm != nil {
 		return sm[1] + " issue " + sm[2]
 	}
-	return "issue " + r[strings.IndexAny(r, "0123456789"):]
+	return "issue " + trailingNum.FindString(r)
 }
