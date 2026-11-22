@@ -26,24 +26,27 @@ func TestCommandArgv(t *testing.T) {
 		want []string
 	}{
 		{"triage default", func(*agent.Spec) {}, []string{"claude", "-p", "--output-format=stream-json", "--verbose",
-			"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+			"--restricted", "--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 			"--permission-mode=dontAsk", "--permission-prompts=none",
+			`--settings={"includeGitInstructions":false,"disableAllHooks":true}`,
 			"--tools=Read,Glob,Grep,Edit,Write,Bash", "--allowed-tools=Read,Glob,Grep,Edit,Write,Bash",
 			"--disallowed-tools=Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
 			"--max-budget-usd=1.5", "--append-system-prompt-file=/role/prompt.txt", "--", msg}},
 		{"worker model turns readdir", func(s *agent.Spec) {
 			s.Stage, s.Model, s.MaxTurns, s.ReadDirs = agent.StageWorker, "claude-opus-4-5", 5, []string{"/sidecar"}
 		}, []string{"claude", "-p", "--output-format=stream-json", "--verbose",
-			"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+			"--restricted", "--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 			"--permission-mode=dontAsk", "--permission-prompts=none",
+			`--settings={"includeGitInstructions":false,"disableAllHooks":true}`,
 			"--tools=Read,Glob,Grep,Edit,Write,Bash", "--allowed-tools=Read,Glob,Grep,Edit,Write,Bash",
 			"--disallowed-tools=Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
 			"--add-dir=/sidecar", "--model=claude-opus-4-5", "--max-budget-usd=1.5", "--max-turns=5",
 			"--append-system-prompt-file=/role/prompt.txt", "--", userMessage(func() agent.Spec { s := spec(); s.Stage = agent.StageWorker; return s }())}},
 		{"tools override", func(s *agent.Spec) { s.Tools = []string{"Read", "Bash(ls *)"} },
 			[]string{"claude", "-p", "--output-format=stream-json", "--verbose",
-				"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+				"--restricted", "--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
 				"--permission-mode=dontAsk", "--permission-prompts=none",
+				`--settings={"includeGitInstructions":false,"disableAllHooks":true}`,
 				"--tools=Read,Bash", "--allowed-tools=Read,Bash(ls *)",
 				"--disallowed-tools=Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
 				"--max-budget-usd=1.5", "--append-system-prompt-file=/role/prompt.txt", "--", msg}},
@@ -59,7 +62,7 @@ func TestCommandArgv(t *testing.T) {
 			if !reflect.DeepEqual(c.Argv, tc.want) {
 				t.Errorf("argv:\n got %q\nwant %q", c.Argv, tc.want)
 			}
-			if c.Env["CLAUDE_CONFIG_DIR"] != "/cfg" || !reflect.DeepEqual(c.PassEnv, []string{"ANTHROPIC_API_KEY"}) {
+			if c.Env["CLAUDE_CONFIG_DIR"] != "/cfg" || c.Env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] != "1" || !reflect.DeepEqual(c.PassEnv, []string{"ANTHROPIC_API_KEY"}) {
 				t.Errorf("env %v pass %v", c.Env, c.PassEnv)
 			}
 		})
@@ -80,11 +83,22 @@ func flag(argv []string, name string) (string, bool) {
 	return val, n == 1
 }
 
+func count(argv []string, s string) int {
+	n := 0
+	for _, a := range argv {
+		if a == s {
+			n++
+		}
+	}
+	return n
+}
+
 func TestDefaultProfileEveryStage(t *testing.T) {
 	want := map[string]string{
 		"--tools":            "Read,Glob,Grep,Edit,Write,Bash",
 		"--allowed-tools":    "Read,Glob,Grep,Edit,Write,Bash",
 		"--disallowed-tools": "Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)",
+		"--settings":         `{"includeGitInstructions":false,"disableAllHooks":true}`,
 	}
 	for _, stage := range []string{agent.StageScanner, agent.StageTriage, agent.StageWorker, agent.StageReview} {
 		t.Run(stage, func(t *testing.T) {
@@ -98,6 +112,14 @@ func TestDefaultProfileEveryStage(t *testing.T) {
 				got, ok := flag(c.Argv, name)
 				if !ok || got != w {
 					t.Errorf("%s = %q (exactly once: %v), want %q", name, got, ok, w)
+				}
+			}
+			if count(c.Argv, "--bare") != 0 {
+				t.Error("--bare must not be used (#105)")
+			}
+			for _, f := range []string{"--restricted", "--safe-mode", "--strict-mcp-config", "--disable-slash-commands"} {
+				if n := count(c.Argv, f); n != 1 {
+					t.Errorf("%s appears %d times, want 1", f, n)
 				}
 			}
 		})
