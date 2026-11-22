@@ -12,11 +12,16 @@ import (
 type roles map[string]bool // "kind/name"
 
 func (r roles) Role(k config.Kind, name string) (config.Role, bool) {
-	return config.Role{Kind: k, Name: name}, r[string(k)+"/"+name]
+	role := config.Role{Kind: k, Name: name}
+	if k == config.KindTriage {
+		role.PlanSection = config.BuiltinPlanSections[name]
+	}
+	return role, r[string(k)+"/"+name]
 }
 
 var testRoles = roles{
 	"triage/lead": true, "triage/architect": true, "triage/designer": true,
+	"triage/engineer": true, "triage/product-manager": true,
 	"worker/engineer":     true,
 	"reviewer/eng-review": true, "reviewer/license-review": true, "reviewer/security-review": true,
 }

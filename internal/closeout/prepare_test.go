@@ -47,6 +47,7 @@ const logPath = ".ard/7/logs/triage-lead-20260102T030405Z.log"
 func TestPrepare(t *testing.T) {
 	type tc struct {
 		name    string
+		role    string // triage role; "" = lead
 		setup   func(e *env, j *Job)
 		outcome Outcome
 		files   []string
@@ -56,19 +57,15 @@ func TestPrepare(t *testing.T) {
 	}
 	good := func(e *env) { e.write(".ard/7/triage-lead.md", roleFile("lead", "done")) }
 	tests := []tc{
-		{name: "only changed files, deletion carried, logs and other issues ignored",
+		{name: "only changed files, logs and other issues ignored",
 			setup: func(e *env, j *Job) {
 				good(e)
-				e.write(".ard/7/plan.md", "plan")
 				e.write(".ard/7/logs/agent-wrote-this.log", "ignored")
 				e.write(".ard/8/triage-lead.md", "other issue")
 				e.write("README.md", "elsewhere")
-				if err := os.Remove(filepath.Join(e.repo, ".ard/7/issue.md")); err != nil {
-					t.Fatal(err)
-				}
 			},
 			outcome: OutcomeDone, labels: []string{"ard:triage:lead:done"},
-			files: []string{".ard/7/issue.md (delete)", ".ard/7/logs/triage-lead-20260102T030405Z.log", ".ard/7/plan.md", ".ard/7/triage-lead.md"}},
+			files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log", ".ard/7/triage-lead.md"}},
 		{name: "unchanged files are not sent", setup: func(e *env, j *Job) { good(e) },
 			outcome: OutcomeDone, files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log", ".ard/7/triage-lead.md"}, labels: []string{"ard:triage:lead:done"}},
 		{name: "non-zero exit commits only the log", setup: func(e *env, j *Job) {
@@ -96,10 +93,10 @@ func TestPrepare(t *testing.T) {
 			}
 		}, outcome: OutcomeNeedsHuman, files: []string{".ard/7/triage-lead.md"}, withhld: true, reason: "log withheld",
 			labels: []string{"ard:needs-human"}},
-		{name: "plan.md flagged: log only", setup: func(e *env, j *Job) {
-			good(e)
-			e.write(".ard/7/plan.md", "leaked "+planted())
-		}, outcome: OutcomeNeedsHuman, files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log"}, reason: ".ard/7/plan.md",
+		{name: "plan.md flagged: log only", role: "engineer", setup: func(e *env, j *Job) {
+			e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+			e.write(".ard/7/plan.md", "## Implementation\nleaked "+planted())
+		}, outcome: OutcomeNeedsHuman, files: []string{".ard/7/logs/triage-engineer-20260102T030405Z.log"}, reason: ".ard/7/plan.md",
 			labels: []string{"ard:needs-human"}},
 		{name: "failed and log flagged", setup: func(e *env, j *Job) {
 			j.ExitCode = 1
@@ -180,7 +177,10 @@ func TestPrepare(t *testing.T) {
 	for _, c := range tests {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			j := e.claim(StageTriage, "lead")
+			if c.role == "" {
+				c.role = "lead"
+			}
+			j := e.claim(StageTriage, c.role)
 			c.setup(e, &j)
 			rec, err := Prepare(context.Background(), j, e.d)
 			if err != nil {
@@ -257,9 +257,9 @@ func (brokenRedactor) Text(context.Context, []byte) (redact.TextResult, error) {
 func TestPrepareScannerDownCommitsNothing(t *testing.T) {
 	e := newEnv(t)
 	e.d.NewRedactor = func(Job) (Redactor, error) { return brokenRedactor{}, nil }
-	j := e.claim(StageTriage, "lead")
-	e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
-	e.write(".ard/7/plan.md", "x")
+	j := e.claim(StageTriage, "engineer")
+	e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+	e.write(".ard/7/plan.md", "## Implementation\nx\n")
 	rec, err := Prepare(context.Background(), j, e.d)
 	if err != nil {
 		t.Fatal(err)

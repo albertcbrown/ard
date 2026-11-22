@@ -35,15 +35,17 @@ const (
 //
 // Only files under .ard/<issue#>/ that changed since the worktree's base
 // commit are collected, so a newer issue.md that landed on main during the
-// job is never overwritten. Every file and the log pass through the redactor;
+// job is never overwritten. Of those, only what the job's allowlist permits
+// (WritableFor) is committed; any other change fails the job as needs-human
+// and commits only the log. Every file and the log pass through the redactor;
 // a hit or an error withholds the file (fail closed). A failed job commits
 // only its log.
 func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	if err := j.validate(); err != nil {
 		return Record{}, err
 	}
-	if d.NewRedactor == nil || d.Changed == nil || d.StagingDir == "" {
-		return Record{}, errors.New("closeout: Deps needs NewRedactor, Changed and StagingDir")
+	if d.NewRedactor == nil || d.Changed == nil || d.BaseFile == nil || d.StagingDir == "" {
+		return Record{}, errors.New("closeout: Deps needs NewRedactor, Changed, BaseFile and StagingDir")
 	}
 	red, err := d.NewRedactor(j)
 	if err != nil {
@@ -67,6 +69,7 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	var (
 		rf       RoleFile
 		failed   string
+		denied   string // write-allowlist violation, "" when none
 		cands    []candidate
 		roleSeen bool
 	)
@@ -110,6 +113,12 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 				return Record{}, err
 			}
 		}
+		if failed == "" {
+			denied, err = checkWrites(ctx, j, d, n, cands)
+			if err != nil {
+				return Record{}, err
+			}
+		}
 	}
 
 	// 2. Redact and stage.
@@ -118,7 +127,7 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		hit     string // first non-log file that was flagged, with rule ids
 		summary string
 	)
-	if failed == "" {
+	if failed == "" && denied == "" {
 		for _, c := range cands {
 			if c.delete {
 				files = append(files, FileRef{Path: c.path, Delete: true})
@@ -204,6 +213,8 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		plan = retryPlan(j, cleanReason(ctx, red, failed))
 	case failed != "":
 		plan = failedPlan(j, cleanReason(ctx, red, failed), logWithheld)
+	case denied != "":
+		plan = needsHumanPlan(j, rf.Status, cleanReason(ctx, red, denied))
 	case hit != "":
 		plan = needsHumanPlan(j, rf.Status, hit)
 	default:

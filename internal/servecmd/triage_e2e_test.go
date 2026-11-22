@@ -32,7 +32,7 @@ import (
 const e2eToken = "ard-oauth-test-value-0123456789abcdef"
 
 // A fake claude: it needs the untrusted snapshot and the credential, writes the
-// role file and a plan, leaks the token on stderr, and prints a result event.
+// role file only (close-out allows the lead nothing else), leaks the token on stderr, and prints a result event.
 const goodAgent = `#!/bin/sh
 test -f .ard-input/*/issue.md || { echo "no snapshot" >&2; exit 3; }
 test -n "$CLAUDE_CODE_OAUTH_TOKEN" || exit 4
@@ -49,9 +49,11 @@ worker: engineer
 ---
 Routed to the architect, then the engineer.
 EOF2
-echo "# Plan" >> ".ard/$n/plan.md"
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"num_turns":1,"total_cost_usd":0.01,"session_id":"s","result":"ok"}'
 `
+
+// meddlingAgent is goodAgent plus a write outside the lead's allowlist.
+var meddlingAgent = strings.Replace(goodAgent, "printf '%s\\n'", "echo \"# Plan\" >> \".ard/$n/plan.md\"\nprintf '%s\\n'", 1)
 
 const badAgent = `#!/bin/sh
 echo "something went wrong" >&2
@@ -203,13 +205,13 @@ func TestTriageEndToEndDone(t *testing.T) {
 		t.Errorf("comments = %d, want one close-out comment", len(cs))
 	}
 	files := strings.Fields(gittest.Run(t, e.bare, "ls-tree", "-r", "--name-only", "main"))
-	var gotRole, gotPlan, gotLog bool
+	var gotRole, gotLog bool
 	for _, f := range files {
 		switch {
 		case f == ".ard/"+itoa(n)+"/triage-lead.md":
 			gotRole = true
 		case f == ".ard/"+itoa(n)+"/plan.md":
-			gotPlan = true
+			t.Errorf("the lead's plan.md was committed")
 		case strings.HasPrefix(f, ".ard/"+itoa(n)+"/logs/triage-lead-") && strings.HasSuffix(f, ".log"):
 			gotLog = true
 			if b := gittest.Run(t, e.bare, "show", "main:"+f); strings.Contains(b, e2eToken) || !strings.Contains(b, "using token") {
@@ -221,7 +223,7 @@ func TestTriageEndToEndDone(t *testing.T) {
 			t.Errorf("untrusted input committed: %s", f)
 		}
 	}
-	if !gotRole || !gotPlan || !gotLog {
+	if !gotRole || !gotLog {
 		t.Errorf("committed files = %v", files)
 	}
 	for _, f := range files {
@@ -242,6 +244,23 @@ func TestTriageEndToEndDone(t *testing.T) {
 	}
 	if a, err := e.w.Store.Admission(context.Background(), n); err != nil || a.LabeledBy != "maint" || a.JobID != j.ID {
 		t.Errorf("admission = %+v, %v", a, err)
+	}
+}
+
+func TestTriageEndToEndWriteDenied(t *testing.T) {
+	e := newE2E(t, meddlingAgent)
+	e.tick()
+	n := e.issueN
+	if !e.has(labels.NeedsHuman) || e.has(labels.Done(labels.StageTriage, "lead")) || e.has(labels.Request(labels.StageTriage, "architect")) {
+		t.Errorf("labels = %v", e.labels())
+	}
+	for _, f := range strings.Fields(gittest.Run(t, e.bare, "ls-tree", "-r", "--name-only", "main")) {
+		if strings.HasPrefix(f, ".ard/"+itoa(n)+"/") && !strings.Contains(f, "/logs/") {
+			t.Errorf("committed %s, want only the log", f)
+		}
+	}
+	if cs := e.comments(); len(cs) != 1 || !strings.Contains(cs[0].Body, "write not allowed") {
+		t.Errorf("comments = %+v", cs)
 	}
 }
 
@@ -302,7 +321,6 @@ worker: engineer
 ---
 Routed to the engineer.
 EOF2
-echo "# Plan" >> ".ard/$n/plan.md"
 else
 cat > ".ard/$n/triage-engineer.md" <<'EOF2'
 ---
@@ -329,7 +347,7 @@ func TestTriageEndToEndGate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(e.cfg.Repo, dir, "prompt.txt"), []byte("prompt\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e.cfg.Roles = append(e.cfg.Roles, config.Role{Kind: config.KindTriage, Name: "engineer", Dir: dir, Agent: "claude", Timeout: time.Minute})
+	e.cfg.Roles = append(e.cfg.Roles, config.Role{Kind: config.KindTriage, Name: "engineer", Dir: dir, Agent: "claude", Timeout: time.Minute, PlanSection: config.BuiltinPlanSections["engineer"]})
 	e.cfg.RequireApproval = true
 	worker := labels.Request(labels.StageWorker, "engineer")
 

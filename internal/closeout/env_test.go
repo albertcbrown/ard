@@ -210,6 +210,7 @@ func (e *env) deps(failAt int) Deps {
 			return redact.New(e.secrets, redact.Options{})
 		},
 		Changed:    gitx.New("").ChangedSince,
+		BaseFile:   gitx.New("").FileAt,
 		Repo:       github.Repo{Owner: "o", Name: "r"},
 		StagingDir: e.staging,
 		Log:        quiet,
