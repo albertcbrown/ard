@@ -24,6 +24,8 @@ func TestCheckInitPath(t *testing.T) {
 		".ard/scanners/cve/.git/x", ".ard/scanners/../x", ".ard/scanners/cve/../../x", ".github/workflows/x.yml",
 		"CLAUDE.md", "main.go", ".ard/scanners\\cve/x", ".ard/scanners/cve/a\nb", ".ard/scanners/12/x",
 		".ard/scanners//cve/x", "/.ard/config.yaml", ".ard/config.yaml/x",
+		".ARD/config.yaml", ".ard/Config.yaml", ".ard/Scanners/cve/x", ".ard/scanners/cve/.GIT/x",
+		".ard/scanners/cve/.Git", ".github/x",
 	}
 	for _, p := range ok {
 		if err := CheckInitPath(p); err != nil {
@@ -144,6 +146,24 @@ func TestInitBranchExists(t *testing.T) {
 	}
 	if got := e.head(t, InitBranch); got != theirs {
 		t.Errorf("branch overwritten: %s -> %s", theirs, got)
+	}
+}
+
+func TestInitRaceAtMainHead(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	i := e.init(t, e.live())
+	base, err := i.Base(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Someone creates ard-init at main's head after Base: a plain push would fast-forward it.
+	gittest.Run(t, e.bare, "branch", InitBranch, "main")
+	if _, err := i.Propose(ctx, base, starterFiles); !errors.Is(err, ErrInitExists) {
+		t.Fatalf("Propose err = %v, want ErrInitExists", err)
+	}
+	if got := e.head(t, InitBranch); got != base {
+		t.Errorf("ard-init = %s, want main's head %s", got, base)
 	}
 }
 

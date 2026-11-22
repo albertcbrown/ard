@@ -118,8 +118,8 @@ func (i *Init) Base(ctx context.Context) (string, error) {
 }
 
 // Propose commits files on top of base and pushes HEAD:refs/heads/ard-init as
-// a normal push (ForceWithLease "", so the push creates the branch and never
-// overwrites it). A non-fast-forward or stale-lease rejection returns
+// a push whose lease expects the ref to be absent (all-zero SHA), so it
+// creates the branch and never updates an existing one. A non-fast-forward or stale-lease rejection returns
 // ErrInitExists. If every file matches base, it returns Result{NoOp: true}
 // and pushes nothing. The worktree is removed afterwards.
 func (i *Init) Propose(ctx context.Context, base string, files []InitFile) (res Result, err error) {
@@ -205,7 +205,7 @@ func (i *Init) Propose(ctx context.Context, base string, files []InitFile) (res 
 		return Result{}, err
 	}
 	err = i.c.fx.Push(ctx, effects.PushOp{Dir: i.wt, Remote: i.c.cfg.RemoteURL, Ref: "HEAD:refs/heads/" + InitBranch,
-		Token: i.c.cfg.Token})
+		ForceWithLease: strings.Repeat("0", len(base)), Token: i.c.cfg.Token})
 	switch {
 	case errors.Is(err, effects.ErrNonFastForward), errors.Is(err, effects.ErrStaleLease):
 		return Result{}, fmt.Errorf("%w: %v", ErrInitExists, err)

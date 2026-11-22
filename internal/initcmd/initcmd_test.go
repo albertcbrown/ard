@@ -190,7 +190,7 @@ func TestInitOpensPR(t *testing.T) {
 	if pr.HeadRef != "ard-init" || pr.BaseRef != "main" || pr.Draft {
 		t.Errorf("pr = %+v", pr)
 	}
-	for _, s := range []string{"bot-commits.yml", "ARD_BOT_LOGIN", "Squash", ".ard/scanners/cve/scan"} {
+	for _, s := range []string{"bot-commits.yml", "ARD_BOT_LOGIN", "Squash and merge", ".ard/scanners/cve/scan"} {
 		if !strings.Contains(pr.Body, s) {
 			t.Errorf("PR body lacks %q:\n%s", s, pr.Body)
 		}
