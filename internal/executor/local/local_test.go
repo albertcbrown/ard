@@ -246,7 +246,8 @@ func TestFixedEnv(t *testing.T) {
 			t.Errorf("%q: %v", e, err)
 		}
 	}
-	if err := f.l.checkFixed([]string{"CLAUDE_CONFIG_DIR=/cfg", "DISABLE_AUTOUPDATER=1"}); err != nil {
+	if err := f.l.checkFixed([]string{"CLAUDE_CONFIG_DIR=/cfg", "DISABLE_AUTOUPDATER=1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1"}); err != nil {
 		t.Error(err)
 	}
 }

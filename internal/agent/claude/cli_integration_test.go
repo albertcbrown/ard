@@ -4,7 +4,8 @@
 // key; the others send a dummy key to a loopback fake that answers 400. Re-run
 // them on every TestedVersion bump: part of the isolation they pin (AGENTS.md,
 // and CLAUDE.md, agents and skills under --restricted) is behaviour observed
-// only on the tested release.
+// only on the tested release. Settings env isolation is not pinned: no Bash
+// call is scripted.
 package claude
 
 import (
@@ -77,6 +78,18 @@ func plantRepo(t *testing.T) (work, markers string) {
 	gittest.Run(t, work, "add", "-A")
 	gittest.Run(t, work, "commit", "-m", "PLANTED_COMMIT")
 	return work, markers
+}
+
+// plantAgentsRepo builds a repo whose only planted config is an AGENTS.md (the
+// CLI reads it only when there is no CLAUDE.md).
+func plantAgentsRepo(t *testing.T) string {
+	t.Helper()
+	work := filepath.Join(t.TempDir(), "work")
+	writeFile(t, filepath.Join(work, "AGENTS.md"), "PLANTED_AGENTS_MD\n")
+	gittest.Run(t, work, "init", "--initial-branch=main")
+	gittest.Run(t, work, "add", "-A")
+	gittest.Run(t, work, "commit", "-m", "PLANTED_COMMIT")
+	return work
 }
 
 // workerArgv returns the worker command for the planted repo.
@@ -220,7 +233,11 @@ func TestCLIAcceptsFlags(t *testing.T) {
 	asked := strings.Split(tv, ",")
 	slices.Sort(asked)
 
-	out, code := runCLI(t, work, c, c.Argv)
+	url, bodies := fakeAPI(t)
+	out, code := runCLI(t, work, c, c.Argv, "ANTHROPIC_BASE_URL="+url)
+	if n := len(bodies()); n != 0 {
+		t.Errorf("%d requests reached the fake API with no key; want none", n)
+	}
 	in := cliInitEvent(t, out)
 	got := slices.Clone(in.Tools)
 	slices.Sort(got)
@@ -241,24 +258,42 @@ func TestCLIAcceptsFlags(t *testing.T) {
 }
 
 // Same argv against a loopback fake API: no request body may carry planted
-// text or the git status snapshot.
+// text, the git status snapshot or the background-task tool parameter.
 func TestCLIIgnoresPlantedConfig(t *testing.T) {
 	work, markers := plantRepo(t)
 	c := workerArgv(t, work)
 	url, bodies := fakeAPI(t)
 	out, _ := runCLI(t, work, c, c.Argv, "ANTHROPIC_API_KEY=dummy-not-a-key", "ANTHROPIC_BASE_URL="+url)
 	checkIsolated(t, cliInitEvent(t, out), markers)
-	bs := bodies()
+	assertNoneContain(t, bodies(), "PLANTED_", "gitStatus", "run_in_background")
+
+	awork := plantAgentsRepo(t)
+	url, bodies = fakeAPI(t)
+	runCLI(t, awork, c, c.Argv, "ANTHROPIC_API_KEY=dummy-not-a-key", "ANTHROPIC_BASE_URL="+url)
+	assertNoneContain(t, bodies(), "PLANTED_")
+}
+
+func assertNoneContain(t *testing.T, bs [][]byte, bad ...string) {
+	t.Helper()
 	if len(bs) == 0 {
 		t.Fatal("no request reached the fake API")
 	}
 	for _, b := range bs {
-		for _, bad := range []string{"PLANTED_", "gitStatus"} {
-			if bytes.Contains(b, []byte(bad)) {
-				t.Errorf("request body contains %q", bad)
+		for _, x := range bad {
+			if bytes.Contains(b, []byte(x)) {
+				t.Errorf("request body contains %q", x)
 			}
 		}
 	}
+}
+
+func anyContains(bs [][]byte, s string) bool {
+	for _, b := range bs {
+		if bytes.Contains(b, []byte(s)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Positive control: without the isolation flags the same repo does leak, so
@@ -280,14 +315,29 @@ func TestCLIPlantedConfigControl(t *testing.T) {
 	if !slices.Contains(in.Agents, "planted-agent") {
 		t.Errorf("control: planted agent not listed: %v", in.Agents)
 	}
-	leaked := false
-	for _, b := range bodies() {
-		leaked = leaked || bytes.Contains(b, []byte("PLANTED_CLAUDE_MD"))
+	if !slices.Contains(in.Skills, "planted-skill") {
+		t.Errorf("control: planted skill not listed: %v", in.Skills)
 	}
-	if !leaked {
-		t.Error("control: PLANTED_CLAUDE_MD not in any request body")
+	if in.OutputStyle != "planted-style" {
+		t.Errorf("control: output_style = %q", in.OutputStyle)
 	}
-	if !slices.Contains(markerNames(t, markers), "hook-SessionStart") {
-		t.Errorf("control: SessionStart hook did not run: %v", markerNames(t, markers))
+	m := markerNames(t, markers)
+	for _, want := range []string{"hook-SessionStart", "mcp"} {
+		if !slices.Contains(m, want) {
+			t.Errorf("control: marker %s missing: %v", want, m)
+		}
+	}
+	bs := bodies()
+	for _, want := range []string{"PLANTED_CLAUDE_MD", "PLANTED_RULES", "PLANTED_PARENT", "gitStatus"} {
+		if !anyContains(bs, want) {
+			t.Errorf("control: %s not in any request body", want)
+		}
+	}
+
+	awork := plantAgentsRepo(t)
+	url, bodies = fakeAPI(t)
+	runCLI(t, awork, c, argv, "ANTHROPIC_API_KEY=dummy-not-a-key", "ANTHROPIC_BASE_URL="+url)
+	if !anyContains(bodies(), "PLANTED_AGENTS_MD") {
+		t.Error("control: PLANTED_AGENTS_MD not in any request body")
 	}
 }
