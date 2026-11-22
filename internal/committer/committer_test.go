@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/effects"
+	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
 	"github.com/albertcbrown/ard/internal/gitx"
@@ -471,4 +473,120 @@ func TestSymlinkedParents(t *testing.T) {
 			}
 		})
 	}
+}
+
+func onlyClone(t *testing.T, dir string) {
+	t.Helper()
+	n := 0
+	for _, l := range strings.Split(gittest.Run(t, dir, "worktree", "list", "--porcelain"), "\n") {
+		if strings.HasPrefix(l, "worktree ") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d worktrees left, want only the clone:\n%s", n, gittest.Run(t, dir, "worktree", "list"))
+	}
+}
+
+// TestBranchesStress runs several branch lanes and the main lane at once. It
+// guards the shared worktree-administration lock (#109).
+func TestBranchesStress(t *testing.T) {
+	const nBranches, m = 4, 3
+	e := newEnv(t)
+	base := e.head(t, "main")
+	var refs []string
+	var names []string
+	for i := 0; i < nBranches; i++ {
+		br := fmt.Sprintf("worker/eng-%d", i)
+		names = append(names, br)
+		refs = append(refs, "main:refs/heads/"+br)
+	}
+	gittest.Run(t, e.clone, append([]string{"push", "-q", "origin"}, refs...)...)
+	live := e.live()
+	b := NewBranches(e.cfg, live, e.g)
+	mainLane := e.main(t, live)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i, br := range names {
+		for j := 0; j < m; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := b.Commit(ctx, br, req(100+i*10+j, "a", "a")); err != nil {
+					t.Errorf("%s: %v", br, err)
+				}
+			}()
+		}
+	}
+	for j := 0; j < m; j++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := mainLane.Commit(ctx, req(900+j, "a", "a")); err != nil {
+				t.Errorf("main: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	for _, br := range names {
+		if n := strings.TrimSpace(gittest.Run(t, e.bare, "rev-list", "--count", base+".."+br)); n != fmt.Sprint(m) {
+			t.Errorf("%s ahead by %s, want %d", br, n, m)
+		}
+	}
+	if err := b.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := mainLane.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	onlyClone(t, e.clone)
+}
+
+// TestWorktreeAdminSharedWithExecutor checks that branch lanes and the local
+// executor share one worktree lock on the same RepoDir.
+func TestWorktreeAdminSharedWithExecutor(t *testing.T) {
+	e := newEnv(t)
+	gittest.Run(t, e.clone, "push", "-q", "origin", "main:refs/heads/worker/eng-0", "main:refs/heads/worker/eng-1")
+	b := NewBranches(e.cfg, e.live(), e.g)
+	defer func() { _ = b.Close(context.Background()) }()
+	lx, err := local.New(local.Options{Root: t.TempDir(), Log: e.cfg.Log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		for j := 0; j < 3; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := b.Commit(ctx, fmt.Sprintf("worker/eng-%d", i), req(10*i+j+1, "a", "a")); err != nil {
+					t.Error(err)
+				}
+			}()
+		}
+	}
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 5; i++ {
+				h, err := lx.Prepare(ctx, executor.Job{ID: fmt.Sprintf("C%dX%d", g, i), Repo: "o/r", Issue: 100 + g*10 + i, Stage: "scanner", Role: "s",
+					RepoDir: e.clone, Ref: "HEAD", RoleDir: t.TempDir(), Timeout: time.Minute})
+				if err != nil {
+					t.Errorf("prepare: %v", err)
+					return
+				}
+				if err := lx.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+					t.Errorf("cleanup: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if err := b.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	onlyClone(t, e.clone)
 }

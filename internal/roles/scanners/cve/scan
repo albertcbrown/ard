@@ -15,6 +15,16 @@
 # for Go reachability, jq for merge.jq. Exit codes: 0 success, 1 failure,
 # 2 a required tool is missing.
 #
+# Go toolchain: each module is analysed with the image's Go unless its go
+# directive (or a newer "toolchain" line) needs a newer one. Then scan lets Go
+# pick the version (GOTOOLCHAIN=auto rules), downloads it from the Go module
+# proxy (checksum-verified against sum.golang.org, so the job needs egress to
+# proxy.golang.org and sum.golang.org) into its temp dir, rebuilds the same
+# govulncheck version with it (about 550 MB of temp disk and 15 s per
+# toolchain, once per run), and scans with that pair. The temp dir must allow
+# exec: a noexec one fails only modules that need a switch, with a message
+# naming it. Any failure to get or build the toolchain fails the run.
+#
 # Opt-out: a human-owned file named "no-govulncheck" next to this script skips
 # govulncheck for repos that cannot build; reachability is then "unknown".
 set -eu
@@ -26,6 +36,24 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "cve: $1 not found" >&2; exit
 
 need osv-scanner
 need jq
+
+# ver_le A B: true if Go version A <= B (go1.27, go1.27.4, 1.27.0). Anything
+# that is not plain numbers (release candidates) counts as newer.
+ver_le() {
+  a=${1#go} b=${2#go}
+  case $a$b in *[!0-9.]*) return 1 ;; esac
+  IFS=. read -r a1 a2 a3 <<VEREOF
+$a
+VEREOF
+  IFS=. read -r b1 b2 b3 <<VEREOF
+$b
+VEREOF
+  [ "${a1:-0}" -lt "${b1:-0}" ] && return 0
+  [ "${a1:-0}" -gt "${b1:-0}" ] && return 1
+  [ "${a2:-0}" -lt "${b2:-0}" ] && return 0
+  [ "${a2:-0}" -gt "${b2:-0}" ] && return 1
+  [ "${a3:-0}" -le "${b3:-0}" ]
+}
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/ard-cve.XXXXXX")
 # Go's module cache is read-only on disk; make it removable first.
@@ -41,8 +69,10 @@ for v in GOCACHE GOMODCACHE GOPATH; do
     eval "$v=\$tmp/$v; export $v"
   fi
 done
-GOWORK=off GOFLAGS=-mod=readonly
-export GOWORK GOFLAGS
+# GOTOOLCHAIN=local: nothing may switch toolchains implicitly (host-mode go.env
+# defaults to auto). The one deliberate switch is done explicitly below.
+GOWORK=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local
+export GOWORK GOFLAGS GOTOOLCHAIN
 
 echo "osv-scanner: $(osv-scanner --version 2>&1 | head -n 1 || true)" >&2
 
@@ -71,14 +101,60 @@ if [ -s "$tmp/mods.txt" ]; then
   else
     need go
     need govulncheck
-    echo "govulncheck: $(govulncheck -version 2>&1 | grep -m 1 '^Scanner:' || true)" >&2
+    scanner=$(govulncheck -version 2>&1 | grep -m 1 '^Scanner:' || true)
+    echo "govulncheck: $scanner" >&2
+    local_go=$(cd -- "$tmp" && go env GOVERSION) || die "cannot run go env GOVERSION"
+    echo "govulncheck: image go is $local_go" >&2
     while IFS= read -r f; do
       manifest=${f#./}
       mdir=$(dirname -- "$manifest")
       echo "govulncheck: $manifest" >&2
-      (cd -- "$mdir" && govulncheck -format json ./...) > "$tmp/gv.raw" \
+      gv=govulncheck gvpath=$PATH tc= need_sw=0 why=
+      # Fast path: the image's Go can load the module. A "toolchain" line newer
+      # than the image's Go also needs a switch, though go list -m accepts it.
+      if ! (cd -- "$mdir" && go list -m) >/dev/null 2>"$tmp/sel.err"; then
+        need_sw=1 why=$(tail -n 1 "$tmp/sel.err")
+      else
+        tl=$(sed -n 's/^toolchain[[:space:]][[:space:]]*\(go[^[:space:]]*\).*/\1/p' "$manifest" | head -n 1)
+        if [ -n "$tl" ] && ! ver_le "$tl" "$local_go"; then need_sw=1; fi
+      fi
+      if [ "$need_sw" = 1 ]; then
+        # The temp dir holds the downloaded toolchain: it must be exec-capable.
+        # Probe before any download so a noexec dir never pulls 300 MB first.
+        # The toolchain lands in GOMODCACHE: keep it in the exec-checked dir.
+        GOMODCACHE=$tmp/GOMODCACHE; export GOMODCACHE
+        printf '#!/bin/sh\nexit 0\n' > "$tmp/exec-probe" && chmod 700 "$tmp/exec-probe"
+        "$tmp/exec-probe" 2>/dev/null || die "$manifest needs a newer Go than the image's $local_go (${why:-newer toolchain line}), but the temp dir ${TMPDIR:-/tmp} is noexec so a downloaded toolchain cannot run: set TMPDIR to an exec-capable directory or use a newer cve image"
+        # Let Go pick the version from go.mod (go and toolchain lines).
+        sel=$(cd -- "$mdir" && GOTOOLCHAIN=auto go env GOVERSION 2>"$tmp/sel.err") \
+          || die "cannot get a Go toolchain for $manifest: $(tail -n 1 "$tmp/sel.err")"
+        case $sel in *[!0-9a-z.]*|go|go[!0-9]*) die "unexpected Go version for $manifest: $sel" ;; esac
+        if [ "$sel" = "$local_go" ]; then
+          [ -z "$why" ] || die "go list -m failed in $manifest: $why"
+        else
+          groot=$(cd -- "$tmp" && GOTOOLCHAIN=$sel go env GOROOT 2>"$tmp/sel.err") \
+            || die "cannot get a Go toolchain for $manifest: $(tail -n 1 "$tmp/sel.err")"
+          [ "$(cd -- "$tmp" && "$groot/bin/go" env GOVERSION 2>/dev/null)" = "$sel" ] \
+            || die "toolchain for $manifest is not $sel"
+          gv=$tmp/gv/$sel/govulncheck gvpath=$groot/bin:$PATH tc=$sel
+          if [ ! -x "$gv" ]; then
+            ver=${scanner#Scanner: govulncheck@}
+            case $ver in
+              v*[!0-9.]*|v|*..*|*.|v*.) die "unknown govulncheck version \"$ver\": cannot rebuild it with $sel" ;;
+              v[0-9]*.[0-9]*.[0-9]*) ;;
+              *) die "unknown govulncheck version \"$ver\": cannot rebuild it with $sel" ;;
+            esac
+            echo "govulncheck: building $ver with $sel for $manifest" >&2
+            (cd -- "$tmp" && PATH=$gvpath CGO_ENABLED=0 GOBIN=$tmp/gv/$sel \
+              go install "golang.org/x/vuln/cmd/govulncheck@$ver") >&2 \
+              || die "cannot build govulncheck $ver with $sel for $manifest"
+          fi
+        fi
+      fi
+      (cd -- "$mdir" && PATH=$gvpath "$gv" -format json ./...) > "$tmp/gv.raw" \
         || die "govulncheck failed in $manifest"
-      jq -c -s --arg manifest "$manifest" '{manifest: $manifest, messages: .}' \
+      jq -c -s --arg manifest "$manifest" --arg tc "$tc" \
+        '{manifest: $manifest, messages: .} + (if $tc == "" then {} else {toolchain: $tc} end)' \
         "$tmp/gv.raw" >> "$tmp/govuln.jsonl" || die "cannot parse govulncheck output for $manifest"
     done < "$tmp/mods.txt"
   fi

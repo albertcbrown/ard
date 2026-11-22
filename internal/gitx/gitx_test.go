@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
@@ -272,5 +275,90 @@ func TestHeaderKey(t *testing.T) {
 		if got := headerKey(in); got != want {
 			t.Errorf("headerKey(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func worktreeCount(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	for _, l := range strings.Split(gittest.Run(t, dir, "worktree", "list", "--porcelain"), "\n") {
+		if strings.HasPrefix(l, "worktree ") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestWorktreeAdminConcurrent(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	work := t.TempDir()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wt := filepath.Join(work, fmt.Sprintf("wt-%d", i))
+			for j := 0; j < 25; j++ {
+				if err := g.WorktreeAdd(ctx, clone, wt, "HEAD"); err != nil {
+					t.Errorf("lane %d add %d: %v", i, j, err)
+					return
+				}
+				if err := g.WorktreeRemove(ctx, clone, wt); err != nil {
+					t.Errorf("lane %d remove %d: %v", i, j, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if n := worktreeCount(t, clone); n != 1 {
+		t.Errorf("%d worktrees left, want 1", n)
+	}
+}
+
+func TestWorktreeLockKey(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	_, other := gittest.NewRemote(t)
+	linked := filepath.Join(t.TempDir(), "linked")
+	gittest.Run(t, clone, "worktree", "add", "--detach", linked, "HEAD")
+
+	unlock, err := g.worktreeLock(ctx, clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, err := g.worktreeLock(short, linked); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("linked worktree err = %v, want DeadlineExceeded", err)
+	}
+	u2, err := g.worktreeLock(ctx, other)
+	if err != nil {
+		t.Fatalf("unrelated clone blocked: %v", err)
+	}
+	u2()
+}
+
+func TestWorktreeRemoveRunsWhenCancelled(t *testing.T) {
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	if err := g.WorktreeAdd(context.Background(), clone, wt, "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := g.WorktreeRemove(ctx, clone, wt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Errorf("worktree still there: %v", err)
+	}
+	if n := worktreeCount(t, clone); n != 1 {
+		t.Errorf("%d worktrees, want 1", n)
 	}
 }

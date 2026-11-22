@@ -43,7 +43,8 @@ FROM ${GO_IMAGE}
 COPY --from=govulncheck /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=tools /out/osv-scanner /usr/local/bin/osv-scanner
 COPY --from=tools /out/jq /usr/local/bin/jq
-# A module whose go directive is newer than this image fails govulncheck (fail
-# closed): the executor's /tmp is noexec, so a downloaded toolchain could not
-# run. Bump the base image instead.
+# The executor's /tmp is a noexec tmpfs, so the scan's temp dir (which holds a
+# downloaded newer Go toolchain, see scan) lives in /var/tmp: exec-capable and
+# writable by any --user. GOTOOLCHAIN=local: scan switches toolchains itself.
 ENV GOTOOLCHAIN=local
+ENV TMPDIR=/var/tmp
