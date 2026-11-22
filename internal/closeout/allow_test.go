@@ -67,6 +67,8 @@ func TestCheckPlan(t *testing.T) {
 		{name: "indented heading", base: base, cur: base + "\n## Implementation\n\nx\n ## Design\nevil\n", own: "Implementation", want: "section ## Design"},
 		{name: "tab after ##", base: base, cur: base + "\n## Implementation\n\nx\n##\tDesign\nevil\n", own: "Implementation", want: "section ## Design"},
 		{name: "setext heading", base: base, cur: base + "\n## Implementation\n\nDesign\n------\nevil\n", own: "Implementation", want: "heading-like line in own section"},
+		{name: "rule after the section heading", base: base, cur: base + "\n## Implementation\n---\nx\n", own: "Implementation"},
+		{name: "rule after a list item", base: base, cur: base + "\n## Implementation\n\n- item\n---\n", own: "Implementation"},
 		{name: "setext in a new file's preamble", noBase: true, cur: "Title\n=====\n\n" + ownImpl, own: "Implementation", want: "heading-like line in own section"},
 		{name: "lone CR", base: base, cur: base + "\n## Implementation\n\nx\r## Design\nevil\n", own: "Implementation", want: "section ## Design"},
 		{name: "invalid backtick fence", base: base, cur: base + "\n## Implementation\n\n```a`b\n## Design\nevil\n```\n", own: "Implementation", want: "section ## Design"},

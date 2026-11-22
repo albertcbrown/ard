@@ -341,6 +341,10 @@ func hasSetext(text string) bool {
 			prevText = false
 			continue
 		}
+		if _, h := headingLine(t); h || blockStart(t) {
+			prevText = false
+			continue
+		}
 		if u := strings.TrimLeft(t, " "); prevText && len(t)-len(u) <= 3 && u != "" &&
 			(strings.Trim(u, "=") == "" || strings.Trim(u, "-") == "") {
 			return true
@@ -348,4 +352,15 @@ func hasSetext(text string) bool {
 		prevText = strings.TrimSpace(t) != ""
 	}
 	return false
+}
+
+// blockStart reports a line that opens a heading, list item or quote, which a
+// following "---" cannot turn into a setext heading.
+func blockStart(t string) bool {
+	u := strings.TrimLeft(t, " ")
+	if len(t)-len(u) > 3 {
+		return false
+	}
+	return strings.HasPrefix(u, "#") || strings.HasPrefix(u, ">") ||
+		strings.HasPrefix(u, "- ") || strings.HasPrefix(u, "* ") || strings.HasPrefix(u, "+ ")
 }
