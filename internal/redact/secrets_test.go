@@ -213,3 +213,43 @@ func (r repeatReader) Read(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+func TestSecretsNames(t *testing.T) {
+	a, b := randStr(31, 24), randStr(32, 24)
+	s := NewSecrets()
+	for name, v := range map[string]string{"TOKEN_A": a, "TOKEN_B": b, "TOKEN_C": randStr(33, 24)} {
+		if err := s.Add(name, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		in   string
+		want []string
+	}{
+		"clean":       {"nothing to see here", nil},
+		"empty":       {"", nil},
+		"raw":         {"x = \"" + a + "\"", []string{"TOKEN_A"}},
+		"base64":      {base64.StdEncoding.EncodeToString([]byte(b)), []string{"TOKEN_B"}},
+		"two sorted":  {b + "\n" + a + "\n" + a, []string{"TOKEN_A", "TOKEN_B"}},
+		"urlencoded":  {url.QueryEscape(a), []string{"TOKEN_A"}},
+		"near-prefix": {a[:20], nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := s.Names([]byte(tc.in))
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("Names = %v, want %v", got, tc.want)
+			}
+			for _, n := range got {
+				if strings.Contains(n, a) || strings.Contains(n, b) {
+					t.Error("a name contains a value")
+				}
+			}
+		})
+	}
+	if got := (*Secrets)(nil).Names([]byte("x")); got != nil {
+		t.Errorf("nil Secrets: %v", got)
+	}
+	if got := NewSecrets().Names([]byte("x")); got != nil {
+		t.Errorf("empty Secrets: %v", got)
+	}
+}

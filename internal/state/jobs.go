@@ -245,6 +245,37 @@ func (s *Store) SetHandle(ctx context.Context, id string, h json.RawMessage) err
 	return s.update(ctx, "set handle", id, `handle = ?`, v)
 }
 
+// SetBranch records the branch a running worker job commits to, once the loop
+// has pushed it. Close-out reads it back from the job row. A job that is not
+// running, or does not exist, is ErrNotFound.
+func (s *Store) SetBranch(ctx context.Context, id, branch string) error {
+	if branch == "" {
+		return fmt.Errorf("set branch %s: empty branch", id)
+	}
+	return s.updateRunning(ctx, "set branch", id, `branch = ?`, branch)
+}
+
+// SetPR records the pull request of a running worker job. A job that is not
+// running, or does not exist, is ErrNotFound.
+func (s *Store) SetPR(ctx context.Context, id string, pr int) error {
+	if pr <= 0 {
+		return fmt.Errorf("set pr %s: pr must be positive", id)
+	}
+	return s.updateRunning(ctx, "set pr", id, `pr = ?`, pr)
+}
+
+func (s *Store) updateRunning(ctx context.Context, op, id, set string, args ...any) error {
+	args = append(append([]any{}, args...), s.now().Unix(), id)
+	res, err := s.db.ExecContext(ctx, `UPDATE jobs SET `+set+`, updated_at = ? WHERE id = ? AND status = 'running'`, args...)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", op, id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%s %s: %w", op, id, ErrNotFound)
+	}
+	return nil
+}
+
 // SetCloseout records the close-out phase; a nil plan keeps the stored one.
 func (s *Store) SetCloseout(ctx context.Context, id, phase string, plan json.RawMessage) error {
 	v, err := nullJSON(plan)

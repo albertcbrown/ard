@@ -22,8 +22,12 @@ func marker(jobID string, attempt int) string {
 
 func markerFor(jobID string) string { return markerPrefix + jobID + " " }
 
-// sanitize makes agent text safe to post: it cannot forge an ard marker
-// (<!-- ard:closeout, ard:status, ard:fp) and cannot ping anyone.
+// Sanitize makes agent text safe to post: it cannot forge an ard marker
+// (<!-- ard:closeout, ard:status, ard:fp) and cannot ping anyone. The worker
+// loop uses it for the PR body.
+func Sanitize(s string) string { return sanitize(s) }
+
+// sanitize is Sanitize.
 func sanitize(s string) string {
 	s = strings.ReplaceAll(s, "<!--", "&lt;!--")
 	var b strings.Builder
@@ -153,6 +157,7 @@ func RenderComment(r Record, repo github.Repo, dryRun bool) string {
 		}
 		lines = append(lines, "Skipped: "+strings.Join(parts, ", "))
 	}
+	lines = append(lines, workerLines(j)...)
 	if out := outputLine(r, repo, dryRun); out != "" {
 		lines = append(lines, out)
 	}
@@ -184,6 +189,9 @@ func outputLine(r Record, repo github.Repo, dryRun bool) string {
 		parts = append(parts, "log "+link(p.LogPath))
 	case p.LogWithheld:
 		parts = append(parts, "log withheld (secret scan)")
+	}
+	for _, e := range p.ExtraLogPaths {
+		parts = append(parts, "log "+link(e))
 	}
 	if len(parts) == 0 {
 		return ""

@@ -297,6 +297,9 @@ func TestPrepareRoleFileNamePerStage(t *testing.T) {
 		t.Run(c.stage, func(t *testing.T) {
 			e := newEnv(t)
 			j := e.claim(c.stage, c.role)
+			if c.stage == StageWorker {
+				j.PR, j.Worker = 5, &WorkerResult{PR: 5, Tests: TestsNone}
+			}
 			e.write(c.file, roleFile(c.role, "done", c.extra...))
 			rec, err := Prepare(context.Background(), j, e.d)
 			if err != nil {
@@ -339,6 +342,7 @@ func TestPrepareWorkerIgnoresTriageFileOfSameRole(t *testing.T) {
 			base := e.commitAll("triage")
 			j := e.claim(StageWorker, "engineer")
 			j.BaseSHA = base
+			j.PR, j.Worker = 5, &WorkerResult{PR: 5, Tests: TestsNone}
 			c.setup(e, &j)
 			rec, err := Prepare(context.Background(), j, e.d)
 			if err != nil {

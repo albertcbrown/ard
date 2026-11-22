@@ -51,6 +51,12 @@ type Job struct {
 	// Close-out then skips the role file and the changed files and commits only
 	// the log. The zero Cause decides from the role file and exit code.
 	Cause Cause
+	// Worker is the worker loop's result: the PR, reviewers and test outcome.
+	// nil for every other job; a done worker job without it needs a human.
+	Worker *WorkerResult
+	// ExtraLogs are further host logs to redact and commit beside LogPath: the
+	// earlier agent steps of a worker job. A withheld one holds the job.
+	ExtraLogs []string
 }
 
 // CauseKind names why a job ended without a usable result.
@@ -575,14 +581,24 @@ func (c *Closer) finish(ctx context.Context, rec Record) error {
 // carry it.
 func (c *Closer) dropRawLog(rec Record) {
 	j := rec.Job
-	if j.LogPath == "" {
-		return
+	committed := map[string]bool{}
+	for _, p := range rec.Plan.ExtraLogPaths {
+		committed[p] = true
 	}
-	if rec.Plan.LogPath == "" {
-		c.d.log().Warn("closeout: raw log kept", "job", j.ID, "path", j.LogPath, "withheld", rec.Plan.LogWithheld)
-		return
+	drop := func(path string, ok bool) {
+		if !ok {
+			c.d.log().Warn("closeout: raw log kept", "job", j.ID, "path", path, "withheld", rec.Plan.LogWithheld)
+			return
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			c.d.log().Warn("closeout: remove raw log", "job", j.ID, "path", path, "error", err)
+		}
 	}
-	if err := os.Remove(j.LogPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		c.d.log().Warn("closeout: remove raw log", "job", j.ID, "path", j.LogPath, "error", err)
+	if j.LogPath != "" {
+		drop(j.LogPath, rec.Plan.LogPath != "")
+	}
+	for _, extra := range j.ExtraLogs {
+		cp, err := redact.CommitPath(rec.Job.Issue, extra)
+		drop(extra, err == nil && committed[cp])
 	}
 }

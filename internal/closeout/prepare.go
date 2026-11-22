@@ -168,6 +168,34 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	if logRef != nil {
 		files = append(files, *logRef)
 	}
+	// The earlier agent steps' logs of a worker job.
+	var extraPaths []string
+	taken := map[string]bool{}
+	if logRef != nil {
+		taken[logRef.Path] = true
+	}
+	for _, extra := range j.ExtraLogs {
+		ej := j
+		ej.LogPath = extra
+		ref, _, why, perr := prepareLog(ctx, red, ej, n, stage)
+		if perr != nil {
+			return Record{}, perr
+		}
+		if ref == nil {
+			logWithheld = true
+			if logReason != "" {
+				logReason += "; "
+			}
+			logReason += "extra log: " + why
+			continue
+		}
+		if taken[ref.Path] {
+			continue
+		}
+		taken[ref.Path] = true
+		files = append(files, *ref)
+		extraPaths = append(extraPaths, ref.Path)
+	}
 
 	// 4. The plan.
 	var plan Plan
@@ -208,6 +236,7 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	}
 	sort.SliceStable(files, func(a, b int) bool { return files[a].Path < files[b].Path })
 	plan.Files = files
+	plan.ExtraLogPaths = extraPaths
 	return Record{Version: recordVersion, Phase: PhasePrepared, Job: j, Plan: plan}, nil
 }
 
