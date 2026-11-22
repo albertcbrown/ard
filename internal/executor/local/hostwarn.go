@@ -20,7 +20,7 @@ func HostReach() []string {
 	return []string{
 		"the GitHub App private key file (ARD_GITHUB_PRIVATE_KEY_FILE) by absolute path",
 		"~/.config/gh",
-		"write access to the controller clone's .git (RepoDir/.git)",
+		"write access to the controller's clone (~/.ard/repos/<owner>/<repo>.git)",
 		"~/.ard: controller state, config snapshots, the pause file and other jobs' worktrees and logs",
 		"undoing chmod a-w on a read-only worktree",
 	}

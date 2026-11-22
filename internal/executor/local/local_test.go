@@ -732,3 +732,58 @@ func TestPrepareWrapsErrClone(t *testing.T) {
 		t.Errorf("invalid job: %v", err)
 	}
 }
+
+// A handle stored before #113 names the operator's checkout as RepoDir. With
+// CloneDir set, Cleanup removes its worktree without running git there.
+func TestCleanupForeignRepoDir(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		cloneIsRepo   bool // CloneDir == the job's RepoDir
+		cloneDirUnset bool
+		wantGit       bool // git worktree admin ran in RepoDir
+	}{
+		{"foreign", false, false, false},
+		{"own", true, false, true},
+		{"unset", false, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			opts := f.opts
+			opts.CloneDir = f.repo
+			if !tc.cloneIsRepo {
+				opts.CloneDir = t.TempDir()
+			}
+			if tc.cloneDirUnset {
+				opts.CloneDir = ""
+			}
+			l, err := New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			h, err := l.Prepare(ctx, f.job(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(sh(t, f.repo, "git", "worktree", "list"), h.Worktree) {
+				t.Fatal("worktree not registered")
+			}
+			adminBefore := sh(t, f.repo, "ls", ".git/worktrees")
+			if err := l.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(h.Worktree); !os.IsNotExist(err) {
+				t.Error("worktree remains")
+			}
+			registered := strings.Contains(sh(t, f.repo, "git", "worktree", "list"), h.Worktree)
+			if tc.wantGit == registered {
+				t.Errorf("registered after cleanup = %v, want %v", registered, !tc.wantGit)
+			}
+			if !tc.wantGit {
+				if after := sh(t, f.repo, "ls", ".git/worktrees"); after != adminBefore {
+					t.Errorf("checkout's worktree admin changed: %q -> %q", adminBefore, after)
+				}
+			}
+		})
+	}
+}

@@ -3,18 +3,22 @@ package servecmd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/cli"
+	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
@@ -423,6 +427,10 @@ func TestServeRootIsAbsoluteWithoutConfigFlag(t *testing.T) {
 	if !filepath.IsAbs(root) {
 		t.Fatalf("wiring.Root = %q, want an absolute path", root)
 	}
+	home, _ := os.UserHomeDir()
+	if want, _ := clonePath(home, github.Repo{Owner: "o", Name: "r"}); root != want {
+		t.Fatalf("wiring.Root = %q, want the controller clone %q", root, want)
+	}
 }
 
 // The working tree's config is ignored (apart from paused): origin/main wins.
@@ -666,4 +674,178 @@ func TestRecordHostUntrusted(t *testing.T) {
 			}
 		})
 	}
+}
+
+// snapshotGitDir maps every file under dir to its sha256.
+func snapshotGitDir(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	m := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		m[p] = hex.EncodeToString(sum[:])
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// fileRemoteBuilder is fakeBuilder with a file:// remote, which the committer
+// accepts (it refuses a bare path), and a non-zero bot ID.
+func fileRemoteBuilder(f *fake.Fake) builder {
+	inner := fakeBuilder(f, false)
+	return func(ctx context.Context, e *cli.Env, r github.Repo, sd string) (deps, error) {
+		d, err := inner(ctx, e, r, sd)
+		d.RemoteURL = "file://" + d.RemoteURL
+		d.Effects = effects.NewLive(f, gitx.New(""), e.Log) // the committer needs real git
+		return d, err
+	}
+}
+
+// The Done-when of #113: serve, the committer and the executor never write to
+// the operator's checkout.
+func TestServeNeverWritesOperatorCheckout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfgPath, bare := repoWithRemote(t, "max_pods: 2\n")
+	checkout := filepath.Dir(filepath.Dir(cfgPath))
+	gitDir := filepath.Join(checkout, ".git")
+	refsBefore := gittest.Run(t, checkout, "for-each-ref")
+	wtBefore := gittest.Run(t, checkout, "worktree", "list", "--porcelain")
+	before := snapshotGitDir(t, gitDir)
+
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", ID: 42, Kind: github.AuthApp}))
+	var w *wiring
+	orig := registerLoops
+	registerLoops = func(x *wiring) []controller.Loop { w = x; return nil }
+	defer func() { registerLoops = orig }()
+	buf := &syncBuf{}
+	e := env(t, "o/r", cfgPath, false)
+	e.Log = slog.New(slog.NewTextHandler(buf, nil))
+	var job error
+	err := runUntil(t, e, fileRemoteBuilder(f), func() bool {
+		if !buf.has("controller.start") {
+			return false
+		}
+		if w.cfg.Load() == nil {
+			return false
+		}
+		job = func() error {
+			ctx := context.Background()
+			if _, err := w.mainCommitter().Commit(ctx, committer.Request{
+				Issue: 1, Stage: "scanner", Role: "cve", Summary: "x",
+				Files: []committer.File{{Path: ".ard/1/x.md", Data: []byte("x\n")}},
+			}); err != nil {
+				return fmt.Errorf("commit: %w", err)
+			}
+			ex, err := w.newExecutor()
+			if err != nil {
+				return err
+			}
+			h, err := ex.Prepare(ctx, executor.Job{
+				ID: "JOB1", Repo: "o/r", Issue: 1, Stage: "scanner", Role: "cve", RepoDir: w.Root,
+				Ref: w.cfg.Load().SHA, RoleDir: t.TempDir(), ReadOnly: true, TrustedInput: true, Timeout: time.Minute,
+			})
+			if err != nil {
+				return fmt.Errorf("prepare: %w", err)
+			}
+			return ex.Cleanup(ctx, h, executor.CleanupOptions{})
+		}()
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job != nil {
+		t.Fatal(job)
+	}
+	after := snapshotGitDir(t, gitDir)
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("operator checkout's .git changed")
+		for p, sum := range after {
+			if before[p] != sum {
+				t.Logf("changed or new: %s", p)
+			}
+		}
+	}
+	if got := gittest.Run(t, checkout, "for-each-ref"); got != refsBefore {
+		t.Errorf("checkout refs changed:\n%s\nwas:\n%s", got, refsBefore)
+	}
+	if got := gittest.Run(t, checkout, "worktree", "list", "--porcelain"); got != wtBefore {
+		t.Errorf("checkout worktrees changed:\n%s", got)
+	}
+	home, _ := os.UserHomeDir()
+	clone, _ := clonePath(home, github.Repo{Owner: "o", Name: "r"})
+	for _, ref := range []string{"refs/ard/config/main", "refs/ard/upstream/main"} {
+		gittest.Run(t, clone, "rev-parse", "--verify", ref)
+	}
+	if got := gittest.Run(t, bare, "ls-tree", "-r", "--name-only", "main"); !strings.Contains(got, ".ard/1/x.md") {
+		t.Errorf("remote main lacks the commit:\n%s", got)
+	}
+}
+
+func TestServeSecondStartReusesClone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := repoDir(t)
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	var logs [2]*syncBuf
+	for i := range logs {
+		logs[i] = &syncBuf{}
+		e := env(t, "o/r", cfg, true)
+		e.Log = slog.New(slog.NewTextHandler(logs[i], nil))
+		b := logs[i]
+		if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return b.has("controller.start") }); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			home, _ := os.UserHomeDir()
+			clone, _ := clonePath(home, github.Repo{Owner: "o", Name: "r"})
+			gittest.Run(t, clone, "update-ref", "refs/ard/marker", gitOutT(t, clone, "rev-parse", seedRef))
+		}
+	}
+	if !logs[0].has("serve.clone_created") || logs[1].has("serve.clone_created") {
+		t.Errorf("clone_created: first=%v second=%v", logs[0].has("serve.clone_created"), logs[1].has("serve.clone_created"))
+	}
+	home, _ := os.UserHomeDir()
+	clone, _ := clonePath(home, github.Repo{Owner: "o", Name: "r"})
+	gittest.Run(t, clone, "rev-parse", "--verify", "refs/ard/marker")
+}
+
+func gitOutT(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	return strings.TrimSpace(gittest.Run(t, dir, args...))
+}
+
+func TestServeRefusesForeignClonePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := repoDir(t)
+	p, _ := clonePath(home, github.Repo{Owner: "o", Name: "r"})
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+	err := serve(context.Background(), env(t, "o/r", cfg, true), fakeBuilder(f, true))
+	if err == nil || !strings.Contains(err.Error(), p) {
+		t.Fatalf("err = %v, want one naming %s", err, p)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "mine" {
+		t.Errorf("file changed: %q", b)
+	}
+	lockPath, _ := controller.LockPath(home, "o", "r")
+	l, err := controller.AcquireLeader(lockPath)
+	if err != nil {
+		t.Fatalf("leader lock still held: %v", err)
+	}
+	l.Release()
 }

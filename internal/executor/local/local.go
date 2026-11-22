@@ -43,6 +43,13 @@ type Options struct {
 	SidecarURL     func(repo string) string // default https://github.com/<repo>.git
 	SidecarToken   gitx.TokenFunc           // nil = no auth header (local remotes in tests)
 	SidecarTimeout time.Duration            // init + fetch + export bound; default 2m
+
+	// CloneDir, if set, is the only repository Cleanup runs git worktree
+	// admin in. A handle whose RepoDir differs (stored before #113, when
+	// RepoDir was the operator's checkout) has its worktree made writable and
+	// removed with os.RemoveAll, with no git call, and one
+	// executor.cleanup_foreign_repo Info log. "" = always use h.RepoDir.
+	CloneDir string
 }
 
 // Local implements executor.Executor on this host.
@@ -60,6 +67,7 @@ type Local struct {
 	sidecarURL     func(repo string) string
 	sidecarToken   gitx.TokenFunc
 	sidecarTimeout time.Duration
+	cloneDir       string
 
 	mu           sync.Mutex
 	tracks       map[string]*track
@@ -137,7 +145,7 @@ func New(o Options) (*Local, error) {
 	return &Local{configDirEnv: o.ConfigDirEnv, allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
 		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log, onHostUntrusted: o.OnHostUntrusted,
 		tracks: map[string]*track{}, sgit: o.SidecarGit, sidecarURL: o.SidecarURL, sidecarToken: o.SidecarToken,
-		sidecarTimeout: o.SidecarTimeout}, nil
+		sidecarTimeout: o.SidecarTimeout, cloneDir: cleanDir(o.CloneDir)}, nil
 }
 
 // configDirName is the per-job agent config dir inside the job home. Under
@@ -425,4 +433,12 @@ func rejectSymlink(r *os.Root, rel string) error {
 		return fmt.Errorf("%s is a symlink", rel)
 	}
 	return nil
+}
+
+// cleanDir is filepath.Clean, but keeps "" as "".
+func cleanDir(p string) string {
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(p)
 }
