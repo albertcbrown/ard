@@ -16,6 +16,9 @@ var (
 	ErrConflict = errors.New("committer: upstream changed a requested path")
 	// ErrBranchGone means the remote branch does not exist.
 	ErrBranchGone = errors.New("committer: remote branch does not exist")
+	// ErrInitExists means the ard-init branch already exists on the remote, so
+	// ard init refuses to propose again.
+	ErrInitExists = errors.New("committer: branch ard-init already exists on the remote")
 	// ErrClosed means Commit was called after Close.
 	ErrClosed = errors.New("committer: closed")
 )

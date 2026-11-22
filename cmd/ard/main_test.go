@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,5 +35,19 @@ func TestRun(t *testing.T) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.wantStderr)
 			}
 		})
+	}
+}
+
+// ard init outside a git repository fails before touching anything, and is
+// no longer a stub.
+func TestInitOutsideRepoExitsOne(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"init", "--config", filepath.Join(dir, ".ard", "config.yaml")}, &stdout, &stderr)
+	if code != 1 || strings.Contains(stderr.String(), "not implemented") || !strings.Contains(stderr.String(), "not the root of a git repository") {
+		t.Errorf("code = %d, stderr = %q", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".ard")); err == nil {
+		t.Error("init wrote .ard/")
 	}
 }
