@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -534,4 +536,67 @@ func mustWT(t *testing.T, l *Local, j executor.Job) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestPrepareCleanupConcurrent runs many Prepare+Cleanup cycles on one repo
+// to exercise the shared worktree lock (#109). Jobs are built inline: f.job
+// uses an unsynchronised counter.
+func TestPrepareCleanupConcurrent(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for g := 0; g < 6; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 4; i++ {
+				h, err := f.l.Prepare(ctx, executor.Job{ID: fmt.Sprintf("CC%dX%d", g, i), Repo: "o/r", Issue: 100 + g*10 + i, Stage: "worker", Role: "dev",
+					RepoDir: f.repo, Ref: "HEAD", RoleDir: f.roleDir, Timeout: time.Minute})
+				if err != nil {
+					t.Errorf("prepare: %v", err)
+					return
+				}
+				if err := f.l.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+					t.Errorf("cleanup: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	n := 0
+	for _, l := range strings.Split(sh(t, f.repo, "git", "worktree", "list", "--porcelain"), "\n") {
+		if strings.HasPrefix(l, "worktree ") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d worktrees left, want 1", n)
+	}
+}
+
+func TestCleanupRunsWhenCancelled(t *testing.T) {
+	f := newFixture(t)
+	h, err := f.l.Prepare(context.Background(), executor.Job{ID: "CANCEL1", Repo: "o/r", Issue: 9, Stage: "worker", Role: "dev",
+		RepoDir: f.repo, Ref: "HEAD", RoleDir: f.roleDir, Timeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := f.l.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(h.Worktree); !os.IsNotExist(err) {
+		t.Errorf("worktree still there: %v", err)
+	}
+	n := 0
+	for _, l := range strings.Split(sh(t, f.repo, "git", "worktree", "list", "--porcelain"), "\n") {
+		if strings.HasPrefix(l, "worktree ") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d worktrees, want 1", n)
+	}
 }
