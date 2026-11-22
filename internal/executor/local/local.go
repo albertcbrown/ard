@@ -24,7 +24,7 @@ type Options struct {
 	DockerBin    string        // default "docker"
 	PathEnv      string        // PATH for host jobs; default the controller's PATH
 	AllowEnv     []string      // model-key names; default ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
-	AllowFixed   []string      // names allowed in Command.Fixed; default CLAUDE_CONFIG_DIR, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+	AllowFixed   []string      // names allowed in Command.Fixed; default CLAUDE_CONFIG_DIR, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
 	KillGrace    time.Duration // default 10s
 	BuildTimeout time.Duration // default 15m
 	Now          func() time.Time
@@ -83,7 +83,7 @@ func New(o Options) (*Local, error) {
 		o.AllowEnv = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
 	}
 	if o.AllowFixed == nil {
-		o.AllowFixed = []string{"CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"}
+		o.AllowFixed = []string{"CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"}
 	}
 	if o.KillGrace <= 0 {
 		o.KillGrace = 10 * time.Second
