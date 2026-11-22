@@ -33,3 +33,4 @@ overrides:
   # timeout covers the whole worker job (agent, tests, fix rounds). tests is your
   # repo's test command; "" turns the test step off.
   workers/engineer: { model: claude-sonnet-5-5, timeout: 60m, tests: make test }
+  reviewers/eng-review: { model: claude-sonnet-5-5 }

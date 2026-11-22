@@ -29,7 +29,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"config.yaml", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "workers/engineer/prompt.txt"}
+	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "workers/engineer/prompt.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
