@@ -40,6 +40,11 @@ func TestValidate(t *testing.T) {
 		{"scrub outside .ard", func(j *Job) { j.Issue = 7; j.Scrub = []string{"README.md"} }, false},
 		{"scrub nested", func(j *Job) { j.Issue = 7; j.Scrub = []string{".ard/7/logs/x.log"} }, false},
 		{"scrub dotdot", func(j *Job) { j.Issue = 7; j.Scrub = []string{".ard/7/../8/x.md"} }, false},
+		{"scrub also an input", func(j *Job) {
+			j.Issue = 7
+			j.Scrub = []string{".ard/7/worker-dev.md"}
+			j.Inputs = []File{{Path: ".ard/7/worker-dev.md"}}
+		}, false},
 		{"ok input", func(j *Job) { j.Inputs = []File{{Path: ".ard/1/issue.md"}} }, true},
 	}
 	for _, tc := range tests {

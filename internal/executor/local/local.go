@@ -187,6 +187,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 	if err = scrub(wt, j.Scrub); err != nil {
 		return h, err
 	}
+	h.Scrubbed = append([]string(nil), j.Scrub...)
 	if len(j.Inputs) > 0 {
 		// os.Root refuses to follow symlinks out of the worktree, so a
 		// committed symlink at an input path cannot redirect the write.
@@ -335,8 +336,10 @@ func (l *Local) Prune(ctx context.Context, olderThan time.Duration) error {
 	return nil
 }
 
-// scrub removes each path from the worktree. A missing path is fine. os.Root
-// keeps the removal inside the worktree and never follows a final symlink.
+// scrub removes each path from the worktree: a regular file or a symlink
+// (the link itself). A missing path is fine. It fails if the parent directory
+// is a symlink (os.Root would follow it inside the worktree) and never removes
+// a directory.
 func scrub(wt string, paths []string) error {
 	if len(paths) == 0 {
 		return nil
@@ -347,7 +350,26 @@ func scrub(wt string, paths []string) error {
 	}
 	defer r.Close()
 	for _, p := range paths {
-		if err := r.Remove(filepath.FromSlash(p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		rel := filepath.FromSlash(p)
+		parent, err := r.Lstat(filepath.Dir(rel))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			return fmt.Errorf("scrub %s: %w", p, err)
+		case parent.Mode()&fs.ModeSymlink != 0 || !parent.IsDir():
+			return fmt.Errorf("scrub %s: parent %s is not a plain directory", p, filepath.Dir(p))
+		}
+		st, err := r.Lstat(rel)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			return fmt.Errorf("scrub %s: %w", p, err)
+		case !st.Mode().IsRegular() && st.Mode()&fs.ModeSymlink == 0:
+			return fmt.Errorf("scrub %s: not a file", p)
+		}
+		if err := r.Remove(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("scrub %s: %w", p, err)
 		}
 	}

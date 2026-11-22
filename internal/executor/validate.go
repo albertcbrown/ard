@@ -56,6 +56,11 @@ func (j Job) Validate() error {
 		}
 	}
 	for _, p := range j.Scrub {
+		for _, f := range j.Inputs {
+			if path.Clean(filepath.ToSlash(f.Path)) == p {
+				return bad("scrub: %q is also an input", p)
+			}
+		}
 		if err := checkScrubPath(j.Issue, p); err != nil {
 			return bad("scrub: %v", err)
 		}

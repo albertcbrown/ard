@@ -97,6 +97,9 @@ type Handle struct {
 	Timeout             time.Duration
 	RoleDir, SidecarDir string // host paths
 	TrustedInput        bool   // copied from Job by Prepare
+	// Scrubbed lists the Job.Scrub paths Prepare removed from the worktree.
+	// Close-out trusts an unchanged role file only if it is listed here.
+	Scrubbed []string
 }
 
 // State is the lifecycle state of a job.

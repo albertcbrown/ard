@@ -238,12 +238,14 @@ func (e *env) commitAll(msg string) string {
 	return e.base
 }
 
-// scrub does what executor.Job.Scrub does before the agent runs.
-func (e *env) scrub(rel string) {
+// scrub does what executor.Job.Scrub does before the agent runs and records
+// it in j.Scrubbed, as the handle does.
+func (e *env) scrub(j *Job, rel string) {
 	e.t.Helper()
 	if err := os.Remove(filepath.Join(e.repo, filepath.FromSlash(rel))); err != nil {
 		e.t.Fatal(err)
 	}
+	j.Scrubbed = append(j.Scrubbed, rel)
 }
 
 func roleFile(role, status string, extra ...string) string {

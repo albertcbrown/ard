@@ -138,27 +138,32 @@ func TestPrepare(t *testing.T) {
 		{name: "stale role file scrubbed, nothing written", setup: func(e *env, j *Job) {
 			e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
 			j.BaseSHA = e.commitAll("stale")
-			e.scrub(".ard/7/triage-lead.md")
+			e.scrub(j, ".ard/7/triage-lead.md")
 			e.write(".ard/7/plan.md", "partial")
 		}, outcome: OutcomeFailed, files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log"},
 			reason: "role file not written by this job", labels: []string{"ard:executor:failed"}},
+		{name: "stale role file, not scrubbed", setup: func(e *env, j *Job) {
+			e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
+			j.BaseSHA = e.commitAll("stale")
+		}, outcome: OutcomeFailed, files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log"},
+			reason: "role file not scrubbed by executor", labels: []string{"ard:executor:failed"}},
 		{name: "scrubbed stale file never parsed", setup: func(e *env, j *Job) {
 			e.write(".ard/7/triage-lead.md", "no frontmatter")
 			j.BaseSHA = e.commitAll("stale")
-			e.scrub(".ard/7/triage-lead.md")
+			e.scrub(j, ".ard/7/triage-lead.md")
 		}, outcome: OutcomeFailed, files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log"},
 			reason: "role file not written by this job", labels: []string{"ard:executor:failed"}},
 		{name: "role file rewritten with changes", setup: func(e *env, j *Job) {
 			e.write(".ard/7/triage-lead.md", roleFile("lead", "blocked"))
 			j.BaseSHA = e.commitAll("stale")
-			e.scrub(".ard/7/triage-lead.md")
+			e.scrub(j, ".ard/7/triage-lead.md")
 			good(e)
 		}, outcome: OutcomeDone, files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log", ".ard/7/triage-lead.md"},
 			labels: []string{"ard:triage:lead:done"}},
 		{name: "role file rewritten byte for byte", setup: func(e *env, j *Job) {
 			good(e)
 			j.BaseSHA = e.commitAll("earlier run")
-			e.scrub(".ard/7/triage-lead.md")
+			e.scrub(j, ".ard/7/triage-lead.md")
 			good(e)
 		}, outcome: OutcomeDone, files: []string{".ard/7/logs/triage-lead-20260102T030405Z.log"},
 			labels: []string{"ard:triage:lead:done"}},
@@ -324,7 +329,7 @@ func TestPrepareWorkerIgnoresTriageFileOfSameRole(t *testing.T) {
 		{"earlier round's worker file scrubbed", func(e *env, j *Job) {
 			e.write(".ard/7/worker-engineer.md", roleFile("engineer", "done"))
 			j.BaseSHA = e.commitAll("earlier round")
-			e.scrub(".ard/7/worker-engineer.md")
+			e.scrub(j, ".ard/7/worker-engineer.md")
 		}, OutcomeFailed, "role file not written by this job"},
 	}
 	for _, c := range tests {

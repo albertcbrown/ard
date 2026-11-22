@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -278,6 +279,9 @@ func rewritten(j Job, rolePath string, deleted bool) (*candidate, string, error)
 		return nil, "role file missing", nil
 	case err != nil:
 		return nil, "", fmt.Errorf("closeout job %s: stat role file: %w", j.ID, err)
+	}
+	if !slices.Contains(j.Scrubbed, rolePath) {
+		return nil, "role file not scrubbed by executor", nil
 	}
 	// readResult reports a symlink or other non-regular file as malformed;
 	// here only a regular file can be scanned.
