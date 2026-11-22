@@ -160,7 +160,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 	}
 	sha, err := l.git.RevParse(ctx, j.RepoDir, j.Ref)
 	if err != nil {
-		return h, fmt.Errorf("resolve ref %q: %w", j.Ref, err)
+		return h, fmt.Errorf("resolve ref %q: %w: %w", j.Ref, executor.ErrClone, err)
 	}
 	now := l.now().UTC()
 	base := LogBase(j.Stage, j.Role, now)
@@ -205,7 +205,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		return h, fmt.Errorf("create work dir: %w", err)
 	}
 	if err = l.git.WorktreeAdd(ctx, j.RepoDir, wt, sha); err != nil {
-		return h, fmt.Errorf("add worktree: %w", err)
+		return h, fmt.Errorf("add worktree: %w: %w", executor.ErrClone, err)
 	}
 	worktreeAdded = true
 	if err = scrub(wt, j.Scrub); err != nil {
