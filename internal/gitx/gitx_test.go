@@ -204,11 +204,11 @@ func TestChangedSince(t *testing.T) {
 	if err := os.Remove(filepath.Join(clone, ".ard/5/gone.md")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := g.ChangedSince(ctx, clone, base, ".ard/5/")
+	got, err := g.ChangedSince(ctx, clone, clone, base, ".ard/5/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []PathChange{{Path: ".ard/5/gone.md", Deleted: true}, {Path: ".ard/5/issue.md"}, {Path: ".ard/5/new.md"}, {Path: ".ard/5/sub dir/x y.md"}}
+	want := []PathChange{{Path: ".ard/5/gone.md", Deleted: true}, {Path: ".ard/5/issue.md", Mode: "100644"}, {Path: ".ard/5/new.md", Mode: "100644"}, {Path: ".ard/5/sub dir/x y.md", Mode: "100644"}}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -217,7 +217,7 @@ func TestChangedSince(t *testing.T) {
 			t.Fatalf("got %v, want %v", got, want)
 		}
 	}
-	if _, err := g.ChangedSince(ctx, clone, "deadbeef", ".ard/5/"); err == nil {
+	if _, err := g.ChangedSince(ctx, clone, clone, "deadbeef", ".ard/5/"); err == nil {
 		t.Fatal("bad base: want error")
 	}
 }

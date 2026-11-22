@@ -16,48 +16,49 @@ import (
 const binarySniff = 8 << 10
 
 // facts gathers what Check needs for the step whose worktree is wt and whose
-// base commit is base. Every file is read through os.Root, so a symlink is
-// never followed. A scanner error marks the file ScanFailed (fail closed).
+// base commit is base. The worktree belongs to the agent, so nothing in it is
+// trusted: the changes come from a gitx.Snapshot (the controller's own
+// repository, a private index, no worktree config or attributes), and every
+// file is read through os.Root, so a symlink is never followed. The bytes read
+// here are the bytes the code lane commits: it reads the same paths from the
+// same disk, and Check passes it only the files it saw. A scanner error marks
+// the file ScanFailed (fail closed).
 //
-// The pattern scan keeps only findings on lines this step added: the added
-// ranges of a tracked file, every line of an untracked one. A worker that
-// edits a file which already holds a credential-shaped fixture is therefore
-// not held for lines it did not write.
+// The pattern scan keeps only findings on lines this step added (a new file
+// is all added), so a worker that edits a file which already holds a
+// credential-shaped fixture is not held for lines it did not write.
 //
 // prLines counts the changed lines of the whole PR: the diff against the
-// merge base of mainSHA and base, plus every line of an untracked file, with
-// the loop's and close-out's paths left out.
+// merge base of mainSHA and base, with the loop's and close-out's paths left
+// out.
 func (l *Loop) facts(ctx context.Context, issue int, wt, base, mainSHA string) (changes []Change, prLines int, err error) {
 	g := l.d.Git
-	chs, err := g.ChangedSince(ctx, wt, base)
+	snap, err := g.Snapshot(ctx, l.d.RepoDir, wt, base)
+	if err != nil {
+		return nil, 0, fmt.Errorf("snapshot: %w", err)
+	}
+	defer snap.Close()
+	chs, err := snap.Changed(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list changes: %w", err)
 	}
-	added, err := g.AddedLines(ctx, wt, base)
+	added, err := snap.AddedLines(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list added lines: %w", err)
 	}
-	tracked, err := g.DiffNumstat(ctx, wt, base)
-	if err != nil {
-		return nil, 0, fmt.Errorf("numstat: %w", err)
-	}
-	isTracked := map[string]gitx.NumStat{}
-	for _, ns := range tracked {
-		isTracked[ns.Path] = ns
-	}
 	prBase := base
 	if mainSHA != "" && mainSHA != base {
-		if mb, err := g.MergeBase(ctx, wt, mainSHA, base); err == nil && mb != "" {
+		if mb, err := g.MergeBase(ctx, l.d.RepoDir, mainSHA, base); err == nil && mb != "" {
 			prBase = mb
 		}
 	}
-	var prStat []gitx.NumStat
-	if prBase == base {
-		prStat = tracked
-	} else if prStat, err = g.DiffNumstat(ctx, wt, prBase); err != nil {
+	prStat, err := snap.Numstat(ctx, prBase)
+	if err != nil {
 		return nil, 0, fmt.Errorf("numstat of the PR: %w", err)
 	}
+	stat := map[string]gitx.NumStat{}
 	for _, ns := range prStat {
+		stat[ns.Path] = ns
 		if !excluded(issue, ns.Path) && !strings.HasPrefix(ns.Path, ".ard/") {
 			prLines += ns.Added + ns.Deleted
 		}
@@ -72,19 +73,17 @@ func (l *Loop) facts(ctx context.Context, issue int, wt, base, mainSHA string) (
 		if excluded(issue, ch.Path) {
 			continue
 		}
-		c := Change{Path: strings.TrimSuffix(ch.Path, "/"), Deleted: ch.Deleted}
-		switch {
-		case ch.Deleted:
-		case strings.HasSuffix(ch.Path, "/"): // git lists a nested repository as "dir/"
-			c.Kind = NestedRepo
-		default:
-			ns, tr := isTracked[ch.Path]
-			lines := l.fileFacts(ctx, root, &c, secrets, tr, added[ch.Path])
-			if tr && ns.Binary {
-				c.Binary = true
+		c := Change{Path: ch.Path, Deleted: ch.Deleted}
+		if !ch.Deleted {
+			l.fileFacts(ctx, root, &c, secrets, added[ch.Path])
+			switch ch.Mode {
+			case "160000":
+				c.Kind = NestedRepo
+			case "120000":
+				c.Kind = Symlink
 			}
-			if !tr && !c.Binary {
-				prLines += lines
+			if ns, ok := stat[ch.Path]; ok && ns.Binary {
+				c.Binary = true
 			}
 		}
 		changes = append(changes, c)
@@ -92,43 +91,41 @@ func (l *Loop) facts(ctx context.Context, issue int, wt, base, mainSHA string) (
 	return changes, prLines, nil
 }
 
-// fileFacts fills the on-disk facts of one changed file and returns its line
-// count. tracked says the file is in the base commit, so only the added line
-// ranges are pattern-scanned.
-func (l *Loop) fileFacts(ctx context.Context, root *os.Root, c *Change, secrets *redact.Secrets, tracked bool, added []gitx.LineRange) int {
+// fileFacts fills the on-disk facts of one changed file. Only the added line ranges are pattern-scanned.
+func (l *Loop) fileFacts(ctx context.Context, root *os.Root, c *Change, secrets *redact.Secrets, added []gitx.LineRange) {
 	fi, err := root.Lstat(c.Path)
 	switch {
 	case err != nil:
 		c.Kind = Other
-		return 0
+		return
 	case fi.Mode()&fs.ModeSymlink != 0:
 		c.Kind = Symlink
-		return 0
+		return
 	case !fi.Mode().IsRegular():
 		c.Kind = Other
-		return 0
+		return
 	}
 	c.Kind, c.Size = Regular, fi.Size()
 	if fi.Mode()&0o111 != 0 {
 		c.Kind = Exec
 	}
 	if c.Size > MaxFileSize {
-		return 0
+		return
 	}
 	f, err := root.Open(c.Path)
 	if err != nil {
 		c.ScanFailed = true
-		return 0
+		return
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, MaxFileSize+1))
 	if err != nil || len(data) > MaxFileSize {
 		c.ScanFailed = true
-		return 0
+		return
 	}
 	if bytes.IndexByte(data[:min(len(data), binarySniff)], 0) >= 0 {
 		c.Binary = true
-		return 0
+		return
 	}
 	c.Known = secrets.Names(data)
 	found, err := l.d.Scanner.Scan(ctx, bytes.NewReader(data))
@@ -136,11 +133,10 @@ func (l *Loop) fileFacts(ctx context.Context, root *os.Root, c *Change, secrets 
 		c.ScanFailed = true
 	}
 	for _, f := range found {
-		if !tracked || inRanges(f.Line, added) {
+		if inRanges(f.Line, added) {
 			c.Patterns = append(c.Patterns, f)
 		}
 	}
-	return countLines(data)
 }
 
 func inRanges(line int, rs []gitx.LineRange) bool {
@@ -150,15 +146,4 @@ func inRanges(line int, rs []gitx.LineRange) bool {
 		}
 	}
 	return false
-}
-
-func countLines(b []byte) int {
-	if len(b) == 0 {
-		return 0
-	}
-	n := bytes.Count(b, []byte{'\n'})
-	if b[len(b)-1] != '\n' {
-		n++
-	}
-	return n
 }

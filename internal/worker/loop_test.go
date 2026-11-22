@@ -521,7 +521,9 @@ func TestKillDuringTests(t *testing.T) {
 	}
 	h.mustTick()
 	fc := h.only()
-	if kindOf(fc.H.JobID) != "test" || len(fc.Opts.ExtraLogs) != 1 {
+	// Close-out reads the agent step that made the code, not the test worktree,
+	// and names why the test step ended.
+	if kindOf(fc.H.JobID) != "agent" || fc.Opts.Cause.Kind == "" || len(fc.Opts.ExtraLogs) != 0 {
 		t.Errorf("finish = %+v", fc)
 	}
 	// The pushed branch still gets its draft PR.
@@ -649,5 +651,111 @@ func TestPlanIsAnInputOnlyIfItExists(t *testing.T) {
 				t.Errorf("plan in args = %v, want %v:\n%s", got, have, args)
 			}
 		})
+	}
+}
+
+// The agent controls its worktree's index and .git: neither may hide a secret.
+func TestGuardIgnoresTheAgentsIndexAndGitdir(t *testing.T) {
+	tok := "gh" + "s_" + strings.Repeat("aB3xZ9", 7)
+	git := func(wt string, args ...string) {
+		t.Helper()
+		gittest.Run(t, wt, args...)
+	}
+	for name, attack := range map[string]func(wt string){
+		"skip-worktree": func(wt string) {
+			writeFile(t, wt, "hello.txt", "harmless\n")
+			git(wt, "add", "hello.txt")
+			git(wt, "update-index", "--skip-worktree", "hello.txt")
+			writeFile(t, wt, "hello.txt", "key = "+tok+"\n")
+		},
+		"assume-unchanged": func(wt string) {
+			writeFile(t, wt, "hello.txt", "harmless\n")
+			git(wt, "add", "hello.txt")
+			git(wt, "update-index", "--assume-unchanged", "hello.txt")
+			writeFile(t, wt, "hello.txt", "key = "+tok+"\n")
+		},
+		"header lookalike line": func(wt string) {
+			writeFile(t, wt, "a.txt", "x\n++ b/zzz\ny\nkey = "+tok+"\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, noTests)
+			h.issue("t")
+			h.ex.run = func(kind string, j executor.Job, hd executor.Handle) int {
+				attack(hd.Worktree)
+				writeFile(t, hd.Worktree, fmt.Sprintf(".ard/%d/worker-engineer.md", j.Issue), roleDone)
+				return 0
+			}
+			h.mustTick()
+			w := h.only().Opts.Worker
+			if w == nil || !strings.Contains(w.Hold, "secret scan rule github-token") || h.code.n() != 0 {
+				t.Errorf("worker %+v, commits %d", w, h.code.n())
+			}
+			if w != nil && strings.Contains(w.Hold, tok) {
+				t.Error("hold quotes the credential")
+			}
+		})
+	}
+}
+
+func TestMoreThanOneThousandLinesCannotBeHiddenFromTheCount(t *testing.T) {
+	h := newHarness(t, noTests)
+	h.issue("t")
+	h.ex.run = func(kind string, j executor.Job, hd executor.Handle) int {
+		writeFile(t, hd.Worktree, "big.txt", "x\n")
+		gittest.Run(t, hd.Worktree, "add", "big.txt")
+		gittest.Run(t, hd.Worktree, "update-index", "--skip-worktree", "big.txt")
+		writeFile(t, hd.Worktree, "big.txt", strings.Repeat("x\n", 1500))
+		writeFile(t, hd.Worktree, fmt.Sprintf(".ard/%d/worker-engineer.md", j.Issue), roleDone)
+		return 0
+	}
+	h.mustTick()
+	if w := h.only().Opts.Worker; w == nil || !strings.Contains(w.Hold, "changed lines") {
+		t.Errorf("worker = %+v", w)
+	}
+}
+
+func TestTriageOutputsAreUntrustedInputs(t *testing.T) {
+	h := newHarness(t, noTests)
+	n := h.issue("t")
+	dir := filepath.Join(h.clone, ".ard", fmt.Sprint(n))
+	for rel, body := range map[string]string{
+		"plan.md": "## Plan\n", "triage-lead.md": "x", "triage-architect.md": "x", "worker-engineer.md": "old", "issue.md": "y",
+		"logs/triage-lead-20260101T000000Z.log": "log", "logs/worker-engineer-20260101T000000Z.log": "log",
+	} {
+		writeFile(t, dir, rel, body)
+	}
+	gittest.Run(t, h.clone, "add", ".")
+	gittest.Run(t, h.clone, "commit", "-m", "triage")
+	h.cfg.SHA = strings.TrimSpace(gittest.Run(t, h.clone, "rev-parse", "HEAD"))
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	args := strings.Join(h.ex.cmds[h.ex.ids()[0]].Args, " ")
+	p := fmt.Sprintf(".ard/%d/", n)
+	for _, want := range []string{p + "plan.md", p + "triage-lead.md", p + "triage-architect.md", p + "logs/triage-lead-20260101T000000Z.log"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args lack %s:\n%s", want, args)
+		}
+	}
+	for _, not := range []string{p + "issue.md", "worker-engineer-2026"} {
+		if strings.Contains(args, not) {
+			t.Errorf("args wrongly name %s", not)
+		}
+	}
+}
+
+type failingBranchStore struct{ Store }
+
+func (failingBranchStore) SetBranch(context.Context, string, string) error { return errBoom }
+
+func TestSetBranchFailureStillOpensThePR(t *testing.T) {
+	h := newHarness(t, noTests)
+	h.issue("t")
+	h.loop.d.Store = failingBranchStore{h.loop.d.Store}
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	fc := h.only()
+	if len(h.prs()) != 1 || fc.Opts.Cause.Detail != "could not record the branch" || fc.Opts.Worker == nil || fc.Opts.Worker.PR == 0 {
+		t.Errorf("prs %d finish %+v", len(h.prs()), fc.Opts)
 	}
 }

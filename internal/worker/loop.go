@@ -82,10 +82,8 @@ type CodeCommitter interface {
 type Git interface {
 	FetchRef(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error
 	LsRemote(ctx context.Context, dir, url, pattern string, token gitx.TokenFunc) (map[string]string, error)
-	ChangedSince(ctx context.Context, dir, base string, paths ...string) ([]gitx.PathChange, error)
-	DiffNumstat(ctx context.Context, dir, base string) ([]gitx.NumStat, error)
-	AddedLines(ctx context.Context, dir, base string) (map[string][]gitx.LineRange, error)
-	MergeBase(ctx context.Context, dir, a, b string) (string, error)
+	Snapshot(ctx context.Context, repoDir, wt, base string) (*gitx.Snapshot, error)
+	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
 }
 
 // Offerer is *pool.Pool.

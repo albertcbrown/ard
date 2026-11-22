@@ -45,7 +45,7 @@ func TestLsRemote(t *testing.T) {
 	}
 }
 
-func TestDiffNumstatAndAddedLines(t *testing.T) {
+func TestSnapshotNumstatAndAddedLines(t *testing.T) {
 	ctx := context.Background()
 	g := New("")
 	_, dir := gittest.NewRemote(t)
@@ -59,17 +59,22 @@ func TestDiffNumstatAndAddedLines(t *testing.T) {
 	gittest.Run(t, dir, "commit", "-m", "base")
 	base := strings.TrimSpace(gittest.Run(t, dir, "rev-parse", "HEAD"))
 
-	write(t, dir, "mod.txt", "1\nTWO\n3\n4\nFIVE\nSIX\n") // changes line 2, 5 and appends 6
-	write(t, dir, "app.txt", "a\nb\nc\nd\n")              // appends lines 3-4
-	write(t, dir, "del.txt", "x\n")                       // pure deletion
+	write(t, dir, "mod.txt", "1\nTWO\n3\n4\nFIVE\nSIX\n")
+	write(t, dir, "app.txt", "a\nb\nc\nd\n")
+	write(t, dir, "del.txt", "x\n")
 	write(t, dir, "sp ace.txt", "s\nt\n")
 	write(t, dir, "bin.dat", "\x00\x01\x02\x03")
 	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
 		t.Fatal(err)
 	}
-	write(t, dir, "new.txt", "untracked\n")
+	write(t, dir, "new.txt", "u1\nu2\nu3\n")
 
-	ns, err := g.DiffNumstat(ctx, dir, base)
+	s, err := g.Snapshot(ctx, dir, dir, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ns, err := s.Numstat(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,16 +89,13 @@ func TestDiffNumstatAndAddedLines(t *testing.T) {
 		"gone.txt":   {Path: "gone.txt", Deleted: 1},
 		"sp ace.txt": {Path: "sp ace.txt", Added: 1},
 		"bin.dat":    {Path: "bin.dat", Binary: true},
+		"new.txt":    {Path: "new.txt", Added: 3},
 	} {
 		if got[path] != want {
 			t.Errorf("numstat %s = %+v, want %+v", path, got[path], want)
 		}
 	}
-	if _, ok := got["new.txt"]; ok {
-		t.Error("an untracked file must not be in numstat")
-	}
-
-	al, err := g.AddedLines(ctx, dir, base)
+	al, err := s.AddedLines(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,10 +103,182 @@ func TestDiffNumstatAndAddedLines(t *testing.T) {
 		"mod.txt":    {{2, 2}, {5, 6}},
 		"app.txt":    {{3, 4}},
 		"sp ace.txt": {{2, 2}},
+		"new.txt":    {{1, 3}},
 	}
 	if !reflect.DeepEqual(al, want) {
 		t.Errorf("added lines = %v, want %v", al, want)
 	}
+}
+
+// A line the agent adds that reads like a diff file header must not move the
+// attribution of later hunks (the secret below it would be filtered out).
+func TestAddedLinesIgnoresHeaderLookalikes(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, dir := gittest.NewRemote(t)
+	write(t, dir, "a.txt", "one\ntwo\n")
+	write(t, dir, "z.txt", "z\n")
+	gittest.Run(t, dir, "add", ".")
+	gittest.Run(t, dir, "commit", "-m", "base")
+	base := strings.TrimSpace(gittest.Run(t, dir, "rev-parse", "HEAD"))
+	write(t, dir, "a.txt", "one\n++ b/zzz\ntwo\nSECRET LINE\n")
+	s, err := g.Snapshot(ctx, dir, dir, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	al, err := s.AddedLines(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]LineRange{"a.txt": {{2, 2}, {4, 4}}}
+	if !reflect.DeepEqual(al, want) {
+		t.Errorf("added lines = %v, want %v", al, want)
+	}
+	// And the parser itself, on a hand-made diff.
+	out := "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -0,0 +1,2 @@\n+x\n++++ b/zzz\n@@ -5 +9 @@\n+y\n"
+	got, err := parseAdded(out)
+	if err != nil || !reflect.DeepEqual(got, map[string][]LineRange{"a": {{1, 2}, {9, 9}}}) {
+		t.Errorf("parseAdded = %v, %v", got, err)
+	}
+}
+
+// What the agent did to its own index or gitdir must not change what the
+// guard sees or run anything.
+func TestSnapshotDoesNotTrustTheWorktree(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	write(t, clone, "keep.txt", "harmless\n")
+	write(t, clone, "other.txt", "o\n")
+	gittest.Run(t, clone, "add", ".")
+	gittest.Run(t, clone, "commit", "-m", "base")
+	base := strings.TrimSpace(gittest.Run(t, clone, "rev-parse", "HEAD"))
+
+	t.Run("skip-worktree and assume-unchanged do not hide edits", func(t *testing.T) {
+		wt := filepath.Join(t.TempDir(), "wt")
+		gittest.Run(t, clone, "worktree", "add", "--detach", wt, base)
+		write(t, wt, "keep.txt", "harmless\nmore\n")
+		gittest.Run(t, wt, "add", "keep.txt")
+		gittest.Run(t, wt, "update-index", "--skip-worktree", "keep.txt")
+		write(t, wt, "keep.txt", "harmless\nSECRET\n")
+		write(t, wt, "other.txt", "changed\n")
+		gittest.Run(t, wt, "update-index", "--assume-unchanged", "other.txt")
+		write(t, wt, "other.txt", "changed again\n")
+		got, err := g.ChangedSince(ctx, clone, wt, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 || got[0].Path != "keep.txt" || got[1].Path != "other.txt" {
+			t.Fatalf("changes = %v", got)
+		}
+		s, err := g.Snapshot(ctx, clone, wt, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		al, _ := s.AddedLines(ctx)
+		if !reflect.DeepEqual(al["keep.txt"], []LineRange{{2, 2}}) {
+			t.Errorf("added = %v", al)
+		}
+		ns, _ := s.Numstat(ctx, "")
+		if len(ns) != 2 {
+			t.Errorf("numstat = %v", ns)
+		}
+	})
+
+	t.Run("a planted gitdir runs no code", func(t *testing.T) {
+		wt := filepath.Join(t.TempDir(), "wt")
+		gittest.Run(t, clone, "worktree", "add", "--detach", wt, base)
+		marker := filepath.Join(t.TempDir(), "ran")
+		script := filepath.Join(t.TempDir(), "hook.sh")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null 2>&1\ntouch "+marker+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// The agent's own gitdir: a copy of the repository with every code hook.
+		evil := filepath.Join(t.TempDir(), "evil.git")
+		gittest.Run(t, filepath.Dir(evil), "clone", "--bare", clone, evil)
+		cfg := "[core]\n\tfsmonitor = " + script + "\n\tsshCommand = " + script + "\n\thooksPath = " + filepath.Dir(script) + "\n" +
+			"[filter \"x\"]\n\tclean = " + script + "\n\tsmudge = " + script + "\n\trequired = false\n" +
+			"[diff \"x\"]\n\ttextconv = " + script + "\n\tcommand = " + script + "\n[diff]\n\texternal = " + script + "\n"
+		f, err := os.OpenFile(filepath.Join(evil, "config"), os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(cfg); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+evil+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		write(t, wt, ".gitattributes", "* filter=x diff=x\n")
+		write(t, wt, "keep.txt", "changed\n")
+		write(t, wt, "new.txt", "new\n")
+		got, err := g.ChangedSince(ctx, clone, wt, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var paths []string
+		for _, c := range got {
+			paths = append(paths, c.Path)
+		}
+		if strings.Join(paths, ",") != ".gitattributes,keep.txt,new.txt" {
+			t.Errorf("changes = %v", paths)
+		}
+		s, err := g.Snapshot(ctx, clone, wt, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		if _, err := s.Numstat(ctx, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AddedLines(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := g.MergeBase(ctx, clone, base, base); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("the agent's gitdir ran code")
+		}
+	})
+
+	t.Run("modes are reported", func(t *testing.T) {
+		wt := filepath.Join(t.TempDir(), "wt")
+		gittest.Run(t, clone, "worktree", "add", "--detach", wt, base)
+		if err := os.Symlink("keep.txt", filepath.Join(wt, "link")); err != nil {
+			t.Fatal(err)
+		}
+		write(t, wt, "run.sh", "x\n")
+		if err := os.Chmod(filepath.Join(wt, "run.sh"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, err := g.ChangedSince(ctx, clone, wt, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		modes := map[string]string{}
+		for _, c := range got {
+			modes[c.Path] = c.Mode
+		}
+		if modes["link"] != "120000" || modes["run.sh"] != "100755" {
+			t.Errorf("modes = %v", modes)
+		}
+	})
+
+	t.Run("a bare controller repository works", func(t *testing.T) {
+		bare := filepath.Join(t.TempDir(), "ctl.git")
+		gittest.Run(t, filepath.Dir(bare), "clone", "--bare", clone, bare)
+		wt := filepath.Join(t.TempDir(), "wt")
+		gittest.Run(t, bare, "worktree", "add", "--detach", wt, base)
+		write(t, wt, "keep.txt", "edited\n")
+		got, err := g.ChangedSince(ctx, bare, wt, base)
+		if err != nil || len(got) != 1 || got[0].Path != "keep.txt" {
+			t.Errorf("changes = %v, %v", got, err)
+		}
+	})
 }
 
 func TestMergeBase(t *testing.T) {

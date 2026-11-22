@@ -446,3 +446,17 @@ func TestDryRunIntakeWritesNothing(t *testing.T) {
 		t.Errorf("dry-run intake wrote: writes %v ledger %q", h.gh.Writes(), readLedger(t, h.ledger))
 	}
 }
+
+// A running worker job owns plan.md: a re-applied intake label must not start a
+// triage job on the same issue.
+func TestRunningWorkerJobBlocksTriage(t *testing.T) {
+	h := newHarness(t)
+	n := h.gh.SeedIssue(github.Issue{Title: "t", Author: self, Labels: []string{lead}, CreatedAt: t0})
+	if _, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "worker", Role: "engineer", Issue: n}); err != nil {
+		t.Fatal(err)
+	}
+	h.mustTick()
+	if len(h.ex.prepared) != 0 || h.has(n, labels.Running(labels.StageTriage, "lead")) {
+		t.Error("triage was claimed while a worker job runs")
+	}
+}

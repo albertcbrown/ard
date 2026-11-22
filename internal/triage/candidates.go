@@ -37,7 +37,9 @@ func (t *tick) candidates(ctx context.Context) ([]candidate, []error) {
 	}
 	busy := map[int]bool{}
 	for _, j := range running {
-		if j.Stage == stageTriage {
+		// A running worker job is busy too: a re-run of triage would rewrite
+		// plan.md under it.
+		if j.Stage == stageTriage || j.Stage == "worker" {
 			busy[j.Issue] = true
 		}
 	}

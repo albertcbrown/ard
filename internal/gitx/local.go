@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -279,49 +278,41 @@ func (g *Git) ChangedPaths(ctx context.Context, dir, from, to string, paths ...s
 type PathChange struct {
 	Path    string // slash-separated, relative to the worktree root
 	Deleted bool   // present at base, absent in the worktree
+	// Mode is the git mode of the new side ("100644", "100755", "120000" for a
+	// symlink, "160000" for a nested repository); "" for a deletion.
+	Mode string
 }
 
 // ChangedSince lists the paths under pathspecs (literal, directory prefixes
-// allowed) that differ between commit base and the working tree: tracked
-// changes, deletions and untracked files that are not ignored. It is
-// read-only and sees uncommitted work, which is all an agent leaves behind.
-func (g *Git) ChangedSince(ctx context.Context, dir, base string, paths ...string) ([]PathChange, error) {
-	args := append([]string{"--literal-pathspecs", "diff", "--name-status", "-z", "--no-renames", base, "--"}, paths...)
-	out, _, err := g.run(ctx, dir, nil, "", nil, args...)
+// allowed) that differ between commit base and the work tree wt: changes,
+// deletions and new files that are not ignored. It is read-only and sees
+// uncommitted work, which is all an agent leaves behind.
+//
+// wt is agent-controlled, so it is never trusted: repoDir is the controller's
+// own repository (where base lives), and the comparison is a Snapshot, which
+// uses a private index and ignores wt's .git, config, index and attributes. An
+// empty repoDir is an error.
+func (g *Git) ChangedSince(ctx context.Context, repoDir, wt, base string, paths ...string) ([]PathChange, error) {
+	s, err := g.Snapshot(ctx, repoDir, wt, base)
 	if err != nil {
-		return nil, fmt.Errorf("gitx: changed since %s: %w", base, err)
+		return nil, err
 	}
-	var cs []PathChange
-	tok := strings.Split(out, "\x00")
-	for i := 0; i+1 < len(tok); i += 2 {
-		if tok[i] == "" {
-			continue
-		}
-		cs = append(cs, PathChange{Path: tok[i+1], Deleted: tok[i][0] == 'D'})
-	}
-	args = append([]string{"--literal-pathspecs", "ls-files", "--others", "--exclude-standard", "-z", "--"}, paths...)
-	out, _, err = g.run(ctx, dir, nil, "", nil, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gitx: untracked files: %w", err)
-	}
-	for _, p := range strings.Split(out, "\x00") {
-		if p != "" {
-			cs = append(cs, PathChange{Path: p})
-		}
-	}
-	sort.Slice(cs, func(i, j int) bool { return cs[i].Path < cs[j].Path })
-	return cs, nil
+	defer s.Close()
+	return s.Changed(ctx, paths...)
 }
 
 // FileAt returns the contents of path at commit rev in the repository at dir.
 // ok is false (and err nil) when path does not exist at rev. A path that is a
 // tree, symlink or submodule at rev, or a blob larger than maxBytes, is an
 // error.
+//
+// dir must be the controller's own repository, never an agent's worktree: git
+// would trust the worktree's .git file.
 func (g *Git) FileAt(ctx context.Context, dir, rev, path string, maxBytes int64) ([]byte, bool, error) {
 	if path == "" || strings.HasPrefix(path, "/") || slices.Contains(strings.Split(path, "/"), "..") {
 		return nil, false, fmt.Errorf("gitx: file %q at %.12s: bad path", path, rev)
 	}
-	out, _, err := g.run(ctx, dir, nil, "", nil, "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", rev, "--", path)
+	out, _, err := g.run(ctx, dir, nil, "", nil, "--git-dir="+gitDirOf(dir), "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", rev, "--", path)
 	if err != nil {
 		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %w", path, rev, err)
 	}
@@ -348,7 +339,7 @@ func (g *Git) FileAt(ctx context.Context, dir, rev, path string, maxBytes int64)
 	if size > maxBytes {
 		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %d bytes, max %d", path, rev, size, maxBytes)
 	}
-	blob, _, err := g.run(ctx, dir, nil, "", nil, "cat-file", "blob", obj)
+	blob, _, err := g.run(ctx, dir, nil, "", nil, "--git-dir="+gitDirOf(dir), "cat-file", "blob", obj)
 	if err != nil {
 		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %w", path, rev, err)
 	}

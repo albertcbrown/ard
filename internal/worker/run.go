@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ import (
 const (
 	testOutputBytes = 64 << 10
 	defaultTimeout  = 30 * time.Minute
+	// triageInputCap keeps the untrusted path list within agent.MaxUntrusted.
+	triageInputCap = 48
 )
 
 // step is one finished executor run of a worker job.
@@ -234,10 +237,7 @@ func (jb *job) agentStep(ctx context.Context, id, ref string, extra []executor.F
 	}
 	s, cause, stopped := jb.runStep(ctx, ej, func(h executor.Handle) (executor.Command, error) {
 		// A: plan.md is passed only when triage wrote it.
-		plan := fmt.Sprintf(".ard/%d/plan.md", n)
-		if fi, err := os.Lstat(filepath.Join(h.Worktree, filepath.FromSlash(plan))); err == nil && fi.Mode().IsRegular() {
-			untrusted = append(untrusted, plan)
-		}
+		untrusted = append(untrusted, jb.triageInputs(h.Worktree)...)
 		return jb.agentCommand(h, untrusted)
 	}, true, true)
 	if stopped {
@@ -356,6 +356,20 @@ func (jb *job) abnormal(ctx context.Context, st executor.Status) bool {
 	return err == nil && sj.KillReason != ""
 }
 
+// abnormalCause names why a step that did not simply exit ended, from the
+// re-read job row (a Reaper kill reason) and the step's status.
+func (jb *job) abnormalCause(ctx context.Context, st executor.Status) closeout.Cause {
+	sj, err := jb.l.d.Store.Job(ctx, jb.sj.ID)
+	if err != nil {
+		sj = jb.sj
+	}
+	c := reaper.CauseOf(sj, st, agent.Result{}, jb.sj.CreatedAt)
+	if c.Kind == "" {
+		c = jb.cause(closeout.CauseNoProcess, "the test step ended abnormally", false)
+	}
+	return c
+}
+
 func (jb *job) agentCommand(h executor.Handle, untrusted []string) (executor.Command, error) {
 	d := jb.l.d
 	a, err := d.Agents.Get(jb.role.Agent)
@@ -376,6 +390,48 @@ func (jb *job) agentCommand(h executor.Handle, untrusted []string) (executor.Com
 		return executor.Command{}, err
 	}
 	return agentjob.Command(ac, d.Model)
+}
+
+// triageInputs lists the regular files triage left for the worker, as paths
+// relative to the worktree: plan.md, the triage role files and the triage logs.
+// They are agent-written, so the agent is told they are untrusted. Nothing is
+// followed through a symlink.
+func (jb *job) triageInputs(wt string) []string {
+	n := jb.is.Number
+	root, err := os.OpenRoot(wt)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	regular := func(rel string) bool {
+		fi, err := root.Lstat(rel)
+		return err == nil && fi.Mode().IsRegular()
+	}
+	var out []string
+	if plan := fmt.Sprintf(".ard/%d/plan.md", n); regular(plan) {
+		out = append(out, plan)
+	}
+	list := func(dir, prefix string) {
+		d, err := root.Open(dir)
+		if err != nil {
+			return
+		}
+		defer d.Close()
+		names, err := d.Readdirnames(-1)
+		if err != nil {
+			return
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			rel := dir + "/" + name
+			if strings.HasPrefix(name, prefix) && regular(rel) && len(out) < triageInputCap {
+				out = append(out, rel)
+			}
+		}
+	}
+	list(fmt.Sprintf(".ard/%d", n), "triage-")
+	list(fmt.Sprintf(".ard/%d/logs", n), "triage-")
+	return out
 }
 
 // peekRole reads the role file the agent wrote, the way close-out will, to
@@ -495,15 +551,16 @@ func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 		jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "could not push the branch: "+kind, false))
 		return "", false
 	}
+	// The branch is on the remote from here: any failure below still opens the PR.
+	jb.pushed = true
 	if !jb.exists {
+		jb.exists = true
 		if err := d.Store.SetBranch(ctx, jb.sj.ID, jb.branch); err != nil {
 			jb.log.Error("worker.set_branch_failed", "error", err)
-			jb.finish(ctx, s, nil, jb.cause(closeout.CauseNoProcess, "could not push the branch: record", false))
+			jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "could not record the branch", false))
 			return "", false
 		}
-		jb.exists = true
 	}
-	jb.pushed = true
 	jb.log.Info("worker.push", "branch", jb.branch, "sha", res.SHA, "files", len(req.Files), "noop", res.NoOp)
 	return res.SHA, true
 }
@@ -534,7 +591,11 @@ func (jb *job) testLoop(ctx context.Context, head string) (res closeout.WorkerRe
 			return res, true
 		}
 		if jb.abnormal(ctx, ts.st) {
-			jb.finishWithPR(ctx, ts, "", closeout.Cause{})
+			// A test step has no scrubbed role file and its log is not evidence
+			// worth committing: close out through the agent step that made the
+			// code, with the cause the test step ended for.
+			jb.cleanup(ctx, ts.h)
+			jb.finishWithPR(ctx, jb.final, "", jb.abnormalCause(ctx, ts.st))
 			return res, true
 		}
 		jb.log.Info("worker.step", "id", ej.ID, "kind", "test", "exit", ts.st.ExitCode)
