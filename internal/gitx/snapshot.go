@@ -42,11 +42,38 @@ type Snapshot struct {
 	base   string
 	tmp    string
 	idx    string
+	objs   string
+}
+
+// SnapshotOptions bound what a Snapshot will hash. The zero value sets no
+// limit.
+type SnapshotOptions struct {
+	// MaxFileBytes refuses a new or resized file larger than this (0 = none).
+	MaxFileBytes int64
+	// MaxCandidates refuses more new or resized files than this (0 = none).
+	MaxCandidates int
+}
+
+// LimitError means the worktree is over a SnapshotOptions limit. Nothing was
+// hashed. Path is "" for the count limit. Why is fixed text.
+type LimitError struct{ Path, Why string }
+
+func (e *LimitError) Error() string {
+	if e.Path == "" {
+		return "gitx: snapshot: " + e.Why
+	}
+	return fmt.Sprintf("gitx: snapshot: %s: %s", e.Path, e.Why)
 }
 
 // Snapshot builds the private index of wt against commit base. repoDir is the
 // controller's repository, where base lives. Close removes the index.
-func (g *Git) Snapshot(ctx context.Context, repoDir, wt, base string) (*Snapshot, error) {
+//
+// Hashing the agent's files writes their blobs somewhere. They go to a private
+// object directory under the temp dir (the controller's repository is only an
+// alternate to read base from), so an agent cannot grow the controller's
+// clone, and Close removes them. With options, a walk first refuses a worktree
+// whose new or resized files are too big or too many, before anything is hashed.
+func (g *Git) Snapshot(ctx context.Context, repoDir, wt, base string, opts ...SnapshotOptions) (*Snapshot, error) {
 	if repoDir == "" || wt == "" || base == "" {
 		return nil, fmt.Errorf("gitx: snapshot: repo dir, worktree and base are required")
 	}
@@ -54,10 +81,21 @@ func (g *Git) Snapshot(ctx context.Context, repoDir, wt, base string) (*Snapshot
 	if err != nil {
 		return nil, fmt.Errorf("gitx: snapshot: %w", err)
 	}
-	s := &Snapshot{g: g, gitDir: gitDirOf(repoDir), wt: wt, base: base, tmp: tmp, idx: filepath.Join(tmp, "index")}
+	s := &Snapshot{g: g, gitDir: gitDirOf(repoDir), wt: wt, base: base, tmp: tmp,
+		idx: filepath.Join(tmp, "index"), objs: filepath.Join(tmp, "objects")}
+	if err := os.Mkdir(s.objs, 0o700); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("gitx: snapshot: %w", err)
+	}
 	if _, err := s.git(ctx, "read-tree", base); err != nil {
 		s.Close()
 		return nil, fmt.Errorf("gitx: snapshot read-tree %.12s: %w", base, err)
+	}
+	if len(opts) > 0 && (opts[0].MaxFileBytes > 0 || opts[0].MaxCandidates > 0) {
+		if err := s.checkLimits(ctx, opts[0]); err != nil {
+			s.Close()
+			return nil, err
+		}
 	}
 	if _, err := s.git(ctx, "add", "-A", "--", "."); err != nil {
 		s.Close()
@@ -77,7 +115,8 @@ func (s *Snapshot) git(ctx context.Context, args ...string) (string, error) {
 		"-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", "core.quotePath=false",
 		"-c", "core.untrackedCache=false", "-c", "core.sparseCheckout=false",
 		"--literal-pathspecs"}, args...)
-	env := []string{"GIT_INDEX_FILE=" + s.idx, "GIT_ATTR_SOURCE=" + emptyTree, "GIT_OPTIONAL_LOCKS=0"}
+	env := []string{"GIT_INDEX_FILE=" + s.idx, "GIT_ATTR_SOURCE=" + emptyTree, "GIT_OPTIONAL_LOCKS=0",
+		"GIT_OBJECT_DIRECTORY=" + s.objs, "GIT_ALTERNATE_OBJECT_DIRECTORIES=" + filepath.Join(s.gitDir, "objects")}
 	// The command's working directory is the controller's repository, never the
 	// agent's tree.
 	out, _, err := s.g.run(ctx, filepath.Dir(s.gitDir), env, "", nil, full...)
@@ -227,4 +266,73 @@ func hunkAdded(h string) (LineRange, bool, error) {
 		return LineRange{}, false, nil
 	}
 	return LineRange{From: start, To: start + count - 1}, true, nil
+}
+
+// checkLimits walks the files add -A would hash: untracked files that are not
+// ignored, and tracked files whose size differs from the base commit. It reads
+// sizes only (through os.Root, never following a symlink).
+func (s *Snapshot) checkLimits(ctx context.Context, o SnapshotOptions) error {
+	out, err := s.git(ctx, "ls-tree", "-r", "-l", "-z", "--full-tree", s.base)
+	if err != nil {
+		return fmt.Errorf("gitx: snapshot ls-tree: %w", err)
+	}
+	baseSize := map[string]int64{}
+	for _, rec := range strings.Split(out, "\x00") {
+		meta, p, ok := strings.Cut(rec, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 4 {
+			continue
+		}
+		if n, err := strconv.ParseInt(f[3], 10, 64); err == nil {
+			baseSize[p] = n
+		}
+	}
+	out, err = s.git(ctx, "ls-files", "-z", "--others", "--exclude-standard")
+	if err != nil {
+		return fmt.Errorf("gitx: snapshot untracked: %w", err)
+	}
+	root, err := os.OpenRoot(s.wt)
+	if err != nil {
+		return fmt.Errorf("gitx: snapshot: %w", err)
+	}
+	defer root.Close()
+	count := 0
+	check := func(p string) error {
+		count++
+		if o.MaxCandidates > 0 && count > o.MaxCandidates {
+			return &LimitError{Why: fmt.Sprintf("more than %d new or resized files", o.MaxCandidates)}
+		}
+		if o.MaxFileBytes > 0 {
+			if fi, err := root.Lstat(strings.TrimSuffix(p, "/")); err == nil && fi.Mode().IsRegular() && fi.Size() > o.MaxFileBytes {
+				return &LimitError{Path: p, Why: "larger than the file size limit"}
+			}
+		}
+		return nil
+	}
+	for _, p := range strings.Split(out, "\x00") {
+		if p == "" {
+			continue
+		}
+		if err := check(p); err != nil {
+			return err
+		}
+	}
+	paths := make([]string, 0, len(baseSize))
+	for p := range baseSize {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		fi, err := root.Lstat(p)
+		if err != nil || !fi.Mode().IsRegular() || fi.Size() == baseSize[p] {
+			continue
+		}
+		if err := check(p); err != nil {
+			return err
+		}
+	}
+	return nil
 }

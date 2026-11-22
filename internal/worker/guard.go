@@ -43,6 +43,11 @@ type Change struct {
 	Patterns []redact.Finding
 	// ScanFailed means a scanner could not run on the file (fail closed).
 	ScanFailed bool
+	// Copy is a controller-private copy of exactly the bytes that were scanned.
+	// The code lane commits it, not the agent's file, which a surviving
+	// process could change after the scan. "" for a deletion or a file that
+	// was not scanned.
+	Copy string
 }
 
 // Reject is one reason a change cannot be committed. It never holds file

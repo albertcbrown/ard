@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/gitx"
@@ -20,8 +21,10 @@ const binarySniff = 8 << 10
 // trusted: the changes come from a gitx.Snapshot (the controller's own
 // repository, a private index, no worktree config or attributes), and every
 // file is read through os.Root, so a symlink is never followed. The bytes read
-// here are the bytes the code lane commits: it reads the same paths from the
-// same disk, and Check passes it only the files it saw. A scanner error marks
+// here are copied into stage (a controller-private directory) and the code
+// lane commits the copies, so a process that survives the step cannot swap a
+// file between the scan and the commit; Check passes the lane only the files
+// it saw. A scanner error marks
 // the file ScanFailed (fail closed).
 //
 // The pattern scan keeps only findings on lines this step added (a new file
@@ -31,9 +34,9 @@ const binarySniff = 8 << 10
 // prLines counts the changed lines of the whole PR: the diff against the
 // merge base of mainSHA and base, with the loop's and close-out's paths left
 // out.
-func (l *Loop) facts(ctx context.Context, issue int, wt, base, mainSHA string) (changes []Change, prLines int, err error) {
+func (l *Loop) facts(ctx context.Context, issue int, wt, base, mainSHA, stage string) (changes []Change, prLines int, err error) {
 	g := l.d.Git
-	snap, err := g.Snapshot(ctx, l.d.RepoDir, wt, base)
+	snap, err := g.Snapshot(ctx, l.d.RepoDir, wt, base, gitx.SnapshotOptions{MaxFileBytes: MaxFileSize, MaxCandidates: MaxFiles})
 	if err != nil {
 		return nil, 0, fmt.Errorf("snapshot: %w", err)
 	}
@@ -75,7 +78,7 @@ func (l *Loop) facts(ctx context.Context, issue int, wt, base, mainSHA string) (
 		}
 		c := Change{Path: ch.Path, Deleted: ch.Deleted}
 		if !ch.Deleted {
-			l.fileFacts(ctx, root, &c, secrets, added[ch.Path])
+			l.fileFacts(ctx, root, &c, secrets, added[ch.Path], stage, len(changes))
 			switch ch.Mode {
 			case "160000":
 				c.Kind = NestedRepo
@@ -92,7 +95,7 @@ func (l *Loop) facts(ctx context.Context, issue int, wt, base, mainSHA string) (
 }
 
 // fileFacts fills the on-disk facts of one changed file. Only the added line ranges are pattern-scanned.
-func (l *Loop) fileFacts(ctx context.Context, root *os.Root, c *Change, secrets *redact.Secrets, added []gitx.LineRange) {
+func (l *Loop) fileFacts(ctx context.Context, root *os.Root, c *Change, secrets *redact.Secrets, added []gitx.LineRange, stage string, seq int) {
 	fi, err := root.Lstat(c.Path)
 	switch {
 	case err != nil:
@@ -127,6 +130,13 @@ func (l *Loop) fileFacts(ctx context.Context, root *os.Root, c *Change, secrets 
 		c.Binary = true
 		return
 	}
+	// Keep exactly the scanned bytes where the agent cannot reach them.
+	cp := filepath.Join(stage, fmt.Sprintf("f%04d", seq))
+	if err := os.WriteFile(cp, data, 0o600); err != nil {
+		c.ScanFailed = true
+		return
+	}
+	c.Copy = cp
 	c.Known = secrets.Names(data)
 	found, err := l.d.Scanner.Scan(ctx, bytes.NewReader(data))
 	if err != nil {

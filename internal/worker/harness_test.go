@@ -204,9 +204,14 @@ type fakeCode struct {
 	err  error
 	// files holds the content of each request's files at commit time.
 	files []map[string]string
+	// before runs when a commit is requested, before its sources are read.
+	before func()
 }
 
 func (f *fakeCode) CommitCode(_ context.Context, branch string, req committer.CodeRequest) (committer.Result, error) {
+	if f.before != nil {
+		f.before()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {

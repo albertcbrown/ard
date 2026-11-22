@@ -759,3 +759,51 @@ func TestSetBranchFailureStillOpensThePR(t *testing.T) {
 		t.Errorf("prs %d finish %+v", len(h.prs()), fc.Opts)
 	}
 }
+
+// What is committed is what was scanned, even if a surviving process rewrites
+// the file in the worktree between the scan and the commit.
+func TestCommittedBytesAreTheScannedBytes(t *testing.T) {
+	h := newHarness(t, noTests)
+	h.issue("t")
+	var wt string
+	h.ex.run = func(kind string, j executor.Job, hd executor.Handle) int {
+		wt = hd.Worktree
+		writeFile(t, hd.Worktree, "a.txt", "scanned\n")
+		writeFile(t, hd.Worktree, fmt.Sprintf(".ard/%d/worker-engineer.md", j.Issue), roleDone)
+		return 0
+	}
+	h.code.before = func() {
+		writeFile(t, wt, "a.txt", "key = "+"gh"+"s_"+strings.Repeat("aB3xZ9", 7)+"\n")
+	}
+	h.mustTick()
+	if h.code.n() != 1 || h.code.files[0]["a.txt"] != "scanned\n" {
+		t.Errorf("committed %v", h.code.files)
+	}
+}
+
+func TestSizeAndCountLimitsHoldBeforeHashing(t *testing.T) {
+	for name, tc := range map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"a file over 1 MiB": {map[string]string{"big.txt": strings.Repeat("x", MaxFileSize+1)}, "big.txt: larger than the file size limit"},
+		"257 new files": {func() map[string]string {
+			m := map[string]string{}
+			for i := 0; i <= MaxFiles; i++ {
+				m[fmt.Sprintf("d/f%03d.txt", i)] = "x\n"
+			}
+			return m
+		}(), "more than 256 new or resized files"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, noTests)
+			h.issue("t")
+			h.agentWrites(tc.files, roleDone, nil)
+			h.mustTick()
+			w := h.only().Opts.Worker
+			if w == nil || !strings.Contains(w.Hold, "diff guard: ") || !strings.Contains(w.Hold, tc.want) || h.code.n() != 0 {
+				t.Errorf("worker %+v", w)
+			}
+		})
+	}
+}

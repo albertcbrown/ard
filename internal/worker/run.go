@@ -21,6 +21,7 @@ import (
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/reaper"
@@ -488,7 +489,25 @@ func (jb *job) round(ctx context.Context, s step) (head string, noCode, done boo
 		return "", false, true
 	}
 	jb.setSummary(ctx, rf.Summary)
-	changes, prLines, err := jb.l.facts(ctx, n, s.h.Worktree, s.h.BaseSHA, jb.cfg.SHA)
+	stage, err := os.MkdirTemp("", "ard-code-")
+	if err == nil {
+		defer os.RemoveAll(stage)
+		// The committer refuses a source path that involves a symlink (/var on macOS).
+		stage, err = filepath.EvalSymlinks(stage)
+	}
+	if err != nil {
+		jb.log.Error("worker.guard_failed", "error", err)
+		jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "the diff guard could not run", false))
+		return "", false, true
+	}
+	changes, prLines, err := jb.l.facts(ctx, n, s.h.Worktree, s.h.BaseSHA, jb.cfg.SHA, stage)
+	var le *gitx.LimitError
+	if errors.As(err, &le) {
+		// Too big or too many to look at: a hold, before anything was hashed.
+		jb.log.Info("worker.guard", "hold", true, "limit", le.Error())
+		jb.finishWithPR(ctx, s, "diff guard: "+Reject{Path: le.Path, Why: le.Why}.String(), closeout.Cause{})
+		return "", false, true
+	}
 	if err != nil {
 		jb.log.Error("worker.guard_failed", "error", err)
 		jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "the diff guard could not run", false))
@@ -513,11 +532,6 @@ func (jb *job) round(ctx context.Context, s step) (head string, noCode, done boo
 // push commits the guard's files to the branch through the code lane.
 func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 	d := jb.l.d
-	root, err := filepath.EvalSymlinks(s.h.Worktree)
-	if err != nil {
-		jb.finish(ctx, s, nil, jb.cause(closeout.CauseNoProcess, "could not push the branch: worktree", false))
-		return "", false
-	}
 	req := committer.CodeRequest{
 		Issue: jb.is.Number, Role: jb.role.Name, JobID: jb.sj.ID, Type: CommitType(jb.is.Labels),
 		Title: jb.is.Title, Body: jb.summary, Base: s.h.BaseSHA, Create: !jb.exists,
@@ -525,7 +539,11 @@ func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 	for _, c := range v.Commit {
 		cf := committer.CodeFile{Path: c.Path, Delete: c.Deleted}
 		if !c.Deleted {
-			cf.Src, cf.Exec = filepath.Join(root, filepath.FromSlash(c.Path)), c.Kind == Exec
+			if c.Copy == "" {
+				jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "could not push the branch: no scanned copy", false))
+				return "", false
+			}
+			cf.Src, cf.Exec = c.Copy, c.Kind == Exec
 		}
 		req.Files = append(req.Files, cf)
 	}

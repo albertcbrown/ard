@@ -2,6 +2,8 @@ package gitx
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -317,4 +319,103 @@ func TestHunkAdded(t *testing.T) {
 	if _, _, err := hunkAdded("@@ nonsense"); err == nil {
 		t.Error("bad header must fail")
 	}
+}
+
+func countFiles(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			n++
+		}
+		return nil
+	})
+	return n
+}
+
+// Hashing an agent's files must not grow the controller's clone.
+func TestSnapshotWritesNoObjectsToTheClone(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	base := strings.TrimSpace(gittest.Run(t, clone, "rev-parse", "HEAD"))
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Run(t, clone, "worktree", "add", "--detach", wt, base)
+	write(t, wt, "new.txt", "brand new content "+strings.Repeat("z", 5000)+"\n")
+	before := countFiles(t, filepath.Join(clone, ".git", "objects"))
+	s, err := g.Snapshot(ctx, clone, wt, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := s.Changed(ctx)
+	if err != nil || len(ch) != 1 {
+		t.Fatalf("changes = %v, %v", ch, err)
+	}
+	tmp := s.tmp
+	s.Close()
+	if after := countFiles(t, filepath.Join(clone, ".git", "objects")); after != before {
+		t.Errorf("clone objects %d -> %d", before, after)
+	}
+	if _, err := os.Stat(tmp); err == nil {
+		t.Error("the private object directory was not removed")
+	}
+}
+
+func TestSnapshotLimits(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	write(t, clone, "tracked.txt", "t\n")
+	write(t, clone, "big-tracked.bin", strings.Repeat("b", 4096))
+	write(t, clone, ".gitignore", "ignored/\n")
+	gittest.Run(t, clone, "add", ".")
+	gittest.Run(t, clone, "commit", "-m", "base")
+	base := strings.TrimSpace(gittest.Run(t, clone, "rev-parse", "HEAD"))
+	opts := SnapshotOptions{MaxFileBytes: 1024, MaxCandidates: 3}
+	mk := func(t *testing.T) string {
+		wt := filepath.Join(t.TempDir(), "wt")
+		gittest.Run(t, clone, "worktree", "add", "--detach", wt, base)
+		return wt
+	}
+	snap := func(wt string) error {
+		s, err := g.Snapshot(ctx, clone, wt, base, opts)
+		if err == nil {
+			s.Close()
+		}
+		return err
+	}
+	t.Run("within limits, with an unchanged big tracked file and an ignored big file", func(t *testing.T) {
+		wt := mk(t)
+		write(t, wt, "ignored/huge.bin", strings.Repeat("i", 1<<20))
+		write(t, wt, "a.txt", "a\n")
+		if err := snap(wt); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("a big new file", func(t *testing.T) {
+		wt := mk(t)
+		write(t, wt, "big.bin", strings.Repeat("x", 2048))
+		var le *LimitError
+		if err := snap(wt); !errors.As(err, &le) || le.Path != "big.bin" {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("a tracked file grown past the limit", func(t *testing.T) {
+		wt := mk(t)
+		write(t, wt, "tracked.txt", strings.Repeat("x", 2048))
+		var le *LimitError
+		if err := snap(wt); !errors.As(err, &le) {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("too many new files", func(t *testing.T) {
+		wt := mk(t)
+		for i := 0; i < 4; i++ {
+			write(t, wt, fmt.Sprintf("n%d.txt", i), "x\n")
+		}
+		var le *LimitError
+		if err := snap(wt); !errors.As(err, &le) || le.Path != "" || !strings.Contains(le.Why, "more than 3") {
+			t.Errorf("err = %v", err)
+		}
+	})
 }
