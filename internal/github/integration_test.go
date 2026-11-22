@@ -3,7 +3,9 @@
 package github_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -54,15 +56,53 @@ func TestIntegration(t *testing.T) {
 			return newScratchPR(t, c, gh, repo)
 		}),
 		clienttest.WithPin(func(t *testing.T, c github.Client, n int) {
-			// The client cannot unpin; closing is the best cleanup available.
-			// If GitHub keeps closed issues pinned, three runs fill the
-			// repo's pin slots and a manual unpin is needed.
+			// Closing does not unpin, and a repo has only 3 pin slots, so
+			// unpin through GraphQL (the client has no unpin), then close.
+			unpinIssue(t, c, rt, n)
 			closed := github.StateClosed
 			if err := c.UpdateIssue(context.Background(), n, github.IssueUpdate{State: &closed}); err != nil {
 				t.Logf("cleanup: close pinned issue %d: %v", n, err)
 			}
 		}),
 	)
+}
+
+// unpinIssue unpins issue n with the GraphQL unpinIssue mutation, logging any
+// failure: it is cleanup, and a leftover pin needs only a manual unpin.
+func unpinIssue(t *testing.T, c github.Client, rt http.RoundTripper, n int) {
+	t.Helper()
+	ctx := context.Background()
+	is, err := c.GetIssue(ctx, n)
+	if err != nil {
+		t.Logf("cleanup: unpin issue %d: %v", n, err)
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"query":     "mutation($id: ID!) { unpinIssue(input: {issueId: $id}) { clientMutationId } }",
+		"variables": map[string]string{"id": is.NodeID},
+	})
+	if err != nil {
+		t.Logf("cleanup: unpin issue %d: %v", n, err)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.github.com/graphql", bytes.NewReader(body))
+	if err != nil {
+		t.Logf("cleanup: unpin issue %d: %v", n, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Transport: rt, Timeout: time.Minute}).Do(req)
+	if err != nil {
+		t.Logf("cleanup: unpin issue %d: %v", n, err)
+		return
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Errors []struct{ Message string } `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK || len(out.Errors) > 0 {
+		t.Logf("cleanup: unpin issue %d: status %d, decode err %v, errors %v", n, resp.StatusCode, err, out.Errors)
+	}
 }
 
 // newScratchPR opens a real, mergeable PR that adds one uniquely named file on
