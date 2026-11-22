@@ -305,6 +305,13 @@ func (l *lane) attempt(ctx context.Context, s snap, base string, create bool) (r
 	var writes, deletes, execs []string
 	for _, f := range s.files {
 		full := filepath.Join(l.wt, filepath.FromSlash(f.path))
+		// Defence in depth behind CheckCodePath/CheckPath: never touch a
+		// path that resolves outside the worktree.
+		if rel, err := filepath.Rel(l.wt, full); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			ge := &GuardError{}
+			ge.add(f.path, "escapes the worktree")
+			return res, false, ge
+		}
 		if err := checkParents(l.wt, f.path); err != nil {
 			return res, false, err
 		}

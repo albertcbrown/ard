@@ -7,7 +7,7 @@ func TestCheckCodePath(t *testing.T) {
 		".github/workflows/ci.yml", ".github/CODEOWNERS", ".GitHub/x",
 		".ard/config.yaml", ".ard/workers/engineer/prompt.txt", ".ard/12/worker-engineer.md", ".ARD/Config.yaml",
 		".ard-input/12/issue.md", "a/.git/hooks/x", "a/.GIT/x", ".gitmodules", "sub/.gitmodules",
-		"./a", "a//b", "/abs", "a\\b", "a\x01b", "", ".github", ".ard",
+		".", "..", "../x", "a/../../x", "../../etc/passwd", ".git\u200c/x", ".github\u200b/x", "a\ufffd", "./a", "a//b", "/abs", "a\\b", "a\x01b", "", ".github", ".ard",
 		// secret-shaped
 		".env", "config/.env.prod", "certs/server.pem", "id_ed25519.pub", ".aws/credentials",
 		"x/.docker/config.json", "service-account-prod.json", "a/.NPMRC", "k.p12",

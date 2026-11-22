@@ -445,3 +445,44 @@ func realTemp(t *testing.T) string {
 	}
 	return d
 }
+
+// A path that escapes the worktree must be refused by the lane itself, even
+// when the path guards are bypassed.
+func TestLaneRefusesEscape(t *testing.T) {
+	c := newCodeEnv(t, nil)
+	gittest.Run(t, c.clone, "push", "-q", "origin", "main:refs/heads/"+brName)
+	l, err := c.b.laneFor(brName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(c.work, "victim.txt")
+	keep := filepath.Join(c.work, "keep.txt")
+	if err := os.WriteFile(keep, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Worktree is <work>/committer-branch-...; "../victim.txt" lands in c.work.
+	for _, f := range []snapFile{
+		{path: "../victim.txt", data: []byte("x")},
+		{path: "../keep.txt", del: true},
+	} {
+		s := snap{files: []snapFile{f}, declared: []string{f.path}, msg: "m"}
+		_, err := l.run(context.Background(), s)
+		if !errors.Is(err, ErrGuard) {
+			t.Errorf("%s: %v", f.path, err)
+		}
+	}
+	if _, err := os.Stat(outside); err == nil {
+		t.Error("file written outside the worktree")
+	}
+	if b, err := os.ReadFile(keep); err != nil || string(b) != "keep" {
+		t.Error("host file removed")
+	}
+	// And through the public API.
+	for _, p := range []string{"../../victim.txt", ".."} {
+		r := c.req(CodeFile{Path: p, Src: c.srcFile(t, "ok.go", "x")})
+		r.Create = true
+		if _, err := c.b.CommitCode(context.Background(), "worker/engineer-12-esc", r); !errors.Is(err, ErrGuard) {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+}

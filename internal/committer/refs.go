@@ -2,6 +2,7 @@ package committer
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -11,10 +12,12 @@ const (
 	// hashMark is "#" in its plain, full-width, HTML-entity and
 	// backslash-escaped forms; GitHub renders each of them as "#" in markdown.
 	hashMark = `(?:[#\x{FF03}]|&#0*35;|&#[xX]0*23;|&num;|\\#)`
-	refHash  = hashMark + `\d+`
-	refGH    = `GH-\d+`
-	refCross = `[\w.-]+/[\w.-]+` + hashMark + `\d+`
-	refURL   = `(?:https?://)?[\w.-]+(?::\d+)?/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+`
+	// digit is a decimal digit, possibly entity-encoded (&#49; or &#x31;).
+	digit    = `(?:\d|&#0*(?:4[89]|5[0-7]);|&#[xX]0*3[0-9];)`
+	refHash  = hashMark + digit + `+`
+	refGH    = `GH-` + digit + `+`
+	refCross = `[\w.-]+/[\w.-]+` + hashMark + digit + `+`
+	refURL   = `(?:https?://)?[\w.-]+(?::\d+)?/[\w.-]+/[\w.-]+/(?:issues|pull)/` + digit + `+`
 	// refAny tries the longest forms first so "o/r#12" is not read as "#12".
 	refAny = `(?:` + refURL + `|` + refCross + `|` + refGH + `|` + refHash + `)`
 )
@@ -25,7 +28,7 @@ var (
 	// keyword comes right before the reference, so words in between stop the
 	// match. The keyword needs no leading word boundary and the separator is
 	// permissive, so ambiguous forms are rewritten: the safe direction.
-	closingRe = regexp.MustCompile(`(?i)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[\s\p{Z}\p{Cf}:*_~\x60(\[<]*` +
+	closingRe = regexp.MustCompile(`(?i)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?:[\s\p{Z}\p{Cf}:*_~\x60(\[<]|&nbsp;|&#0*32;|&#0*160;|&#[xX]0*(?:20|[aA]0);)*` +
 		// Optional markdown link text: "Fixes [text](url)".
 		`(?:[^\]\[\n]*\]\()?` +
 		refAny + `(?:[\s\p{Z}\p{Cf}]*(?:,|and|&)[\s\p{Z}\p{Cf}]*` + refAny + `)*`)
@@ -52,7 +55,15 @@ func NeutraliseRefs(s string) string {
 	return closingRe.ReplaceAllStringFunc(s, func(m string) string {
 		var b strings.Builder
 		last := 0
+		seps := sepEntityRe.FindAllStringIndex(m, -1)
+	refs:
 		for _, ix := range refRe.FindAllStringIndex(m, -1) {
+			// "&#32;" is a separator entity, not the reference "#32".
+			for _, sp := range seps {
+				if ix[0] >= sp[0] && ix[0] < sp[1] {
+					continue refs
+				}
+			}
 			b.WriteString(m[last:ix[0]])
 			// "fixes#12" has no separator; keep the words apart.
 			if prev, _ := utf8.DecodeLastRuneInString(m[:ix[0]]); ix[0] > 0 && (unicode.IsLetter(prev) || unicode.IsDigit(prev)) {
@@ -65,7 +76,25 @@ func NeutraliseRefs(s string) string {
 	})
 }
 
+var sepEntityRe = regexp.MustCompile(`&nbsp;|&#0*32;|&#0*160;|&#[xX]0*(?:20|[aA]0);`)
+
+var digitEntityRe = regexp.MustCompile(`&#0*(?:4[89]|5[0-7]);|&#[xX]0*3[0-9];`)
+
+// decodeDigits turns entity-encoded digits into plain ones.
+func decodeDigits(s string) string {
+	return digitEntityRe.ReplaceAllStringFunc(s, func(m string) string {
+		v := strings.TrimSuffix(strings.TrimPrefix(m, "&#"), ";")
+		base := 10
+		if v[0] == 'x' || v[0] == 'X' {
+			v, base = v[1:], 16
+		}
+		n, _ := strconv.ParseInt(v, base, 32)
+		return string(rune(n))
+	})
+}
+
 func plainRef(r string) string {
+	r = decodeDigits(r)
 	if sm := urlRefRe.FindStringSubmatch(r); sm != nil {
 		return sm[1] + " issue " + sm[2]
 	}

@@ -3,6 +3,7 @@ package committer
 import (
 	"path"
 	"strings"
+	"unicode"
 )
 
 // CheckCodePath reports why a worker may not commit p for issue, or nil. It is
@@ -25,14 +26,19 @@ func CheckCodePath(issue int, p string) error {
 		return reason("empty path")
 	}
 	for _, r := range p {
-		if r == '\\' || r < 0x20 || r == 0x7f {
-			return reason("backslash or control character")
+		if r == '\\' || r < 0x20 || r == 0x7f || r == 0xFFFD || unicode.Is(unicode.Cf, r) {
+			return reason("backslash, control or invisible character")
 		}
 	}
 	if path.Clean(p) != p || strings.HasPrefix(p, "/") {
 		return reason("not canonical")
 	}
 	segs := strings.Split(p, "/")
+	for _, s := range segs {
+		if s == "." || s == ".." {
+			return reason("not canonical")
+		}
+	}
 	for _, seg := range segs {
 		if strings.EqualFold(seg, ".git") {
 			return reason("contains .git")
