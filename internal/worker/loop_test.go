@@ -732,12 +732,12 @@ func TestTriageOutputsAreUntrustedInputs(t *testing.T) {
 	h.mustTick()
 	args := strings.Join(h.ex.cmds[h.ex.ids()[0]].Args, " ")
 	p := fmt.Sprintf(".ard/%d/", n)
-	for _, want := range []string{p + "plan.md", p + "triage-lead.md", p + "triage-architect.md", p + "logs/triage-lead-20260101T000000Z.log"} {
+	for _, want := range []string{p + "plan.md", p + "issue.md", p + "triage-lead.md", p + "triage-architect.md", p + "logs/triage-lead-20260101T000000Z.log"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args lack %s:\n%s", want, args)
 		}
 	}
-	for _, not := range []string{p + "issue.md", "worker-engineer-2026"} {
+	for _, not := range []string{"worker-engineer-2026"} {
 		if strings.Contains(args, not) {
 			t.Errorf("args wrongly name %s", not)
 		}
