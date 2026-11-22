@@ -47,7 +47,7 @@ internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group,
 internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues
 internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
-internal/roles/     starter role directories embedded for ard init (scanners/cve)
+internal/roles/     starter role directories embedded for ard init (scanners/cve, triage/lead)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
