@@ -21,6 +21,7 @@ ard is a controller that automates repository development: scanners â†’ triage â
 ## Stack
 
 - Go, a single static `ard` binary (CGO off; use a pure-Go SQLite driver such as `modernc.org/sqlite`).
+- Supported platforms: macOS and Linux only; Windows is unsupported (the local executor relies on `flock` and POSIX process handling).
 - GitHub access through a GitHub App installation token, behind an interface so tests use a fake.
 - The language choice is tracked as a decision issue; if it changes, update this file.
 
