@@ -112,7 +112,7 @@ func TestClaimAndRun(t *testing.T) {
 		t.Errorf("inputs = %v", files)
 	}
 	// The diff was taken from the merge base to the pinned tip with .ard/ left out.
-	if len(h.git.diffCalls) != 1 || fmt.Sprint(h.git.diffCalls[0]) != fmt.Sprint([]string{baseSHA, tipSHA, ".ard/"}) {
+	if len(h.git.diffCalls) != 1 || fmt.Sprint(h.git.diffCalls[0]) != fmt.Sprint([]string{baseSHA, tipSHA, fmt.Sprintf(".ard/%d/", issue)}) {
 		t.Errorf("diff calls = %v", h.git.diffCalls)
 	}
 	// The command names the untrusted paths and carries no credential on argv.
@@ -172,6 +172,9 @@ func TestHeadMovedDuringReview(t *testing.T) {
 			tc.set(h.git)
 			h.mustTick()
 			calls := h.fin.got()
+			if tc.name != "same head" && fmt.Sprint(h.git.changedEx) != "[.ard/1/]" {
+				t.Errorf("CodeChanged excludes %v", h.git.changedEx)
+			}
 			if len(calls) != 1 || calls[0].Opts.Review == nil || calls[0].Opts.Review.HeadMoved != tc.want {
 				t.Fatalf("calls = %+v, want HeadMoved %v", calls, tc.want)
 			}

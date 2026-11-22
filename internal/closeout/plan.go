@@ -94,8 +94,10 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 		p.Outcome = OutcomeChanges
 		p.Terminal = []Label{{n, labels.Changes(j.Role)}}
 		p.Remove = []Label{{n, labels.Done(labels.Stage(j.Stage), j.Role)}, run}
-	case j.Stage == StageReview && j.Review != nil && j.Review.HeadMoved:
-		// An approve of a head that has since gained code is not a pass.
+	case j.Stage == StageReview && rf.Verdict == VerdictApprove && (j.Review == nil || j.Review.HeadMoved):
+		// An approve of a head that has since gained code is not a pass. With
+		// no review context (a Reaper close-out after a restart) the head is
+		// unknown, so it is treated as moved.
 		p.Outcome = OutcomeStale
 		p.Remove = []Label{run}
 	case j.Stage == StageWorker:

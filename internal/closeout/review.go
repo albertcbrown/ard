@@ -57,7 +57,7 @@ type ReviewPlan struct {
 func reviewPlan(j Job, verdict string, downgraded bool, fs []Finding) *ReviewPlan {
 	rp := &ReviewPlan{CommitSHA: j.BaseSHA, Verdict: verdict, Downgraded: downgraded}
 	if j.Review == nil {
-		rp.NoLines = true
+		rp.NoLines, rp.HeadMoved = true, true
 		rp.Other = append(rp.Other, fs...)
 		return rp
 	}

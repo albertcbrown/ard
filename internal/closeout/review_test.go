@@ -230,6 +230,26 @@ func TestPrepareReviewPlan(t *testing.T) {
 			t.Errorf("changes on a moved head: %+v, %v", rec2.Plan, err)
 		}
 	})
+	t.Run("approve with no review context is stale", func(t *testing.T) {
+		e := newEnv(t)
+		file := strings.Replace(strings.Replace(reviewFile, "verdict: changes", "verdict: approve", 1), "blocking: true", "blocking: false", 1)
+		rec, err := Prepare(ctx, e.reviewJob(file, nil), e.d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Plan.Outcome != OutcomeStale || len(rec.Plan.Terminal) != 0 || rec.Plan.Review == nil || !rec.Plan.Review.HeadMoved {
+			t.Fatalf("plan = %+v", rec.Plan)
+		}
+		p := Build(Job{Stage: StageReview, Role: "r", PR: 3}, RoleFile{Status: StatusDone, Verdict: VerdictApprove}, nil)
+		if p.Outcome != OutcomeStale {
+			t.Errorf("Build outcome = %s", p.Outcome)
+		}
+		e2 := newEnv(t)
+		rec2, err := Prepare(ctx, e2.reviewJob(reviewFile, nil), e2.d)
+		if err != nil || rec2.Plan.Outcome != OutcomeChanges {
+			t.Errorf("changes with no context: %+v, %v", rec2.Plan, err)
+		}
+	})
 	t.Run("needs-human, failed and retry have no review", func(t *testing.T) {
 		e := newEnv(t)
 		e.write(".ard/7/review-eng-review.md", "---\nrole: eng-review\nstatus: needs-human\nattempt: 1\n---\nHelp.\n")

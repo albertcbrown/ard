@@ -50,7 +50,7 @@
 //     (inline comments on added lines, the rest in the body; a 422 falls back
 //     to a body-only review, then to a plain comment) instead of a comment. An
 //     approve with a blocking finding is changes. An approve on a PR head that
-//     gained code is outcome stale: the review is posted, no pass label is set
+//     gained code, or one closed out with no review context (a restart), is outcome stale: the review is posted, no pass label is set
 //     and the request label stays.
 //   - Closer never releases the pool slot or removes the worktree. The caller
 //     does both, keeping the worktree when the outcome is failed, retry or

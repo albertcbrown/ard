@@ -140,6 +140,7 @@ type fakeGit struct {
 	truncated  bool
 	added      map[string][]gitx.LineRange
 	changed    []string // CodeChanged answer
+	changedEx  []string
 	changedErr error
 	diffCalls  [][]string
 	revs       int
@@ -178,7 +179,8 @@ func (g *fakeGit) AddedLinesBetween(context.Context, string, string, string, ...
 	return g.added, nil
 }
 
-func (g *fakeGit) CodeChanged(context.Context, string, string, string, ...string) ([]string, error) {
+func (g *fakeGit) CodeChanged(_ context.Context, _, _, _ string, ex ...string) ([]string, error) {
+	g.changedEx = ex
 	return g.changed, g.changedErr
 }
 

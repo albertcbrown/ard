@@ -46,10 +46,10 @@ func (l *Loop) pin(ctx context.Context, cfg *config.Resolved, c candidate) (p pi
 	if p.base, err = d.Git.MergeBase(ctx, d.RepoDir, cfg.SHA, p.tip); err != nil {
 		return p, "merge_base", err
 	}
-	if p.patch, p.truncated, err = d.Git.Diff(ctx, d.RepoDir, p.base, p.tip, maxDiffBytes, ".ard/"); err != nil {
+	if p.patch, p.truncated, err = d.Git.Diff(ctx, d.RepoDir, p.base, p.tip, maxDiffBytes, issueDir(c.issue.Number)); err != nil {
 		return p, "diff", err
 	}
-	if p.added, err = d.Git.AddedLinesBetween(ctx, d.RepoDir, p.base, p.tip, ".ard/"); err != nil {
+	if p.added, err = d.Git.AddedLinesBetween(ctx, d.RepoDir, p.base, p.tip, issueDir(c.issue.Number)); err != nil {
 		return p, "added_lines", err
 	}
 	return p, "", nil
@@ -183,16 +183,21 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 			log.Warn("review.parse_failed", "error", perr)
 		}
 	}
-	rc.HeadMoved = l.headMoved(ctx, log, c, p.tip)
+	rc.HeadMoved = l.headMoved(ctx, log, c, n, p.tip)
 	finish(h, st, res, closeout.Cause{})
 }
+
+// issueDir is the only part of .ard/ the reviewer's diff and head check leave
+// out: close-out commits land there. Edits to .ard/config.yaml, role
+// directories or another issue's directory stay visible.
+func issueDir(n int) string { return fmt.Sprintf(".ard/%d/", n) }
 
 // headMoved reports whether the PR's branch gained code (anything outside
 // .ard/) since the commit the review pinned. Commits that only add .ard/ files
 // (another reviewer's close-out) do not count. When the branch cannot be read
 // the answer is yes: the review then runs again rather than pass a head it
 // may not cover.
-func (l *Loop) headMoved(ctx context.Context, log *slog.Logger, c candidate, tip string) bool {
+func (l *Loop) headMoved(ctx context.Context, log *slog.Logger, c candidate, n int, tip string) bool {
 	d := l.d
 	spec := "+refs/heads/" + c.pr.HeadRef + ":" + localRef(c.pr.Number)
 	if err := d.Git.FetchRef(ctx, d.RepoDir, d.RemoteURL, spec, d.Token); err != nil {
@@ -207,7 +212,7 @@ func (l *Loop) headMoved(ctx context.Context, log *slog.Logger, c candidate, tip
 	if now == tip {
 		return false
 	}
-	changed, err := d.Git.CodeChanged(ctx, d.RepoDir, tip, now, ".ard/")
+	changed, err := d.Git.CodeChanged(ctx, d.RepoDir, tip, now, issueDir(n))
 	if err != nil {
 		log.Warn("review.head_check_failed", "step", "diff", "error", err)
 		return true
