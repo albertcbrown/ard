@@ -394,7 +394,8 @@ func (jb *job) agentCommand(h executor.Handle, untrusted []string) (executor.Com
 }
 
 // triageInputs lists the regular files triage left for the worker, as paths
-// relative to the worktree: plan.md, issue.md, the triage role files and the triage logs.
+// relative to the worktree: plan.md, the scanner's issue.md, the triage role
+// files and the triage logs.
 // They are agent-written, so the agent is told they are untrusted. Nothing is
 // followed through a symlink.
 func (jb *job) triageInputs(wt string) []string {
