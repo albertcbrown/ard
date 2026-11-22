@@ -362,7 +362,7 @@ func (r *Reaper) finish(ctx context.Context, sj state.Job, h executor.Handle, st
 	switch out {
 	case closeout.OutcomeRetry:
 		ev = "reaper.retry"
-	case closeout.OutcomeDone, closeout.OutcomeChanges, closeout.OutcomeNeedsHuman:
+	case closeout.OutcomeDone, closeout.OutcomeChanges, closeout.OutcomeStale, closeout.OutcomeNeedsHuman:
 		ev = "reaper.closeout"
 	}
 	r.log().Info(ev, append(attrs, "outcome", string(out))...)

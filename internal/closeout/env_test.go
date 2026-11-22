@@ -75,6 +75,12 @@ func (f flakyEffects) CreateComment(ctx context.Context, n int, b string) (githu
 	}
 	return f.inner.CreateComment(ctx, n, b)
 }
+func (f flakyEffects) CreateReview(ctx context.Context, n int, in github.ReviewInput) error {
+	if err := f.tick(); err != nil {
+		return err
+	}
+	return f.inner.CreateReview(ctx, n, in)
+}
 func (f flakyEffects) DryRun() bool { return f.inner.DryRun() }
 
 // fakeCommitter records commits. An identical file set returns the same SHA.
@@ -317,4 +323,32 @@ func (e *env) sjob(id string) state.Job {
 		e.t.Fatal(err)
 	}
 	return j
+}
+
+func (e *env) markerReviews(n int, id string) int {
+	e.t.Helper()
+	rs, err := e.gh.ListReviews(context.Background(), n)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	c := 0
+	for _, r := range rs {
+		if strings.HasPrefix(r.Body, markerFor(id)) {
+			c++
+		}
+	}
+	return c
+}
+
+// reviewCalls returns the CreateReview and CreateComment calls the fake saw.
+func (e *env) reviewCalls() (reviews []github.ReviewInput, comments int) {
+	for _, c := range e.gh.Writes() {
+		switch c.Method {
+		case "CreateReview":
+			reviews = append(reviews, c.Args[1].(github.ReviewInput))
+		case "CreateComment":
+			comments++
+		}
+	}
+	return reviews, comments
 }

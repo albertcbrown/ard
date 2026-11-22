@@ -33,7 +33,7 @@
 //   - The Reaper must not mark a job failed while its close-out phase is set
 //     and not closed: the agent has finished and a close-out is in flight. It
 //     resumes that job instead.
-//   - Outcomes: done, changes and needs-human are results; failed sets
+//   - Outcomes: done, changes, stale and needs-human are results; failed sets
 //     ard:executor:failed; retry (a named transient cause) does not, and keeps
 //     the request label so the next claim runs the job again as a new job.
 //     Failed and retry comments carry the last 50 redacted log lines and the
@@ -44,6 +44,14 @@
 //     Worker.Hold, needs a human; it is never :done without a PR. A worker
 //     that stops before its first push has no Branch: its role file and log
 //     go to main, as triage's do.
+//   - A review job closes out with Job.Review (the added lines of the PR and
+//     whether its head moved, passed through reaper.Finisher.FinishWith). A
+//     review that reached a verdict posts one PR review at the pinned commit
+//     (inline comments on added lines, the rest in the body; a 422 falls back
+//     to a body-only review, then to a plain comment) instead of a comment. An
+//     approve with a blocking finding is changes. An approve on a PR head that
+//     gained code is outcome stale: the review is posted, no pass label is set
+//     and the request label stays.
 //   - Closer never releases the pool slot or removes the worktree. The caller
 //     does both, keeping the worktree when the outcome is failed, retry or
 //     needs-human and removing it otherwise.

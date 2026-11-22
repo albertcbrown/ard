@@ -123,10 +123,17 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 
 	// 2. Redact and stage.
 	var (
-		files   []FileRef
-		hit     string // first non-log file that was flagged, with rule ids
-		summary string
+		files      []FileRef
+		hit        string // first non-log file that was flagged, with rule ids
+		summary    string
+		findings   []Finding // of the redacted role file
+		unreadable bool      // the redacted role file no longer parses
+		downgraded bool
 	)
+	if failed == "" && denied == "" && j.Stage == StageReview && rf.DowngradeVerdict() {
+		downgraded = true
+		d.log().Warn("closeout.review_verdict_downgraded", "job", j.ID, "role", j.Role, "from", VerdictApprove, "to", VerdictChanges)
+	}
 	if failed == "" && denied == "" {
 		for _, c := range cands {
 			if c.delete {
@@ -146,7 +153,9 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 			}
 			if c.path == rolePath {
 				if crf, perr := Parse(res.Clean); perr == nil {
-					summary = crf.Summary
+					summary, findings = crf.Summary, crf.Findings
+				} else if j.Stage == StageReview {
+					unreadable = true
 				}
 			}
 			if c.noCommit {
@@ -217,8 +226,13 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		plan = needsHumanPlan(j, rf.Status, cleanReason(ctx, red, denied))
 	case hit != "":
 		plan = needsHumanPlan(j, rf.Status, hit)
+	case unreadable:
+		plan = needsHumanPlan(j, rf.Status, "findings unreadable after redaction")
 	default:
 		plan = Build(j, rf, d.Roles)
+		if j.Stage == StageReview && (plan.Outcome == OutcomeDone || plan.Outcome == OutcomeChanges || plan.Outcome == OutcomeStale) {
+			plan.Review = reviewPlan(j, rf.Verdict, downgraded, findings)
+		}
 		if logWithheld {
 			plan = needsHumanPlan(j, rf.Status, "")
 		}

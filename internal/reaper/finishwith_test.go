@@ -56,6 +56,25 @@ func TestFinishWithPassesWorkerResult(t *testing.T) {
 	}
 }
 
+func TestFinishWithPassesReviewContext(t *testing.T) {
+	ctx := context.Background()
+	st, err := state.Open(ctx, t.TempDir(), state.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sj, _ := st.CreateJob(ctx, state.NewJob{Stage: "review", Role: "eng-review", Issue: 4, PR: 12, Branch: "worker/engineer-4-x"})
+	cc := &captureCloser{}
+	f := &Finisher{Closer: cc, Store: st, Log: quiet}
+	rc := &closeout.ReviewContext{MergeBase: "mb", HeadMoved: true}
+	if _, err := f.FinishWith(ctx, sj.ID, executor.Handle{JobID: sj.ID, BaseSHA: "abc"}, executor.Status{State: executor.Exited}, agent.Result{}, FinishOptions{Review: rc}); err != nil {
+		t.Fatal(err)
+	}
+	if j := cc.got[0]; j.Review != rc || j.PR != 12 || j.Stage != "review" {
+		t.Errorf("closeout job = %+v", j)
+	}
+}
+
 func TestFinishLeavesWorkerFieldsEmpty(t *testing.T) {
 	ctx := context.Background()
 	st, err := state.Open(ctx, t.TempDir(), state.Options{})
@@ -69,7 +88,7 @@ func TestFinishLeavesWorkerFieldsEmpty(t *testing.T) {
 	if _, err := f.Finish(ctx, sj.ID, executor.Handle{JobID: sj.ID}, executor.Status{State: executor.Exited}, agent.Result{}, closeout.Cause{}); err != nil {
 		t.Fatal(err)
 	}
-	if j := cc.got[0]; j.Worker != nil || j.ExtraLogs != nil {
+	if j := cc.got[0]; j.Worker != nil || j.ExtraLogs != nil || j.Review != nil {
 		t.Errorf("closeout job = %+v", j)
 	}
 }

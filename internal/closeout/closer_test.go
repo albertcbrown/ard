@@ -105,8 +105,8 @@ func TestRunReviewChangesTargetsPR(t *testing.T) {
 	if e.cm.branches[0] != "worker/engineer-x" {
 		t.Errorf("review committed to %q", e.cm.branches[0])
 	}
-	if e.markerComments(9, j.ID) != 1 {
-		t.Error("no comment on the PR")
+	if e.markerReviews(9, j.ID) != 1 || e.markerComments(9, j.ID) != 0 {
+		t.Error("want one PR review and no comment")
 	}
 	if sj := e.sjob(j.ID); sj.Status != state.StatusDone {
 		t.Errorf("status = %s", sj.Status)

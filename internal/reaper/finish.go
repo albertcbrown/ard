@@ -155,9 +155,12 @@ type FinishOptions struct {
 	// ExtraLogs are further host logs to commit beside the handle's log: the
 	// earlier agent steps of a worker job.
 	ExtraLogs []string
+	// Review is the reviewer loop's context (added lines, head moved). A
+	// review closed out without it posts every finding in the review body.
+	Review *closeout.ReviewContext
 }
 
-// FinishWith is Finish with a worker result and extra logs. The worker loop
+// FinishWith is Finish with a worker result, extra logs and a review context. The worker loop
 // calls SetBranch and SetPR on the job row first, then FinishWith with the
 // handle of its final agent step.
 func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Handle, st executor.Status, res agent.Result, o FinishOptions) (closeout.Outcome, error) {
@@ -179,7 +182,7 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 		cause = CauseOf(sj, st, res, f.Start)
 	}
 	cj := CloseoutJob(sj, h, st, cause, res)
-	cj.Worker, cj.ExtraLogs = o.Worker, o.ExtraLogs
+	cj.Worker, cj.ExtraLogs, cj.Review = o.Worker, o.ExtraLogs, o.Review
 	// End the attempt before close-out: a crash after it leaves a resumable
 	// close-out and an ended attempt, never the reverse.
 	if sj.Attempt > 0 {
