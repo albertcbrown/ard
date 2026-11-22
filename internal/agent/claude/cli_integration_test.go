@@ -390,7 +390,8 @@ func TestCLIUsesOAuthToken(t *testing.T) {
 	c := workerArgvAuth(t, work, agent.AuthOAuthToken)
 	url, _, headers := fakeAPIHeaders(t)
 	proxy, hosts := refusingProxy(t)
-	out, _ := runCLI(t, work, c, c.Argv, "CLAUDE_CODE_OAUTH_TOKEN="+tok, "ANTHROPIC_BASE_URL="+url,
+	home := t.TempDir()
+	out, _ := runCLI(t, work, c, c.Argv, "HOME="+home, "CLAUDE_CODE_OAUTH_TOKEN="+tok, "ANTHROPIC_BASE_URL="+url,
 		"HTTPS_PROXY="+proxy, "HTTP_PROXY="+proxy, "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost")
 	hs := headers()
 	if len(hs) == 0 {
@@ -406,6 +407,18 @@ func TestCLIUsesOAuthToken(t *testing.T) {
 	}
 	if hh := hosts(); len(hh) != 0 {
 		t.Errorf("CLI tried to reach outside hosts: %v", hh)
+	}
+	// The CLI must not write the token to disk.
+	for _, root := range []string{home, c.Env["CLAUDE_CONFIG_DIR"]} {
+		_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if b, _ := os.ReadFile(p); bytes.Contains(b, []byte(tok)) {
+				t.Errorf("token written to %s", p)
+			}
+			return nil
+		})
 	}
 	in := cliInitEvent(t, out)
 	t.Logf("apiKeySource with CLAUDE_CODE_OAUTH_TOKEN = %q", in.APIKeySource)
@@ -432,6 +445,24 @@ func TestCLIAPIKeyBeatsOAuth(t *testing.T) {
 	for _, h := range hs {
 		if h.Get("X-Api-Key") != "dummy-not-a-key" || strings.HasPrefix(h.Get("Authorization"), "Bearer ard-dummy-oauth") {
 			t.Errorf("headers = %v; want the API key to win", h)
+		}
+	}
+}
+
+// Pins why the adapter leaves CLAUDE_CODE_SUBPROCESS_ENV_SCRUB unset: on the
+// tested release it flips init.permissionMode from dontAsk to default.
+func TestCLIEnvScrubFlipsPermissionMode(t *testing.T) {
+	work, _ := plantRepo(t)
+	c := workerArgv(t, work)
+	for _, tc := range []struct{ extra, want string }{{"", "dontAsk"}, {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1", "default"}} {
+		url, _ := fakeAPI(t)
+		args := []string{"ANTHROPIC_BASE_URL=" + url}
+		if tc.extra != "" {
+			args = append(args, tc.extra)
+		}
+		out, _ := runCLI(t, work, c, c.Argv, args...)
+		if got := cliInitEvent(t, out).PermissionMode; got != tc.want {
+			t.Errorf("%q: permissionMode = %q, want %q", tc.extra, got, tc.want)
 		}
 	}
 }

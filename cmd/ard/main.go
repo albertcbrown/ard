@@ -8,6 +8,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/configcmd"
+	"github.com/albertcbrown/ard/internal/initcmd"
 	"github.com/albertcbrown/ard/internal/labels/labelsync"
 	"github.com/albertcbrown/ard/internal/servecmd"
 )
@@ -31,5 +32,6 @@ func handlers() cli.Handlers {
 		Serve:        servecmd.Serve,
 		LabelsSync:   labelsync.Command,
 		RebuildState: servecmd.RebuildState,
+		Init:         initcmd.Init,
 	}
 }

@@ -90,6 +90,19 @@ func TestStartConfigDirChecks(t *testing.T) {
 			h.View.ConfigDir = ""
 			return []string{"CLAUDE_CONFIG_DIR=/x"}
 		}, executor.ErrForbiddenEnv},
+		{"view dir elsewhere with matching fixed", func(t *testing.T, h *executor.Handle) []string {
+			h.View.ConfigDir = "/elsewhere"
+			return []string{"CLAUDE_CONFIG_DIR=/elsewhere"}
+		}, executor.ErrNotPrepared},
+		{"home is a symlink", func(t *testing.T, h *executor.Handle) []string {
+			real := t.TempDir()
+			os.RemoveAll(h.Home)
+			if err := os.Symlink(real, h.Home); err != nil {
+				t.Fatal(err)
+			}
+			os.Mkdir(filepath.Join(real, ".claude"), 0o700)
+			return nil
+		}, executor.ErrNotPrepared},
 		{"symlink", func(t *testing.T, h *executor.Handle) []string {
 			p := filepath.Join(h.Home, ".claude")
 			os.Remove(p)
@@ -196,5 +209,24 @@ func TestExactlyOneCredentialReachesProcess(t *testing.T) {
 	}
 	if strings.Contains(out, "ANTHROPIC_API_KEY") || strings.Contains(out, "controller-") {
 		t.Errorf("controller credential leaked:\n%s", out)
+	}
+}
+
+func TestStartRejectsTwoCredentials(t *testing.T) {
+	f := newFixture(t)
+	f.l.allowEnv["CLAUDE_CODE_OAUTH_TOKEN"] = true
+	ctx := context.Background()
+	h, err := f.l.Prepare(ctx, f.job(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.l.Cleanup(ctx, h, executor.CleanupOptions{})
+	for _, env := range [][]string{
+		{"ANTHROPIC_API_KEY=a-key-value-1", "CLAUDE_CODE_OAUTH_TOKEN=a-token-value-1"},
+		{"ANTHROPIC_API_KEY=a-key-value-1", "ANTHROPIC_API_KEY=a-key-value-2"},
+	} {
+		if _, err := f.l.Start(ctx, h, agent(t, "ok", env...)); !errors.Is(err, executor.ErrForbiddenEnv) {
+			t.Errorf("%v: err = %v", env, err)
+		}
 	}
 }

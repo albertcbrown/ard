@@ -362,3 +362,29 @@ func TestWorktreeRemoveRunsWhenCancelled(t *testing.T) {
 		t.Errorf("%d worktrees, want 1", n)
 	}
 }
+
+func TestSetExec(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	gittest.Run(t, clone, "config", "core.fileMode", "false")
+	stage(t, clone, "tool", "#!/bin/sh\n")
+	stage(t, clone, "plain", "x\n")
+	if err := g.SetExec(ctx, clone, "tool"); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := g.StagedChanges(ctx, clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, c := range changes {
+		got[c.Path] = c.NewMode
+	}
+	if got["tool"] != "100755" || got["plain"] != "100644" {
+		t.Errorf("modes = %v, want tool 100755 and plain 100644", got)
+	}
+	if err := g.SetExec(ctx, clone, "missing"); err == nil {
+		t.Error("SetExec on an unstaged path succeeded")
+	}
+}

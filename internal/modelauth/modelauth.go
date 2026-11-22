@@ -42,8 +42,8 @@ var (
 // means no credential was selected.
 type Credential struct {
 	Auth  agent.Auth
-	Name  string // e.g. CLAUDE_CODE_OAUTH_TOKEN
-	value string
+	Name  string        // e.g. CLAUDE_CODE_OAUTH_TOKEN
+	value func() string // a closure, so %+v on a struct holding a Credential cannot print it
 }
 
 // IsZero reports whether no credential is selected.
@@ -89,16 +89,26 @@ func Resolve(mode Mode, names func(agent.Auth) (string, error), getenv func(stri
 		if v != strings.TrimSpace(v) || strings.IndexFunc(v, unicode.IsControl) >= 0 {
 			return Credential{}, fmt.Errorf("%w: %s has whitespace or a control character", ErrBadValue, name)
 		}
-		return Credential{Auth: a, Name: name, value: v}, nil
+		return Credential{Auth: a, Name: name, value: func() string { return v }}, nil
 	}
 	return Credential{}, fmt.Errorf("%w: set %s", ErrNoCredential, strings.Join(tried, " or "))
 }
 
 // Env returns exactly one NAME=value entry, for executor.Command.Env.
-func (c Credential) Env() []string { return []string{c.Name + "=" + c.value} }
+func (c Credential) Env() []string {
+	if c.value == nil {
+		return nil
+	}
+	return []string{c.Name + "=" + c.value()}
+}
 
 // AddTo registers the value with the redactor's secret set.
-func (c Credential) AddTo(s *redact.Secrets) error { return s.Add(c.Name, c.value) }
+func (c Credential) AddTo(s *redact.Secrets) error {
+	if c.value == nil {
+		return nil
+	}
+	return s.Add(c.Name, c.value())
+}
 
 // String shows the name only.
 func (c Credential) String() string { return "modelauth.Credential(" + c.Name + ")" }

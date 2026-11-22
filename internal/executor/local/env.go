@@ -50,6 +50,11 @@ func (l *Local) hostEnv(h executor.Handle) []string {
 
 // checkEnv validates Command.Env: only AllowEnv names may be added.
 func (l *Local) checkEnv(env []string) error {
+	// One credential per job: the CLI prefers the API key, so a second
+	// entry would silently win or be ignored.
+	if len(env) > 1 {
+		return fmt.Errorf("%w: at most one credential per job", executor.ErrForbiddenEnv)
+	}
 	for _, kv := range env {
 		name, _, ok := strings.Cut(kv, "=")
 		switch {
@@ -97,6 +102,19 @@ func (l *Local) checkConfigDir(h executor.Handle, fixed []string) error {
 		return nil
 	}
 	p := filepath.Join(h.Home, configDirName)
+	want := p
+	if h.Kind == "docker" {
+		want = "/ard-config"
+	}
+	if h.View.ConfigDir != want {
+		return fmt.Errorf("%w: config dir %q, want %q", executor.ErrNotPrepared, h.View.ConfigDir, want)
+	}
+	if rel, err := filepath.Rel(l.root, h.Home); err != nil || rel == ".." || strings.HasPrefix(rel, "../") || rel == "." {
+		return fmt.Errorf("%w: job home %s is not under %s", executor.ErrNotPrepared, h.Home, l.root)
+	}
+	if hst, err := os.Lstat(h.Home); err != nil || !hst.IsDir() {
+		return fmt.Errorf("%w: job home %s is not a directory", executor.ErrNotPrepared, h.Home)
+	}
 	fail := func(why string) error {
 		return fmt.Errorf("%w: config dir %s: %s", executor.ErrNotPrepared, p, why)
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/config"
 )
@@ -28,7 +29,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan"}
+	want := []string{"config.yaml", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
@@ -103,6 +104,9 @@ func TestEmbeddedCveRoleLoadsAsScanner(t *testing.T) {
 	}
 	if found.ScanPath != ".ard/scanners/cve/scan" || found.PromptPath != "" || !found.Autoclose {
 		t.Errorf("unexpected role: %+v", found)
+	}
+	if found.Every != 6*time.Hour || found.MaxOpen != 10 || found.GroupSize != 1 {
+		t.Errorf("cve overrides: every=%v max_open=%d group_size=%d, want 6h, 10, 1", found.Every, found.MaxOpen, found.GroupSize)
 	}
 	if found.Dockerfile != ".ard/scanners/cve/Dockerfile" {
 		t.Errorf("Dockerfile = %q", found.Dockerfile)

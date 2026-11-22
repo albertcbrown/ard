@@ -93,7 +93,11 @@ func TestResolve(t *testing.T) {
 			}
 			var buf bytes.Buffer
 			slog.New(slog.NewJSONHandler(&buf, nil)).Info("x", "cred", c)
-			out := fmt.Sprintf("%v %+v %#v %s", c, c, c, buf.String())
+			nested := struct {
+				Cred  modelauth.Credential
+				Other int
+			}{c, 1}
+			out := fmt.Sprintf("%v %+v %#v %+v %#v %s", c, c, c, nested, nested, buf.String())
 			if strings.Contains(out, env[tt.name]) || !strings.Contains(out, tt.name) {
 				t.Fatalf("formatting leaks or omits name: %s", out)
 			}
