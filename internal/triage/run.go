@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
@@ -106,17 +105,11 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		finish(executor.Handle{}, executor.Status{}, agent.Result{}, transient(closeout.CauseNoProcess, "could not start the job", false))
 		return
 	}
-	ej := executor.Job{
+	ej := agentjob.ExecJob(cfg, role, executor.Job{
 		ID: job.ID, Repo: d.Repo, Issue: n, Stage: stageTriage, Role: role.Name,
-		RepoDir: d.RepoDir, Ref: cfg.SHA, RoleDir: filepath.Join(cfg.Repo, filepath.FromSlash(role.Dir)),
-		Inputs: inputs, Scrub: []string{agent.RoleFilePath(n, stageTriage, role.Name)}, Timeout: role.Timeout,
-	}
-	if role.Dockerfile != "" {
-		ej.Dockerfile = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dockerfile))
-	}
-	if sc, ok := cfg.SidecarFor(role); ok {
-		ej.Sidecar = executor.Sidecar{Name: role.Sidecar, Repo: sc.Repo, Ref: sc.Ref}
-	}
+		RepoDir: d.RepoDir, Ref: cfg.SHA,
+		Inputs: inputs, Scrub: []string{agent.RoleFilePath(n, stageTriage, role.Name)},
+	})
 	h, err := d.Executor.Prepare(ctx, ej)
 	if err != nil {
 		log.Error("triage.prepare_failed", "error", err)
@@ -129,7 +122,7 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 	}
 	agentjob.SaveHandle(ctx, d.Store, log, job.ID, h)
 
-	cmd, err := l.command(cfg, role, n, untrusted, h)
+	cmd, err := agentjob.AgentCommand(d.Agents, cfg, role, agent.StageTriage, n, 0, untrusted, h, d.Model)
 	if err != nil {
 		log.Error("triage.command_failed", "error", err)
 		finish(h, executor.Status{}, agent.Result{}, transient(closeout.CauseNoProcess, "could not start the agent", false))
@@ -165,30 +158,4 @@ func labeledBy(c candidate) string {
 		return c.rec.LabeledBy
 	}
 	return ""
-}
-
-// command builds the agent invocation for a prepared job. The prompt and the
-// untrusted paths are paths only; the adapter never reads them.
-func (l *Loop) command(cfg *config.Resolved, role config.Role, n int, untrusted []string, h executor.Handle) (executor.Command, error) {
-	a, err := l.d.Agents.Get(role.Agent)
-	if err != nil {
-		return executor.Command{}, err
-	}
-	budget := role.MaxBudgetUSD
-	if budget == 0 {
-		budget = cfg.MaxBudgetUSD
-	}
-	spec := agent.Spec{
-		Stage: agent.StageTriage, Role: role.Name, Issue: n,
-		PromptFile: h.View.Role + "/prompt.txt", Untrusted: untrusted,
-		ConfigDir: h.View.ConfigDir, Model: role.Model, MaxBudgetUSD: budget, Auth: l.d.Model.Auth,
-	}
-	if h.View.Sidecar != "" {
-		spec.ReadDirs = []string{h.View.Sidecar}
-	}
-	ac, err := a.Command(spec)
-	if err != nil {
-		return executor.Command{}, err
-	}
-	return agentjob.Command(ac, l.d.Model)
 }

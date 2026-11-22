@@ -20,6 +20,7 @@ type Reader interface {
 	ListPRs(ctx context.Context, o ListPRsOpts) ([]PullRequest, error)
 	ListPRFiles(ctx context.Context, n int) ([]PRFile, error)
 	ListReviewComments(ctx context.Context, n int) ([]ReviewComment, error)
+	ListReviews(ctx context.Context, n int) ([]Review, error) // all pages, oldest first
 }
 
 // Writer is the write side. Only the effect layer (#13) may hold one.

@@ -116,6 +116,17 @@ func reviewCommentFrom(c *gogh.PullRequestComment) ReviewComment {
 	}
 }
 
+func reviewFrom(r *gogh.PullRequestReview) Review {
+	return Review{
+		ID:          r.GetID(),
+		Author:      login(r.User),
+		Body:        r.GetBody(),
+		State:       r.GetState(),
+		CommitSHA:   r.GetCommitID(),
+		SubmittedAt: r.GetSubmittedAt().Time,
+	}
+}
+
 func timelineFrom(t *gogh.Timeline) TimelineEvent {
 	ev := TimelineEvent{
 		Event:     t.GetEvent(),

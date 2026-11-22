@@ -15,6 +15,10 @@ const (
 	OutcomeChanges    Outcome = "changes"
 	OutcomeNeedsHuman Outcome = "needs-human"
 	OutcomeFailed     Outcome = "failed"
+	// OutcomeStale is a review whose verdict was approve but whose PR gained
+	// code after the reviewed commit. The review is posted, no pass label is
+	// set and the request label stays, so the review runs again.
+	OutcomeStale Outcome = "stale"
 	// OutcomeRetry is a failure with a named transient cause. The job hands
 	// off to one automatic retry: it gets no ard:executor:failed and keeps its
 	// request label, so the next claim runs it again as a new job.
@@ -52,7 +56,10 @@ type Plan struct {
 	// ExtraLogPaths are the committed paths of Job.ExtraLogs, in order.
 	ExtraLogPaths []string
 	Summary       string // redacted role file summary, for the comment
-	RolePath      string // committed role file path, "" when none
+	// Review is set for a review that reached a verdict: close-out posts one
+	// PR review instead of a plain comment.
+	Review   *ReviewPlan
+	RolePath string // committed role file path, "" when none
 
 	// Tail is the last lines of the redacted log, for a failed or retry
 	// comment. It is "" when there is no log, when the log was withheld, or
@@ -87,6 +94,12 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 		p.Outcome = OutcomeChanges
 		p.Terminal = []Label{{n, labels.Changes(j.Role)}}
 		p.Remove = []Label{{n, labels.Done(labels.Stage(j.Stage), j.Role)}, run}
+	case j.Stage == StageReview && rf.Verdict == VerdictApprove && (j.Review == nil || j.Review.HeadMoved):
+		// An approve of a head that has since gained code is not a pass. With
+		// no review context (a Reaper close-out after a restart) the head is
+		// unknown, so it is treated as moved.
+		p.Outcome = OutcomeStale
+		p.Remove = []Label{run}
 	case j.Stage == StageWorker:
 		p = buildWorker(j, rf, rs)
 	default:

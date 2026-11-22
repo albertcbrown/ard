@@ -28,6 +28,22 @@ const (
 	VerdictChanges   = "changes"
 )
 
+// Finding severities, most serious first.
+const (
+	SeverityCritical = "critical"
+	SeverityHigh     = "high"
+	SeverityMedium   = "medium"
+	SeverityLow      = "low"
+	SeverityInfo     = "info"
+)
+
+// MaxFindings bounds the findings of one review; MaxFindingPath bounds a
+// finding's file path in bytes.
+const (
+	MaxFindings    = 50
+	MaxFindingPath = 300
+)
+
 // MaxRoleFileBytes bounds a role file.
 const MaxRoleFileBytes = 256 << 10
 
@@ -45,6 +61,47 @@ type RoleFile struct {
 	Attempt                       int
 	Next                          []string // raw entries; see next.go
 	Summary                       string
+	// Findings are a review's findings, in file order. Only a review may have
+	// them (check).
+	Findings []Finding
+}
+
+// Finding is one point a reviewer raised.
+type Finding struct {
+	File     string // repo-relative slash path
+	Line     int    // 1-based; 0 means the whole file
+	Severity string
+	Blocking bool
+	Message  string // untrusted agent text
+}
+
+// HasBlocking reports whether any finding blocks.
+func HasBlocking(fs []Finding) bool {
+	for _, f := range fs {
+		if f.Blocking {
+			return true
+		}
+	}
+	return false
+}
+
+// DowngradeVerdict makes an approve that carries a blocking finding a
+// changes verdict, and reports whether it did. A reviewer that blocks and
+// approves in one breath is read conservatively; the job still succeeds.
+func (rf *RoleFile) DowngradeVerdict() bool {
+	if rf.Verdict == VerdictApprove && HasBlocking(rf.Findings) {
+		rf.Verdict = VerdictChanges
+		return true
+	}
+	return false
+}
+
+type rawFinding struct {
+	File     *string `yaml:"file"`
+	Line     *int    `yaml:"line"`
+	Severity *string `yaml:"severity"`
+	Blocking *bool   `yaml:"blocking"`
+	Message  *string `yaml:"message"`
 }
 
 type rawFront struct {
@@ -54,6 +111,8 @@ type rawFront struct {
 	Next    *[]string `yaml:"next"`
 	Verdict *string   `yaml:"verdict"`
 	Worker  *string   `yaml:"worker"`
+
+	Findings *[]rawFinding `yaml:"findings"`
 }
 
 func malformed(format string, a ...any) error {
@@ -106,6 +165,7 @@ func Parse(b []byte) (RoleFile, error) {
 		return RoleFile{}, malformed("frontmatter holds more than one document")
 	}
 	rf := RoleFile{Summary: summary}
+	var err error
 	switch {
 	case raw.Role == nil:
 		return RoleFile{}, malformed("missing role")
@@ -123,6 +183,11 @@ func Parse(b []byte) (RoleFile, error) {
 	}
 	if raw.Next != nil {
 		rf.Next = *raw.Next
+	}
+	if raw.Findings != nil {
+		if rf.Findings, err = findingsOf(*raw.Findings); err != nil {
+			return RoleFile{}, err
+		}
 	}
 	switch rf.Status {
 	case StatusDone, StatusBlocked, StatusNeedsHuman:
@@ -153,8 +218,70 @@ func (rf RoleFile) check(j Job) error {
 	if j.Stage == StageReview && rf.Status == StatusDone && rf.Verdict == "" {
 		return malformed("a done review needs verdict: approve or changes")
 	}
+	if len(rf.Findings) > 0 && j.Stage != StageReview {
+		return malformed("findings are allowed only on a review")
+	}
 	if rf.Worker != "" && !(j.Stage == StageTriage && j.Role == "lead") {
 		return malformed("worker is allowed only for triage:lead")
+	}
+	return nil
+}
+
+// findingsOf validates the findings of a review.
+func findingsOf(raw []rawFinding) ([]Finding, error) {
+	if len(raw) > MaxFindings {
+		return nil, malformed("%d findings, max %d", len(raw), MaxFindings)
+	}
+	out := make([]Finding, 0, len(raw))
+	for i, r := range raw {
+		switch {
+		case r.File == nil:
+			return nil, malformed("finding %d: missing file", i+1)
+		case r.Severity == nil:
+			return nil, malformed("finding %d: missing severity", i+1)
+		case r.Message == nil:
+			return nil, malformed("finding %d: missing message", i+1)
+		}
+		f := Finding{File: *r.File, Severity: *r.Severity, Message: strings.TrimSpace(*r.Message)}
+		if err := checkFindingPath(f.File); err != nil {
+			return nil, malformed("finding %d: file %v", i+1, err)
+		}
+		switch f.Severity {
+		case SeverityCritical, SeverityHigh, SeverityMedium, SeverityLow, SeverityInfo:
+		default:
+			return nil, malformed("finding %d: severity %q is not critical, high, medium, low or info", i+1, clip(f.Severity, 40))
+		}
+		if f.Message == "" {
+			return nil, malformed("finding %d: empty message", i+1)
+		}
+		if r.Line != nil {
+			if *r.Line < 1 {
+				return nil, malformed("finding %d: line %d is below 1", i+1, *r.Line)
+			}
+			f.Line = *r.Line
+		}
+		f.Blocking = r.Blocking != nil && *r.Blocking
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// checkFindingPath accepts only a clean repo-relative slash path.
+func checkFindingPath(p string) error {
+	switch {
+	case p == "":
+		return errors.New("is empty")
+	case len(p) > MaxFindingPath:
+		return fmt.Errorf("is %d bytes, max %d", len(p), MaxFindingPath)
+	case strings.ContainsAny(p, "\\\x00"):
+		return errors.New("has a backslash or NUL")
+	case strings.HasPrefix(p, "/"):
+		return errors.New("is absolute")
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return errors.New("is not a clean relative path")
+		}
 	}
 	return nil
 }
@@ -193,6 +320,39 @@ func clip(s string, n int) string {
 	return s
 }
 
+// findingsTypes checks the scalar tags of a findings sequence.
+func findingsTypes(v *yaml.Node) bool {
+	if v.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, e := range v.Content {
+		if e.Kind != yaml.MappingNode {
+			return false
+		}
+		for i := 0; i+1 < len(e.Content); i += 2 {
+			val := e.Content[i+1]
+			if val.Kind != yaml.ScalarNode {
+				return false
+			}
+			switch e.Content[i].Value {
+			case "file", "severity", "message":
+				if val.Tag != "!!str" {
+					return false
+				}
+			case "line":
+				if val.Tag != "!!int" {
+					return false
+				}
+			case "blocking":
+				if val.Tag != "!!bool" {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // checkTypes rejects scalars yaml.v3 would coerce: role, status, verdict and
 // worker must be strings, attempt an integer, next a list of strings.
 func checkTypes(front string) error {
@@ -212,6 +372,8 @@ func checkTypes(front string) error {
 			ok = v.Kind == yaml.ScalarNode && v.Tag == "!!str"
 		case "attempt":
 			ok = v.Kind == yaml.ScalarNode && v.Tag == "!!int"
+		case "findings":
+			ok = findingsTypes(v)
 		case "next":
 			ok = v.Kind == yaml.SequenceNode
 			for _, e := range v.Content {

@@ -297,6 +297,9 @@ func TestPrepareRoleFileNamePerStage(t *testing.T) {
 		t.Run(c.stage, func(t *testing.T) {
 			e := newEnv(t)
 			j := e.claim(c.stage, c.role)
+			if c.stage == StageReview {
+				j.Review = &ReviewContext{}
+			}
 			if c.stage == StageWorker {
 				j.PR, j.Worker = 5, &WorkerResult{PR: 5, Tests: TestsNone}
 			}

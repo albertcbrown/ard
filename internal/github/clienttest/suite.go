@@ -342,6 +342,24 @@ func Run(t *testing.T, newClient func(t *testing.T) github.Client, opts ...Optio
 		}
 	})
 
+	t.Run("ReviewThenList", func(t *testing.T) {
+		if cfg.newPR == nil {
+			t.Skip("no PR factory")
+		}
+		c := newClient(t)
+		n, sha := cfg.newPR(t, c)
+		if err := c.CreateReview(ctx, n, github.ReviewInput{CommitSHA: sha, Body: "marker body"}); err != nil {
+			t.Fatal(err)
+		}
+		rs, err := c.ListReviews(ctx, n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rs) == 0 || rs[len(rs)-1].Body != "marker body" || rs[len(rs)-1].CommitSHA != sha {
+			t.Fatalf("reviews = %+v", rs)
+		}
+	})
+
 	t.Run("MergeSHAGuard", func(t *testing.T) {
 		if cfg.newPR == nil {
 			t.Skip("no PR factory")

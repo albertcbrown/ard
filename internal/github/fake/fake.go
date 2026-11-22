@@ -32,18 +32,19 @@ func WithIdentity(id github.Identity) Option { return func(s *state) { s.identit
 func WithClock(now func() time.Time) Option { return func(s *state) { s.now = now } }
 
 type item struct {
-	issue    github.Issue
-	isPR     bool
-	draft    bool
-	merged   bool
-	headRef  string
-	headSHA  string
-	baseRef  string
-	mergeSt  string
-	comments []github.Comment
-	timeline []github.TimelineEvent
-	files    []github.PRFile
-	reviews  []github.ReviewComment
+	issue      github.Issue
+	isPR       bool
+	draft      bool
+	merged     bool
+	headRef    string
+	headSHA    string
+	baseRef    string
+	mergeSt    string
+	comments   []github.Comment
+	timeline   []github.TimelineEvent
+	files      []github.PRFile
+	reviews    []github.ReviewComment
+	reviewList []github.Review
 }
 
 type state struct {
@@ -586,6 +587,19 @@ func (f *Fake) ListReviewComments(ctx context.Context, n int) ([]github.ReviewCo
 	return append([]github.ReviewComment(nil), it.reviews...), nil
 }
 
+func (f *Fake) ListReviews(ctx context.Context, n int) ([]github.Review, error) {
+	unlock, err := f.beginRead("ListReviews")
+	defer unlock()
+	if err != nil {
+		return nil, err
+	}
+	it, err := f.s.get(n)
+	if err != nil || !it.isPR {
+		return nil, fmt.Errorf("github: list reviews %d: %w", n, github.ErrNotFound)
+	}
+	return append([]github.Review(nil), it.reviewList...), nil
+}
+
 // ---- Writer ----
 
 func (f *Fake) CreateIssue(ctx context.Context, in github.NewIssue) (github.Issue, error) {
@@ -834,6 +848,10 @@ func (f *Fake) CreateReview(ctx context.Context, n int, in github.ReviewInput) e
 	if err != nil || !it.isPR {
 		return fmt.Errorf("github: create review %d: %w", n, github.ErrNotFound)
 	}
+	it.reviewList = append(it.reviewList, github.Review{
+		ID: f.s.id(), Author: f.actor.Login, Body: in.Body, State: "COMMENTED",
+		CommitSHA: in.CommitSHA, SubmittedAt: f.s.now(),
+	})
 	for _, c := range in.Comments {
 		it.reviews = append(it.reviews, github.ReviewComment{
 			ID: f.s.id(), Author: f.actor.Login, Path: c.Path, Line: c.Line, Body: c.Body,

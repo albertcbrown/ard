@@ -38,7 +38,7 @@ func TestBuild(t *testing.T) {
 	lead := Job{Stage: StageTriage, Role: "lead", Issue: 7}
 	worker := Job{Stage: StageWorker, Role: "engineer", Issue: 7, PR: 9, Branch: "worker/engineer-x",
 		Worker: &WorkerResult{PR: 9, Tests: TestsPassed}}
-	review := Job{Stage: StageReview, Role: "eng-review", Issue: 7, PR: 9, Branch: "worker/engineer-x"}
+	review := Job{Stage: StageReview, Role: "eng-review", Issue: 7, PR: 9, Branch: "worker/engineer-x", Review: &ReviewContext{}}
 	tests := []struct {
 		name         string
 		j            Job
@@ -67,6 +67,10 @@ func TestBuild(t *testing.T) {
 			[]string{"9:ard:review:eng-review"}, nil, 1},
 		{"review approve", review, RoleFile{Status: "done", Verdict: "approve", Next: []string{"review:license-review"}},
 			OutcomeDone, []string{"9:ard:review:eng-review:done"}, []string{"9:ard:review:eng-review:changes", "9:ard:review:eng-review:running"}, nil, nil, 1},
+		{"review approve, no context (restart) is stale", Job{Stage: StageReview, Role: "eng-review", Issue: 7, PR: 9, Branch: "worker/engineer-x"}, RoleFile{Status: "done", Verdict: "approve"},
+			OutcomeStale, nil, []string{"9:ard:review:eng-review:running"}, nil, nil, 0},
+		{"review approve, head moved is stale", Job{Stage: StageReview, Role: "eng-review", Issue: 7, PR: 9, Branch: "worker/engineer-x", Review: &ReviewContext{HeadMoved: true}}, RoleFile{Status: "done", Verdict: "approve"},
+			OutcomeStale, nil, []string{"9:ard:review:eng-review:running"}, nil, nil, 0},
 		{"review changes", review, RoleFile{Status: "done", Verdict: "changes"},
 			OutcomeChanges, []string{"9:ard:review:eng-review:changes"}, []string{"9:ard:review:eng-review:done", "9:ard:review:eng-review:running"}, nil, nil, 0},
 		{"review blocked ignores verdict", review, RoleFile{Status: "blocked", Verdict: "changes"},
