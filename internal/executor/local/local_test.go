@@ -704,3 +704,31 @@ func TestScrubGuards(t *testing.T) {
 		})
 	}
 }
+
+type failingAdd struct{ gitRunner }
+
+func (failingAdd) WorktreeAdd(context.Context, string, string, string) error {
+	return errors.New("fatal: could not create work tree")
+}
+
+// A failed ref lookup or worktree add is a transient clone failure
+// (executor.ErrClone); a bad job is not.
+func TestPrepareWrapsErrClone(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	j := f.job(time.Minute)
+	j.Ref = "nope"
+	if _, err := f.l.Prepare(ctx, j); !errors.Is(err, executor.ErrClone) {
+		t.Errorf("bad ref: %v, want ErrClone", err)
+	}
+	f = newFixture(t)
+	f.l.git = failingAdd{f.l.git}
+	if _, err := f.l.Prepare(ctx, f.job(time.Minute)); !errors.Is(err, executor.ErrClone) {
+		t.Errorf("worktree add: %v, want ErrClone", err)
+	}
+	bad := f.job(time.Minute)
+	bad.Timeout = 0
+	if _, err := f.l.Prepare(ctx, bad); errors.Is(err, executor.ErrClone) || !errors.Is(err, executor.ErrInvalidJob) {
+		t.Errorf("invalid job: %v", err)
+	}
+}

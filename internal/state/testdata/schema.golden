@@ -3,6 +3,16 @@ CREATE INDEX jobs_cleanup ON jobs(status, cleaned_at);
 CREATE INDEX jobs_issue ON jobs(issue);
 CREATE UNIQUE INDEX jobs_one_running ON jobs(stage, role, issue) WHERE status = 'running';
 CREATE INDEX jobs_status ON jobs(status, created_at);
+CREATE TABLE admissions(
+  issue INTEGER PRIMARY KEY,
+  mode TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  labeled_by TEXT,
+  labeled_at INTEGER NOT NULL,
+  body_hash TEXT NOT NULL,
+  admitted_at INTEGER NOT NULL,
+  job_id TEXT
+);
 CREATE TABLE attempts(
   job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
   n INTEGER NOT NULL,

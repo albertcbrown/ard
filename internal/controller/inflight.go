@@ -27,7 +27,8 @@ type Inflight struct {
 	wg     sync.WaitGroup
 }
 
-func newInflight(ctx context.Context, log *slog.Logger) *Inflight {
+// NewInflight returns an Inflight whose work runs with ctx.
+func NewInflight(ctx context.Context, log *slog.Logger) *Inflight {
 	return &Inflight{log: log, ctx: ctx, names: map[uint64]string{}}
 }
 
@@ -81,8 +82,8 @@ func (i *Inflight) close() {
 	i.mu.Unlock()
 }
 
-// wait returns a channel closed when every tracked task has finished.
-func (i *Inflight) wait() <-chan struct{} {
+// Wait returns a channel closed when every tracked task has finished.
+func (i *Inflight) Wait() <-chan struct{} {
 	ch := make(chan struct{})
 	go func() { i.wg.Wait(); close(ch) }()
 	return ch
