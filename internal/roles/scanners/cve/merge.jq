@@ -3,7 +3,8 @@
 # Inputs (all via scan, see its header):
 #   --arg root <physical abs path of the scanned repo> --arg lroot <logical one>
 #   --slurpfile osv <osv-scanner --format json output>     ([] or [{"results":[...]}])
-#   --slurpfile gv  <JSONL, one {manifest, messages} per Go module> ([] when absent)
+#   --slurpfile gv  <JSONL, one {manifest, messages[, toolchain]} per Go module> ([] when absent;
+#     toolchain is set only when scan switched Go toolchains for that module)
 # Output: one compact JSON object per finding, sorted by fingerprint, keys in
 # the order fingerprint,title,severity,group,files,body. Pure and deterministic:
 # no timestamps, no tool versions. Written for jq 1.6+.
@@ -62,7 +63,7 @@ def osv_cands:
       } ];
 
 def gv_cands:
-  [ $gv[] | .manifest as $m | (.messages // []) as $msgs
+  [ $gv[] | .manifest as $m | (.toolchain // null) as $tc | (.messages // []) as $msgs
     | ([$msgs[] | select(.osv != null) | .osv] | map({key: .id, value: .}) | from_entries) as $osvs
     | [$msgs[] | select(.finding != null) | .finding]
     | group_by([.osv, .trace[0].module])[]
@@ -79,7 +80,8 @@ def gv_cands:
         installed: ($f.trace[0].version // null | if . == null then null else ltrimstr("v") end),
         fixed: ([$fs[] | .fixed_version | select(. != null and . != "") | ltrimstr("v")] | unique),
         summary: ($o.summary // null),
-        reach: (if any($fs[]; (.trace[0].function // "") != "") then "yes" else "no" end)
+        reach: (if any($fs[]; (.trace[0].function // "") != "") then "yes" else "no" end),
+        toolchain: $tc
       } ];
 
 # ---- merging: candidates for one manifest+package that share any id are one vuln ----
@@ -102,6 +104,7 @@ def merge:
       summary: (([$xs[] | select(has_osv) | .summary] | sort | firstnn)
                 // ([$xs[] | .summary] | sort | firstnn)),
       tools: ([$xs[].tools[]] | unique),
+      toolchain: ([$xs[] | .toolchain | select(. != null)] | sort | .[0]),
       reach: ([$xs[] | .reach | select(. != null)] as $r
               | if ($r | length) == 0 then "unknown"
                 elif any($r[]; . == "yes") then "yes" else "no" end)
@@ -148,6 +151,8 @@ def render:
         "Fixed in: " + (if ($v.fixed | length) == 0 then "none" else ($v.fixed | map("`" + safetxt + "`") | join(", ")) end),
         "Reachable: " + (if $v.reach == "no" then "no (severity capped at medium)" else $v.reach end),
         "Reported by: " + ($v.tools | join(", ")),
+        (if $v.toolchain == null then empty
+         else "Go toolchain: `" + ($v.toolchain | safetxt) + "` (selected from go.mod; standard library findings are measured against it)" end),
         "",
         "Advisory summary (untrusted text from the advisory database):",
         "```text",
