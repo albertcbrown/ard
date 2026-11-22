@@ -11,7 +11,7 @@ import (
 
 // TestedVersion is the CLI release the flags and stream-json schema were
 // verified against. Callers warn when a run reports another version.
-const TestedVersion = "2.1.328"
+const TestedVersion = "2.1.330"
 
 // Options configures New.
 type Options struct{ Binary string } // default "claude"
