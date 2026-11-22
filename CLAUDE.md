@@ -50,11 +50,11 @@ internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; clos
 internal/roles/     starter role directories embedded for ard init (scanners/cve, triage/lead)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
-internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
+internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths, FileAt); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
 internal/controller/ scheduler, kill switch (pause), leader lock, status issue
 internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, controller
 internal/committer/ the only commit/push path: .ard/<issue#>/ (main lane, per-branch lanes) and worker code on worker/ branches (CommitCode, CheckCodePath)
-internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); every job ends through its Closer
+internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); per-role write allowlist (WritableFor); every job ends through its Closer
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -47,6 +48,7 @@ func load(fsys fs.FS, repoRoot, cfgPath string) (*Resolved, error) {
 // rawOverride is one overrides entry, every field optional.
 type rawOverride struct {
 	agent, model, sidecar, tests *string
+	planSection                  *string
 	timeout, every               *Duration
 	maxOpen, groupSize           *int
 	maxTestFixes, maxRounds      *int
@@ -70,7 +72,7 @@ var commonOverrideKeys = map[string]bool{
 
 var kindOverrideKeys = map[Kind]map[string]bool{
 	KindScanner:  {"every": true, "max_open": true, "group_size": true, "autoclose": true},
-	KindTriage:   {"after": true},
+	KindTriage:   {"after": true, "plan_section": true},
 	KindWorker:   {"tests": true, "max_test_fixes": true, "max_review_rounds": true, "reviewers": true},
 	KindReviewer: {"when": true},
 }
@@ -119,10 +121,51 @@ func applyOverrides(res *Resolved, raw rawConfig, discovered []Role, cfgPath str
 		applyOverride(res, &roles[idx], ov, keyRef, cfgPath, triageNames, reviewerNames, &errs)
 	}
 
+	// Each plan.md section has one owner.
+	owner := map[string]string{}
+	for _, r := range roles {
+		if r.Kind != KindTriage || r.PlanSection == "" {
+			continue
+		}
+		if prev, dup := owner[r.PlanSection]; dup {
+			errs = append(errs, &Error{File: cfgPath, Key: overrideKeyRef("triage/"+r.Name) + ".plan_section",
+				Msg: fmt.Sprintf("section %q is already owned by triage role %q", r.PlanSection, prev)})
+			continue
+		}
+		owner[r.PlanSection] = r.Name
+	}
+
 	errs = append(errs, checkAfter(roles, cfgPath)...)
 
 	res.Roles = roles
 	return errs
+}
+
+// BuiltinPlanSections is the plan.md section (the "## " heading, without the
+// marks) each starter triage role owns. A plan_section override replaces it.
+var BuiltinPlanSections = map[string]string{
+	"product-manager":       "Requirements",
+	"architect":             "Design",
+	"designer":              "UX",
+	"documentation-planner": "Docs",
+	"engineer":              "Implementation",
+}
+
+// checkPlanSection reports why s cannot be a plan.md section heading, or "".
+func checkPlanSection(s string) string {
+	switch {
+	case strings.TrimSpace(s) == "":
+		return "must not be empty"
+	case strings.ContainsAny(s, "\r\n"):
+		return "must be a single line"
+	case s != strings.TrimSpace(s):
+		return "must not start or end with spaces"
+	case strings.HasPrefix(s, "#"):
+		return "must not start with # (ard writes the \"## \" itself)"
+	case strings.HasSuffix(s, "#"):
+		return "must not end with #"
+	}
+	return ""
 }
 
 // applyRoleDefaults sets the per-role values that come from convention and
@@ -136,6 +179,8 @@ func applyRoleDefaults(res *Resolved, role *Role) {
 		role.MaxOpen = defaultScannerMaxOpen
 		role.GroupSize = defaultScannerGroupSize
 		role.Autoclose = role.ScanPath != ""
+	case KindTriage:
+		role.PlanSection = BuiltinPlanSections[role.Name]
 	case KindWorker:
 		role.Tests = defaultWorkerTests
 		role.MaxTestFixes = defaultWorkerMaxTestFixes
@@ -174,6 +219,14 @@ func parseOverride(ref rawOverrideRef, kind Kind, cfgPath string) (rawOverride, 
 			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.sidecar)...)
 		case "tests":
 			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.tests)...)
+		case "plan_section":
+			before := len(errs)
+			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.planSection)...)
+			if len(errs) == before && ov.planSection != nil {
+				if msg := checkPlanSection(*ov.planSection); msg != "" {
+					errs = append(errs, &Error{File: cfgPath, Key: fkey, Msg: msg})
+				}
+			}
 		case "timeout", "every":
 			var d Duration
 			before := len(errs)
@@ -320,6 +373,9 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 	}
 	if ov.autoclose != nil {
 		role.Autoclose = *ov.autoclose
+	}
+	if ov.planSection != nil {
+		role.PlanSection = *ov.planSection
 	}
 	if ov.after != nil {
 		for _, dep := range *ov.after {

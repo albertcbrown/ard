@@ -246,6 +246,21 @@ overrides:
 	}
 }
 
+func TestLoadPlanSection(t *testing.T) {
+	res := mustLoad(t, withConfig(t, "overrides: {triage/lead: {plan_section: Security}, triage/engineer: {plan_section: Build}}\n"))
+	for name, want := range map[string]string{"lead": "Security", "architect": "Design", "engineer": "Build"} {
+		if r, _ := res.Role(KindTriage, name); r.PlanSection != want {
+			t.Errorf("%s plan_section = %q, want %q", name, r.PlanSection, want)
+		}
+	}
+	res = mustLoad(t, withConfig(t, "paused: false\n"))
+	for name, want := range map[string]string{"lead": "", "architect": "Design", "engineer": "Implementation"} {
+		if r, _ := res.Role(KindTriage, name); r.PlanSection != want {
+			t.Errorf("default %s plan_section = %q, want %q", name, r.PlanSection, want)
+		}
+	}
+}
+
 func TestLoadErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -390,6 +405,31 @@ func TestLoadErrors(t *testing.T) {
 			name: "unknown sidecar reference",
 			yaml: "overrides: {triage/lead: {sidecar: vpe-specs}}\n",
 			want: []wantErr{{".ard/config.yaml", `overrides["triage/lead"].sidecar`, "no such sidecar"}},
+		},
+		{
+			name: "plan_section with leading #",
+			yaml: "overrides: {triage/lead: {plan_section: '## Sec'}}\n",
+			want: []wantErr{{".ard/config.yaml", `overrides["triage/lead"].plan_section`, "must not start with #"}},
+		},
+		{
+			name: "plan_section on several lines",
+			yaml: "overrides: {triage/lead: {plan_section: \"a\\nb\"}}\n",
+			want: []wantErr{{".ard/config.yaml", `overrides["triage/lead"].plan_section`, "single line"}},
+		},
+		{
+			name: "plan_section empty",
+			yaml: "overrides: {triage/lead: {plan_section: \"\"}}\n",
+			want: []wantErr{{".ard/config.yaml", `overrides["triage/lead"].plan_section`, "must not be empty"}},
+		},
+		{
+			name: "plan_section duplicates a starter section",
+			yaml: "overrides: {triage/lead: {plan_section: Design}}\n",
+			want: []wantErr{{".ard/config.yaml", `overrides["triage/lead"].plan_section`, `already owned by triage role "architect"`}},
+		},
+		{
+			name: "plan_section on a worker",
+			yaml: "overrides: {workers/engineer: {plan_section: X}}\n",
+			want: []wantErr{{".ard/config.yaml", `overrides["workers/engineer"].plan_section`, "only valid for triage roles"}},
 		},
 		{
 			name: "dangling after",
