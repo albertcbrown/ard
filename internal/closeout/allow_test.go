@@ -64,6 +64,12 @@ func TestCheckPlan(t *testing.T) {
 		{name: "closing hashes", base: "## Design ##\n\nd\n", cur: "## Design ##\n\nd\n\n" + ownImpl, own: "Implementation"},
 		{name: "wrong case is a new section", base: base, cur: base + "\n## implementation\n\nx\n", own: "Implementation", want: "adds section ## implementation"},
 		{name: "crlf base unchanged", base: strings.ReplaceAll(base, "\n", "\r\n"), cur: strings.ReplaceAll(base, "\n", "\r\n") + "\r\n" + ownImpl, own: "Implementation"},
+		{name: "indented heading", base: base, cur: base + "\n## Implementation\n\nx\n ## Design\nevil\n", own: "Implementation", want: "section ## Design"},
+		{name: "tab after ##", base: base, cur: base + "\n## Implementation\n\nx\n##\tDesign\nevil\n", own: "Implementation", want: "section ## Design"},
+		{name: "setext heading", base: base, cur: base + "\n## Implementation\n\nDesign\n------\nevil\n", own: "Implementation", want: "heading-like line in own section"},
+		{name: "setext in a new file's preamble", noBase: true, cur: "Title\n=====\n\n" + ownImpl, own: "Implementation", want: "heading-like line in own section"},
+		{name: "lone CR", base: base, cur: base + "\n## Implementation\n\nx\r## Design\nevil\n", own: "Implementation", want: "section ## Design"},
+		{name: "invalid backtick fence", base: base, cur: base + "\n## Implementation\n\n```a`b\n## Design\nevil\n```\n", own: "Implementation", want: "section ## Design"},
 		{name: "heading hidden in a longer fence is not a close", base: base, cur: "# Plan for #7\n\n## Requirements\n\nreq\n\n## Implementation\n\n````\n```\n## Design\n````\n", own: "Implementation", want: "removes section ## Design"},
 	}
 	for _, tc := range tests {

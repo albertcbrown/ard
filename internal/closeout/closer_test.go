@@ -500,7 +500,9 @@ func TestRunWriteDenied(t *testing.T) {
 	if !strings.Contains(b, "write not allowed") || !strings.Contains(b, ".ard/7/plan.md") {
 		t.Errorf("comment lacks the reason: %s", b)
 	}
-	if strings.Contains(b, "@octocat") && !strings.Contains(b, "`") || strings.Contains(b, "<!--x") {
+	// The path is sanitised: no live ping, no HTML comment opener.
+	if strings.Contains(b, "@octocat") || strings.Contains(b, "<!--x") ||
+		!strings.Contains(b, "`write not allowed: .ard/7/@\u200boctocat&lt;!--x.md") {
 		t.Errorf("comment not sanitised: %s", b)
 	}
 }

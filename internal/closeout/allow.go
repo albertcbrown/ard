@@ -70,6 +70,9 @@ func checkWrites(ctx context.Context, j Job, d Deps, n int, cands []candidate) (
 			}
 			base, ok, err := d.BaseFile(ctx, j.Worktree, j.BaseSHA, c.path, maxFileBytes)
 			if err != nil {
+				if cerr := ctx.Err(); cerr != nil {
+					return "", cerr
+				}
 				denied = append(denied, denial{c.path, "could not read it at base: " + err.Error()})
 				continue
 			}
@@ -125,6 +128,14 @@ func checkPlan(base []byte, baseOK bool, cur []byte, own string) string {
 	}
 	if n > 1 {
 		return fmt.Sprintf("section ## %s appears twice", clip(own, 80))
+	}
+	for _, s := range c.sections {
+		if s.heading == own && hasSetext(s.text) {
+			return "heading-like line in own section"
+		}
+	}
+	if !baseOK && hasSetext(c.pre) {
+		return "heading-like line in own section"
 	}
 	var b planDoc
 	if baseOK {
@@ -203,7 +214,7 @@ func parsePlan(b []byte) planDoc {
 	}
 	var pre strings.Builder
 	fenceCh, fenceN := byte(0), 0
-	for _, line := range strings.SplitAfter(string(b), "\n") {
+	for _, line := range splitLines(string(b)) {
 		if line == "" {
 			continue
 		}
@@ -214,9 +225,9 @@ func parsePlan(b []byte) planDoc {
 			}
 		} else if ch, n := fenceOpen(t); n > 0 {
 			fenceCh, fenceN = ch, n
-		} else if strings.HasPrefix(t, "## ") {
+		} else if rest, ok := headingLine(t); ok {
 			flush()
-			heading = headingText(t[3:])
+			heading = headingText(rest)
 			cur = &strings.Builder{}
 		}
 		if cur == nil {
@@ -254,7 +265,7 @@ func fenceOpen(t string) (byte, int) {
 	for i+n < len(t) && t[i+n] == ch {
 		n++
 	}
-	if n < 3 {
+	if n < 3 || (ch == '`' && strings.Contains(t[i+n:], "`")) {
 		return 0, 0
 	}
 	return ch, n
@@ -268,4 +279,73 @@ func isFenceClose(t string, ch byte, n int) bool {
 		return false
 	}
 	return strings.Trim(t, string(ch)) == ""
+}
+
+// splitLines splits after "\n", "\r\n" or a lone "\r", each kept on its line.
+func splitLines(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\n':
+			out = append(out, s[start:i+1])
+			start = i + 1
+		case '\r':
+			if i+1 < len(s) && s[i+1] == '\n' {
+				i++
+			}
+			out = append(out, s[start:i+1])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+// headingLine reports an ATX level-2 heading: at most 3 spaces, "##", then a
+// space, a tab or the end of the line. It returns the text after the marks.
+func headingLine(t string) (string, bool) {
+	i := 0
+	for i < len(t) && i < 4 && t[i] == ' ' {
+		i++
+	}
+	if i > 3 || !strings.HasPrefix(t[i:], "##") {
+		return "", false
+	}
+	rest := t[i+2:]
+	if rest == "" || rest[0] == ' ' || rest[0] == '\t' {
+		return rest, true
+	}
+	return "", false
+}
+
+// hasSetext reports a setext underline (=== or ---, at most 3 leading spaces)
+// directly after a non-blank line, outside a code fence. Markdown renders the
+// line above it as a heading.
+func hasSetext(text string) bool {
+	fenceCh, fenceN := byte(0), 0
+	prevText := false
+	for _, line := range splitLines(text) {
+		t := strings.TrimRight(line, " \t\r\n")
+		if fenceCh != 0 {
+			if isFenceClose(t, fenceCh, fenceN) {
+				fenceCh, fenceN = 0, 0
+			}
+			prevText = false
+			continue
+		}
+		if ch, n := fenceOpen(t); n > 0 {
+			fenceCh, fenceN = ch, n
+			prevText = false
+			continue
+		}
+		if u := strings.TrimLeft(t, " "); prevText && len(t)-len(u) <= 3 && u != "" &&
+			(strings.Trim(u, "=") == "" || strings.Trim(u, "-") == "") {
+			return true
+		}
+		prevText = strings.TrimSpace(t) != ""
+	}
+	return false
 }
