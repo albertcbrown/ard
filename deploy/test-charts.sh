@@ -45,8 +45,12 @@ check "child Application syncs with FailOnSharedResource=true" \
 check "child Application deploys only into namespace ard" test "$(child .spec.destination.namespace)" = "ard"
 
 # ---- empty pin: nothing to deploy ----------------------------------------------------------------------------------
-helm template ard-root "$ROOT_CHART" >"$work/empty.yaml" 2>&1
-check "empty digest renders no child Application" test "$(yq 'select(.kind == "Application") | .metadata.name' "$work/empty.yaml" | grep -c . || true)" = "0"
+empty_ok() {
+  helm template ard-root "$ROOT_CHART" >"$work/empty.yaml" 2>"$work/empty.err" || { cat "$work/empty.err" >&2; return 1; }
+  [ ! -s "$work/empty.err" ] || { cat "$work/empty.err" >&2; return 1; }
+  [ "$(yq 'select(.kind == "Application") | .metadata.name' "$work/empty.yaml" | grep -c . || true)" = "0" ]
+}
+check "empty digest renders no child Application" empty_ok
 
 # ---- malformed pins are refused --------------------------------------------------------------------------------------
 check "malformed digest refused" bash -c "! helm template r '$ROOT_CHART' --set image.digest=sha256:abc --set image.commit=$COMMIT >/dev/null 2>&1"
@@ -82,6 +86,8 @@ np_ok() {
   [ "$(np '.spec.policyTypes | sort | join(",")')" = "Egress,Ingress" ] || return 1
   [ "$(np '.spec.ingress | length')" = "0" ] || return 1
   [ "$(np '.spec.egress | length')" = "2" ] || return 1
+  [ "$(np '.spec.egress | map(.to | length) | join(",")')" = "1,1" ] || return 1
+  [ "$(np '.spec.egress[1] | has("ports")')" = "false" ] || return 1
   [ "$(np '.spec.egress[0].ports | map(.port) | join(",")')" = "53,53" ] || return 1
   [ "$(np '.spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]')" = "kube-system" ] || return 1
   [ "$(np '.spec.egress[1].to[0].ipBlock.cidr')" = "0.0.0.0/0" ] || return 1

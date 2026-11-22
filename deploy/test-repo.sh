@@ -151,6 +151,8 @@ delivery_ok() {
   done
 }
 check "proposal has a Delivery section" delivery_ok
+check "proposal says release tags are annotated" \
+  grep -Fq 'Release tags are annotated because Jenkins builds only tags at most a day old and dates a lightweight tag by its commit' "$P"
 claude_ok() {
   local layout; layout="$(awk '/^## Layout$/{f=1;next} /^## /{f=0} f' CLAUDE.md)"
   printf '%s' "$layout" | grep -Eq '^deploy/argocd/ ' && printf '%s' "$layout" | grep -Eq '^Dockerfile ' && printf '%s' "$layout" | grep -Eq '^Jenkinsfile\.ci '

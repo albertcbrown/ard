@@ -87,6 +87,19 @@ else
   fail "cve scan runs in the image as a host subprocess" "exit $?: $(tail -5 "$work/scan.err")"
 fi
 
+# The same run on a fixture with a known-vulnerable dependency must report it: empty output cannot pass.
+fixture="$ROOT/deploy/testdata/cve-fixture"
+fx_out="$work/fixture.out"
+if run --tmpfs /home/ard:uid=65532,gid=65532,exec --tmpfs /var/tmp:uid=65532,gid=65532,exec \
+     -v "$fixture:/repo:ro" -v "$ROOT/.ard/scanners/cve:/role:ro" -w /repo --entrypoint /role/scan "$tag" \
+     >"$fx_out" 2>"$work/fixture.err" \
+   && jq -e -s 'length >= 1 and all(.[]; type == "object" and (.fingerprint | startswith("osv:")))
+                and any(.[]; .fingerprint | test(":golang.org/x/text$"))' "$fx_out" >/dev/null 2>&1; then
+  pass "cve scan in the image reports the fixture's known vulnerability"
+else
+  fail "cve scan in the image reports the fixture's known vulnerability" "$(head -c 300 "$fx_out") $(tail -3 "$work/fixture.err")"
+fi
+
 # ---- a release build: VERSION is the tag ----------------------------------------------------------------------------
 if docker buildx build --builder "$BUILDER" --platform "$native" --load -t "$tag2" \
      --build-arg VERSION=v9.8.7 --build-arg REVISION="$revision" "$ROOT" >"$work/v.log" 2>&1; then
