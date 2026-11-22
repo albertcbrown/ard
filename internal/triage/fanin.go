@@ -343,10 +343,7 @@ func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker stri
 	l := t.l
 	n := is.Number
 	if !hasLabel(is.Labels, labels.Approved) {
-		marker := fmt.Sprintf("<!-- %striage gate=approval job=%s -->", labels.Prefix, jobID)
-		text := fmt.Sprintf("**ard · triage · ready for approval**\n\nTriage is complete; the plan is in `.ard/%d/plan.md`. A maintainer adds `%s` to start the `%s` worker. "+
-			"An approval given before triage finished does not count: remove and re-add the label.", n, labels.Approved, worker)
-		return false, t.postOnce(ctx, n, marker, text)
+		return false, t.askApproval(ctx, n, jobID, worker)
 	}
 	tl, err := l.d.Reader.ListTimeline(ctx, n)
 	if err != nil {
@@ -357,6 +354,20 @@ func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker stri
 	if !found || !haveDone {
 		t.log.Info("triage.approval_unknown", "issue", n, "reason", "timeline has no matching event yet")
 		return false, nil
+	}
+	for _, lb := range is.Labels {
+		p, ok := labels.Parse(lb)
+		if !ok || p.Kind != labels.KindRole || p.Stage != labels.StageTriage || p.State != labels.StateDone {
+			continue
+		}
+		seen := false
+		for _, e := range tl {
+			seen = seen || (e.Event == "labeled" && strings.EqualFold(e.Label, lb))
+		}
+		if !seen {
+			t.log.Info("triage.approval_unknown", "issue", n, "reason", "done label not in timeline yet")
+			return false, nil
+		}
 	}
 	refused := ev.Actor == "" || strings.EqualFold(ev.Actor, t.self)
 	if !refused {
@@ -385,7 +396,7 @@ func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker stri
 	}
 	if !ev.CreatedAt.After(doneAt) {
 		t.log.Info("triage.approval_stale", "issue", n)
-		return false, nil
+		return false, t.askApproval(ctx, n, jobID, worker)
 	}
 	return true, nil
 }
@@ -398,4 +409,13 @@ func (t *tick) gateEvent(ctx context.Context, issue int, verdict, reason, worker
 	if err := t.l.d.Store.AppendEvent(ctx, e); err != nil {
 		t.log.Warn("triage.event_failed", "issue", issue, "action", "gate", "error", err)
 	}
+}
+
+// askApproval posts the one-per-lead-job "ready for approval" comment. It
+// changes no label and records no event.
+func (t *tick) askApproval(ctx context.Context, n int, jobID, worker string) error {
+	marker := fmt.Sprintf("<!-- %striage gate=approval job=%s -->", labels.Prefix, jobID)
+	text := fmt.Sprintf("**ard · triage · ready for approval**\n\nTriage is complete; the plan is in `.ard/%d/plan.md`. A maintainer adds `%s` to start the `%s` worker. "+
+		"An approval given before triage finished does not count: remove and re-add the label.", n, labels.Approved, worker)
+	return t.postOnce(ctx, n, marker, text)
 }

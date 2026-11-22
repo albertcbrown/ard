@@ -250,11 +250,22 @@ func TestGateApproval(t *testing.T) {
 		h := gateHarness(t, true)
 		n := seeded(h, "maint", "triage", tDone.Add(-time.Minute))
 		h.mustTick()
+		h.mustTick()
 		if h.has(n, "ard:worker:engineer") || h.has(n, labels.NeedsHuman) || !h.has(n, labels.Approved) {
 			t.Errorf("labels %v", h.issue(n).Labels)
 		}
-		if h.writes() != 0 {
-			t.Errorf("wrote %v", h.gh.Writes())
+		if c := commentsWith(h, n, "ready for approval"); c != 1 {
+			t.Errorf("ready comments = %d", c)
+		}
+	})
+	t.Run("a newer done label missing from the timeline waits", func(t *testing.T) {
+		h := gateHarness(t, true)
+		// Two :done labels on the issue, only the older one in the timeline.
+		n := h.ready(labels.Approved, "ard:triage:engineer:done")
+		h.labelledBy(n, labels.Approved, "maint", "triage", after)
+		h.mustTick()
+		if h.has(n, "ard:worker:engineer") {
+			t.Error("started")
 		}
 	})
 	t.Run("approval at the same instant as triage done is stale", func(t *testing.T) {
