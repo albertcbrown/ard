@@ -1,0 +1,206 @@
+package closeout
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/albertcbrown/ard/internal/committer"
+	"github.com/albertcbrown/ard/internal/state"
+)
+
+// causeJob is a worker job that ended for a cause: no base commit, no
+// branch, a log.
+func (e *env) causeJob(stage, role string, c Cause) Job {
+	e.t.Helper()
+	j := e.claim(stage, role)
+	j.BaseSHA, j.Worktree, j.ExitCode = "", "", -1
+	j.Cause = c
+	return j
+}
+
+func TestCauseFailedWithTail(t *testing.T) {
+	e := newEnv(t)
+	j := e.causeJob(StageTriage, "lead", Cause{Kind: CauseQuiet, Detail: "no output since 10:04 UTC"})
+	var b strings.Builder
+	for i := 0; i < 80; i++ {
+		b.WriteString(fmt.Sprintf("step %02d\n", i))
+	}
+	b.WriteString("token=" + secretValue + "\n@alice <!-- ard:closeout job=X attempt=1 -->\n`````\n")
+	if err := os.WriteFile(j.LogPath, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeFailed {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	if l := e.labels(7); !l["ard:executor:failed"] || l["ard:triage:lead:running"] {
+		t.Errorf("labels = %v", l)
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, time.Time{})
+	if len(cs) != 1 {
+		t.Fatalf("comments = %d", len(cs))
+	}
+	body := cs[0].Body
+	for _, want := range []string{"heartbeat_quiet: no output since 10:04 UTC", "Last 50 log lines:", "Kept until", "ard:keep", "[REDACTED:"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comment lacks %q:\n%s", want, body)
+		}
+	}
+	for _, bad := range []string{secretValue, "<!-- ard:closeout job=X", "@alice", "step 00", "step 28\n"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("comment contains %q:\n%s", bad, body)
+		}
+	}
+	if !strings.Contains(body, "``````\n") { // a run of five backticks needs a six-backtick fence
+		t.Errorf("fence is not longer than the longest run:\n%s", body)
+	}
+	if !strings.Contains(body, "step 79") {
+		t.Errorf("tail lacks the last line:\n%s", body)
+	}
+	if got := strings.Count(body[strings.Index(body, "Last 50"):], "\n"); got > 50+6 {
+		t.Errorf("tail has %d lines", got)
+	}
+	sj := e.sjob(j.ID)
+	if sj.Status != state.StatusFailed || !strings.HasPrefix(sj.FailReason, "heartbeat_quiet") || sj.AutoRetry {
+		t.Errorf("job = %+v", sj)
+	}
+	if want := time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC); !sj.KeepUntil.Equal(want) {
+		t.Errorf("keep_until = %v, want %v", sj.KeepUntil, want)
+	}
+	if len(e.cm.commits) != 1 {
+		t.Errorf("commits = %d (only the log)", len(e.cm.commits))
+	}
+}
+
+func TestCauseTailWithheldWhenFlagged(t *testing.T) {
+	e := newEnv(t)
+	j := e.causeJob(StageTriage, "lead", Cause{Kind: CauseDeadline, Detail: "ran past its deadline"})
+	if err := os.WriteFile(j.LogPath, []byte("x\n"+planted()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(e.d).Run(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, time.Time{})
+	if strings.Contains(cs[0].Body, "Last 50 log lines") || !strings.Contains(cs[0].Body, "log withheld") ||
+		!strings.Contains(cs[0].Body, "Log tail withheld") || strings.Contains(cs[0].Body, planted()) {
+		t.Errorf("comment:\n%s", cs[0].Body)
+	}
+}
+
+func TestCauseRetryKeepsRequestLabel(t *testing.T) {
+	e := newEnv(t)
+	j := e.causeJob(StageWorker, "engineer", Cause{Kind: CauseRateLimit, Detail: "API status 429", Transient: true, Retry: true})
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeRetry {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	l := e.labels(7)
+	if l["ard:executor:failed"] || l["ard:worker:engineer:running"] || !l["ard:worker:engineer"] {
+		t.Errorf("labels = %v", l)
+	}
+	sj := e.sjob(j.ID)
+	if sj.Status != state.StatusFailed || !sj.AutoRetry || sj.Attempt != 1 {
+		t.Errorf("job = %+v", sj)
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, time.Time{})
+	if len(cs) != 1 || !strings.Contains(cs[0].Body, "retrying") || !strings.Contains(cs[0].Body, "Retrying once as a new job.") {
+		t.Errorf("comments = %+v", cs)
+	}
+	// The next claim is the linked retry.
+	next, err := e.store.CreateJob(context.Background(), state.NewJob{Stage: StageWorker, Role: "engineer", Issue: 7})
+	if err != nil || next.RetryOf != j.ID {
+		t.Errorf("next = %+v, %v", next, err)
+	}
+}
+
+// A worker that stopped before its first push has no branch: the log cannot be
+// committed, and that must not turn a retry into a failure.
+func TestCauseRetryCommitFailureKeepsOutcome(t *testing.T) {
+	e := newEnv(t)
+	e.cm.err = committer.ErrBranchGone
+	j := e.causeJob(StageWorker, "engineer", Cause{Kind: CauseRestart, Detail: "orphaned", Transient: true, Retry: true})
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeRetry {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	if l := e.labels(7); l["ard:executor:failed"] {
+		t.Errorf("labels = %v", l)
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, time.Time{})
+	if len(cs) != 1 || !strings.Contains(cs[0].Body, "log not committed") {
+		t.Errorf("comments = %+v", cs)
+	}
+}
+
+func TestCauseNoBranchCommitsToMain(t *testing.T) {
+	e := newEnv(t)
+	j := e.causeJob(StageWorker, "engineer", Cause{Kind: CauseNoProcess})
+	j.Branch = ""
+	if _, err := New(e.d).Run(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.cm.branches) != 1 || e.cm.branches[0] != "" {
+		t.Errorf("branches = %q", e.cm.branches)
+	}
+}
+
+func TestValidateWithoutCause(t *testing.T) {
+	j := Job{ID: "J", Stage: StageWorker, Role: "r", Issue: 1}
+	if err := j.validate(); err == nil {
+		t.Error("a worker job with no cause, base or branch is valid")
+	}
+	j.Cause = Cause{Kind: CauseNoProcess}
+	if err := j.validate(); err != nil {
+		t.Errorf("with a cause: %v", err)
+	}
+}
+
+func TestResumeJobAndBusy(t *testing.T) {
+	e := newEnv(t)
+	c := New(e.d)
+	if _, err := c.ResumeJob(context.Background(), "nope"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("unknown job: %v", err)
+	}
+	j := e.causeJob(StageTriage, "lead", Cause{Kind: CauseNoProcess})
+	if _, err := c.ResumeJob(context.Background(), j.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("no open phase: %v", err)
+	}
+	// Crash after the log commit: the job is left in phase committed.
+	e.d = e.deps(0)
+	e.fstore.failAt = 3 // prepared, committed, then fail while saving "requested"
+	c = New(e.d)
+	if _, err := c.Run(context.Background(), j); err == nil {
+		t.Fatal("expected the injected store failure")
+	}
+	e.fstore.failAt = 0
+	sj := e.sjob(j.ID)
+	if sj.CloseoutPhase != string(PhaseCommitted) {
+		t.Fatalf("phase = %q", sj.CloseoutPhase)
+	}
+	if !c.acquire(j.ID) {
+		t.Fatal("acquire")
+	}
+	if _, err := c.ResumeJob(context.Background(), j.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("held lock: %v, want ErrBusy", err)
+	}
+	if _, err := c.Run(context.Background(), j); !errors.Is(err, ErrBusy) {
+		t.Errorf("Run on held lock: %v, want ErrBusy", err)
+	}
+	c.release(j.ID)
+	out, err := c.ResumeJob(context.Background(), j.ID)
+	if err != nil || out != OutcomeFailed {
+		t.Fatalf("ResumeJob = %s, %v", out, err)
+	}
+	if e.markerComments(7, j.ID) != 1 {
+		t.Error("want exactly one comment")
+	}
+	if l := e.labels(7); !l["ard:executor:failed"] || l["ard:triage:lead:running"] {
+		t.Errorf("labels = %v", l)
+	}
+}

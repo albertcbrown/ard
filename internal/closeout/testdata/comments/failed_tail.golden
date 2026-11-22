@@ -1,0 +1,14 @@
+<!-- ard:closeout job=01JTEST attempt=1 -->
+**ard · triage:lead · failed**
+
+`heartbeat_quiet: no output since 10:04 UTC`
+
+Output: log [.ard/7/logs/triage-lead-20260102T030405Z.log](https://github.com/o/r/blob/abc123/.ard/7/logs/triage-lead-20260102T030405Z.log) · job `01JTEST` · attempt 1
+Kept until 2026-01-03 03:04 UTC (worktree and host files of job `01JTEST`); add `ard:keep` to hold them longer.
+
+Last 50 log lines:
+``````
+line one
+run ````` of five
+@​alice &lt;!-- ard:closeout x -->
+``````

@@ -2,6 +2,7 @@ package closeout
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/labels"
 )
@@ -14,6 +15,10 @@ const (
 	OutcomeChanges    Outcome = "changes"
 	OutcomeNeedsHuman Outcome = "needs-human"
 	OutcomeFailed     Outcome = "failed"
+	// OutcomeRetry is a failure with a named transient cause. The job hands
+	// off to one automatic retry: it gets no ard:executor:failed and keeps its
+	// request label, so the next claim runs it again as a new job.
+	OutcomeRetry Outcome = "retry"
 )
 
 // Label is a label name with the issue or PR number it goes on.
@@ -46,6 +51,15 @@ type Plan struct {
 	LogPath     string // committed log path when it is in Files
 	Summary     string // redacted role file summary, for the comment
 	RolePath    string // committed role file path, "" when none
+
+	// Tail is the last lines of the redacted log, for a failed or retry
+	// comment. It is "" when there is no log, when the log was withheld, or
+	// when the tail did not pass a second redaction (TailWithheld).
+	Tail         string
+	TailWithheld bool
+	// KeepUntil is when the resources of a failed or retry job may be removed
+	// (zero on records from before the Reaper: close-out then uses 24 h).
+	KeepUntil time.Time
 }
 
 // target returns the number labels for this job go on: the PR for a review,
@@ -113,6 +127,17 @@ func failedPlan(j Job, reason string, logWithheld bool) Plan {
 	return p
 }
 
+// retryPlan is the plan for a job that failed for a transient cause and hands
+// off to one automatic retry. It removes only :running and re-asserts the
+// request label (adding it is idempotent), so the next claim finds it.
+func retryPlan(j Job, reason string) Plan {
+	n := j.target()
+	st := labels.Stage(j.Stage)
+	return Plan{Outcome: OutcomeRetry, Reason: reason,
+		Requests: []Label{{n, labels.Request(st, j.Role)}},
+		Remove:   []Label{{n, labels.Running(st, j.Role)}}}
+}
+
 // needsHumanPlan is the plan for a job held back by the secret scan.
 func needsHumanPlan(j Job, status, reason string) Plan {
 	n := j.target()
@@ -129,6 +154,12 @@ func (j Job) validate() error {
 	}
 	if j.ID == "" || j.Role == "" || j.Issue == 0 {
 		return fmt.Errorf("closeout job %q: id, role and issue are required", j.ID)
+	}
+	if j.Cause.Kind != "" {
+		// A job that ended for a known cause commits only its log: it needs
+		// neither a base commit nor a branch (an empty branch puts the log on
+		// main under .ard/<issue#>/logs/).
+		return nil
 	}
 	if j.ExitCode == 0 && j.BaseSHA == "" {
 		return fmt.Errorf("closeout job %s: BaseSHA is required to find the changed files", j.ID)

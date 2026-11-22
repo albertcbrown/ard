@@ -19,6 +19,9 @@ import (
 	"github.com/albertcbrown/ard/internal/state"
 )
 
+// recordVersion stays 1 across the Reaper's additions (Job.Cause, Plan.Tail,
+// Plan.TailWithheld, Plan.KeepUntil): older records decode them as zero, and
+// zero means the earlier behaviour.
 const recordVersion = 1
 
 // failedKeep is how long a failed job's resources are kept (proposal: 24 h).
@@ -40,7 +43,36 @@ type Job struct {
 	LogPath  string // executor handle LogPath; "" when there is no log
 	ExitCode int
 	CostUSD  float64 // 0 when unknown
+	// Cause, when Kind is set, says why the job ended without a usable result.
+	// Close-out then skips the role file and the changed files and commits only
+	// the log. The zero Cause decides from the role file and exit code.
+	Cause Cause
 }
+
+// CauseKind names why a job ended without a usable result.
+type CauseKind string
+
+// Cause kinds. The reason in the comment is "<kind>: <detail>".
+const (
+	CauseQuiet     CauseKind = "heartbeat_quiet"    // no log output for 10 minutes
+	CauseDeadline  CauseKind = "deadline"           // ran past its timeout
+	CauseRestart   CauseKind = "controller_restart" // orphaned, gone or never started across a restart
+	CauseNoProcess CauseKind = "no_process"         // never started, or its process vanished in this run
+	CauseRateLimit CauseKind = "rate_limit"         // the agent reported a transient API error
+	CauseCloneFail CauseKind = "clone_failed"       // a loop's Prepare failed at git or clone
+)
+
+// Cause is why a job ended. Detail is fixed, non-secret text.
+type Cause struct {
+	Kind      CauseKind
+	Detail    string
+	Transient bool // a named transient cause
+	Retry     bool // hand off to one automatic retry: Transient and the job is not itself a retry
+}
+
+// ErrBusy means another close-out of the same job is in flight. Run and
+// ResumeJob wrap it; callers skip quietly and look again later.
+var ErrBusy = errors.New("closeout: another close-out of this job is in flight")
 
 // Phase is how far close-out got.
 type Phase string
@@ -90,6 +122,7 @@ type Redactor interface {
 
 // Store is the part of state.Store close-out uses.
 type Store interface {
+	FailRetry(ctx context.Context, id, reason string, keepUntil time.Time) error
 	Job(ctx context.Context, id string) (state.Job, error)
 	SetCloseout(ctx context.Context, id, phase string, plan json.RawMessage) error
 	OpenCloseouts(ctx context.Context) ([]state.Job, error)
@@ -213,7 +246,7 @@ func (c *Closer) Run(ctx context.Context, j Job) (Outcome, error) {
 		return "", err
 	}
 	if !c.acquire(j.ID) {
-		return "", fmt.Errorf("closeout job %s: another close-out of this job is in flight", j.ID)
+		return "", fmt.Errorf("closeout job %s: %w", j.ID, ErrBusy)
 	}
 	defer c.release(j.ID)
 	sj, err := c.d.Store.Job(ctx, j.ID)
@@ -241,6 +274,33 @@ func (c *Closer) Run(ctx context.Context, j Job) (Outcome, error) {
 			"outcome", out, "skipped", len(rec.Plan.Skipped), "dur", c.d.now().Sub(start))
 	}
 	return out, err
+}
+
+// ResumeJob finishes the open close-out of one job. A job with no open phase
+// is state.ErrNotFound (wrapped); one whose close-out another goroutine is
+// advancing is ErrBusy. The Reaper uses it for jobs nobody is driving.
+func (c *Closer) ResumeJob(ctx context.Context, id string) (Outcome, error) {
+	if err := c.checkDeps(); err != nil {
+		return "", err
+	}
+	if !c.acquire(id) {
+		return "", fmt.Errorf("closeout job %s: %w", id, ErrBusy)
+	}
+	defer c.release(id)
+	// Read after taking the lock: a Run may have closed the job meanwhile.
+	sj, err := c.d.Store.Job(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("closeout job %s: load job: %w", id, err)
+	}
+	if sj.CloseoutPhase == "" || sj.CloseoutPhase == string(PhaseClosed) || len(sj.CloseoutPlan) == 0 {
+		return "", fmt.Errorf("closeout job %s: no open close-out: %w", id, state.ErrNotFound)
+	}
+	rec, err := decode(sj)
+	if err != nil {
+		return "", err
+	}
+	c.d.log().Info("closeout.resume", "job", id, "issue", rec.Job.Issue, "phase", rec.Phase)
+	return c.advance(ctx, rec)
 }
 
 // Resume finishes every close-out that was started and not closed.
@@ -376,7 +436,17 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 		return err
 	}
 	c.d.log().Warn("closeout: commit failed", "job", rec.Job.ID, "error", err)
+	if p.Outcome == OutcomeRetry {
+		// The log is evidence, not the result: a retry must not turn into a
+		// failure because it could not be committed (a worker that stopped
+		// before its first push has no branch to commit to).
+		p.Files, p.LogPath = nil, ""
+		p.Reason += "; log not committed: " + err.Error()
+		return nil
+	}
+	tail, tailWithheld, keep := p.Tail, p.TailWithheld, p.KeepUntil
 	*p = failedPlan(rec.Job, "commit failed: "+err.Error(), p.LogWithheld)
+	p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
 	return nil
 }
 
@@ -451,10 +521,17 @@ func (c *Closer) finish(ctx context.Context, rec Record) error {
 		v := rec.Job.CostUSD
 		cost = &v
 	}
+	keep := p.KeepUntil
+	if keep.IsZero() {
+		keep = c.d.now().Add(failedKeep)
+	}
 	var err error
-	if p.Outcome == OutcomeFailed {
-		err = c.d.Store.Fail(ctx, rec.Job.ID, clip(p.Reason, maxReasonRunes), c.d.now().Add(failedKeep))
-	} else {
+	switch p.Outcome {
+	case OutcomeFailed:
+		err = c.d.Store.Fail(ctx, rec.Job.ID, clip(p.Reason, maxReasonRunes), keep)
+	case OutcomeRetry:
+		err = c.d.Store.FailRetry(ctx, rec.Job.ID, clip(p.Reason, maxReasonRunes), keep)
+	default:
 		err = c.d.Store.Complete(ctx, rec.Job.ID, cost)
 	}
 	if err != nil {

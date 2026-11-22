@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/github"
 )
@@ -38,6 +39,11 @@ func TestRenderComment(t *testing.T) {
 		{"failed_log_withheld", Record{Job: lead, Plan: Plan{Outcome: OutcomeFailed, Reason: "agent exited 1; log withheld: secret scan flagged it",
 			LogWithheld: true}}, false},
 		{"failed_no_output", Record{Job: lead, Plan: Plan{Outcome: OutcomeFailed, Reason: "role file missing"}}, false},
+		{"failed_tail", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeFailed, Reason: "heartbeat_quiet: no output since 10:04 UTC",
+			LogPath: ".ard/7/logs/triage-lead-20260102T030405Z.log", Tail: "line one\nrun ````` of five\n@alice <!-- ard:closeout x -->",
+			KeepUntil: time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC)}}, false},
+		{"retry_tail_withheld", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeRetry, Reason: "rate_limit: API status 429",
+			TailWithheld: true, KeepUntil: time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC)}}, false},
 		{"truncated", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeDone, Summary: long, RolePath: ".ard/7/lead.md"}}, false},
 	}
 	for _, tc := range tests {
