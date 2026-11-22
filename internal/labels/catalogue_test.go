@@ -119,6 +119,8 @@ func TestDesiredIntake(t *testing.T) {
 		{name: "clash static", spec: Spec{Intake: "ard:needs-human"}, wantErr: []string{"intake.label", "uses itself"}, noErr: "duplicate"},
 		{name: "clash stage", spec: Spec{Intake: "ard:worker:engineer", Workers: []string{"engineer"}}, wantErr: []string{"intake.label"}, noErr: "duplicate"},
 		{name: "clash and bad role", spec: Spec{Intake: "ard:needs-human", Workers: []string{"Foo"}}, wantErr: []string{"intake.label", `worker "Foo"`}},
+		{name: "50 runes", spec: Spec{Intake: "ard:" + strings.Repeat("é", 46)}, wantName: "ard:" + strings.Repeat("é", 46), wantLen: 10},
+		{name: "51 runes", spec: Spec{Intake: "ard:" + strings.Repeat("é", 47)}, wantErr: []string{"intake.label: label"}},
 		{name: "too long", spec: Spec{Intake: "ard:" + strings.Repeat("a", 47)}, wantErr: []string{"intake.label: label"}},
 	}
 	for _, tt := range tests {

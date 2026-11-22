@@ -134,6 +134,29 @@ func TestRunCustomIntake(t *testing.T) {
 	if out.String() != "created 0, updated 0, unchanged 13, stale 0\n" {
 		t.Errorf("second run stdout:\n%s", out.String())
 	}
+	// Switching back to the default leaves the custom label stale, not deleted.
+	cfgPath := filepath.Join(root, ".ard", "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("intake: {mode: label}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, out = env(root, false)
+	if err := run(context.Background(), e, open); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "stale   ard:intake\n") || !strings.HasSuffix(out.String(), "stale 1\n") {
+		t.Errorf("third run stdout:\n%s", out.String())
+	}
+	have, err := f.ListLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, l := range have {
+		found = found || l.Name == "ard:intake"
+	}
+	if !found {
+		t.Error("ard:intake was deleted")
+	}
 }
 
 func TestPrint(t *testing.T) {

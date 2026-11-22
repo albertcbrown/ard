@@ -111,6 +111,9 @@ func TestCheckIntake(t *testing.T) {
 		{"ard:needs-human", true},
 		{"ARD:NEEDS-HUMAN", true},
 		{"ard:hold", true},
+		{"ard:pause", true},
+		{"ard:approved", true},
+		{"ard:keep", true},
 		{"ard:executor:failed", true},
 		{"ard:triage:lead:done", true},
 		{"ard:worker:ghost", true}, // no such role is needed: the grammar alone bans it

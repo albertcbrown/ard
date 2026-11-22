@@ -187,8 +187,11 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 	return errs
 }
 
-// maxLabelRunes is GitHub's label name limit.
-const maxLabelRunes = 50
+// MaxLabelRunes is GitHub's label name limit, in characters.
+const MaxLabelRunes = 50
+
+// LabelRunes counts s the way GitHub limits label names: in characters.
+func LabelRunes(s string) int { return utf8.RuneCountInString(s) }
 
 // applyIntake merges and validates the intake setting. The prefix check uses
 // the bare "ard:" prefix (invariant 4); the default label itself is spelled
@@ -216,8 +219,8 @@ func applyIntake(res *Resolved, raw rawIntake, cfgPath string) Errors {
 		bad("must not be empty or have leading or trailing whitespace")
 	case !strings.HasPrefix(label, "ard:") || label == "ard:":
 		bad(fmt.Sprintf("must start with %q and name a label, got %q", "ard:", label))
-	case utf8.RuneCountInString(label) > maxLabelRunes:
-		bad(fmt.Sprintf("must be at most %d characters (GitHub's limit)", maxLabelRunes))
+	case LabelRunes(label) > MaxLabelRunes:
+		bad(fmt.Sprintf("must be at most %d characters (GitHub's limit)", MaxLabelRunes))
 	case strings.Contains(label, ","):
 		bad("must not contain a comma")
 	}

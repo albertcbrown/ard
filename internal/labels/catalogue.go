@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/albertcbrown/ard/internal/config"
 )
 
-// GitHub's limits on a label, in characters (runes), as config counts them.
+// GitHub's limit on a label description, in bytes. The name limit is
+// config.MaxLabelRunes, counted in characters with config.LabelRunes.
 const (
-	maxNameLen = 50
 	maxDescLen = 100
 )
 
@@ -140,8 +139,8 @@ func validate(ls []Label, intake string) error {
 				who = fmt.Sprintf("%s %q: ", kind, p.Role)
 			}
 		}
-		if n := utf8.RuneCountInString(l.Name); n > maxNameLen {
-			errs = append(errs, fmt.Errorf("labels: %slabel %q is %d chars (max %d)", who, l.Name, n, maxNameLen))
+		if n := config.LabelRunes(l.Name); n > config.MaxLabelRunes {
+			errs = append(errs, fmt.Errorf("labels: %slabel %q is %d chars (max %d)", who, l.Name, n, config.MaxLabelRunes))
 		}
 		if n := len(l.Description); n > maxDescLen {
 			errs = append(errs, fmt.Errorf("labels: %slabel %q: description is %d chars (max %d)", who, l.Name, n, maxDescLen))
