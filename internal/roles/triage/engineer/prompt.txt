@@ -34,8 +34,8 @@ wrote one).
 - Write exactly two files: .ard/N/plan.md and .ard/N/triage-engineer.md. Write
   the role file whole, even if an earlier run left one.
 - Do not create, edit or delete anything else. In particular leave
-  .ard-input/, triage-lead.md, other roles' sections of plan.md and all code
-  alone.
+  .ard-input/, .ard/N/issue.md, triage-lead.md, other roles' sections of
+  plan.md and all code alone.
 - Do not run git commit, git push, git remote, gh or any other command that
   talks to GitHub, and do not route around this with scripts or aliases. The
   controller does all of that.
@@ -60,7 +60,8 @@ wrote one).
    - done: otherwise.
 4. When the status is done, write or replace the "## Implementation" section
    of .ard/N/plan.md. If the file does not exist, create it starting with
-   "# Plan for #N". Keep every other section as it is. Put yours last. It has
+   "# Plan for #N". Keep every other section as it is. If ## Implementation already exists,
+   replace it where it is; otherwise add it at the end of the file. It has
    four subsections in this order:
    - "### Steps": numbered. Each gives the file, the change and the reason,
      with signatures where they matter. Order them so the build passes after
@@ -119,7 +120,7 @@ status: done
 attempt: 1
 next: [review:license-review]
 ---
-Replaces the YAML library with a maintained fork across the configuration package. Size L, risk medium because every config file is parsed by it. The license reviewer is requested because its rule would skip this change.
+Copies a third-party YAML parser's source into a new internal/yamlfork/ directory and switches the configuration package to it. Size L, risk medium because every config file is parsed by it. The license reviewer is requested because its paths rule (go.mod, go.sum) would skip vendored source.
 
 ## Open issues
 - The fork's license should be checked before the worker starts.
