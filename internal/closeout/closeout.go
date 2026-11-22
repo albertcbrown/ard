@@ -167,7 +167,7 @@ func Deferred(ctx context.Context, s interface {
 }
 
 // Deps are the collaborators of a Closer. Prepare needs Roles, NewRedactor,
-// Changed and StagingDir; the rest are for Closer.
+// Changed, BaseFile and StagingDir; the rest are for Closer.
 type Deps struct {
 	Effects   Effects
 	Comments  Comments
@@ -180,7 +180,11 @@ type Deps struct {
 	NewRedactor func(Job) (Redactor, error)
 	// Changed lists paths under a pathspec changed since a base commit
 	// (gitx.Git.ChangedSince).
-	Changed    func(ctx context.Context, worktree, base string, paths ...string) ([]gitx.PathChange, error)
+	Changed func(ctx context.Context, worktree, base string, paths ...string) ([]gitx.PathChange, error)
+	// BaseFile reads one file at a commit (gitx.Git.FileAt): ok is false when
+	// the path does not exist there. Prepare uses it to compare plan.md with
+	// its base.
+	BaseFile   func(ctx context.Context, worktree, rev, path string, maxBytes int64) (data []byte, ok bool, err error)
 	Repo       github.Repo
 	StagingDir string
 	Log        *slog.Logger

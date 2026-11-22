@@ -214,3 +214,48 @@ func TestExportPathsErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestFileAt(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	if err := os.Symlink("a.md", filepath.Join(clone, "link.md")); err != nil {
+		t.Fatal(err)
+	}
+	sha := commitFiles(t, clone, map[string]fileSpec{
+		".ard/7/plan.md": {"## Design\nx\n", 0o644},
+		"run.sh":         {"#!/bin/sh\n", 0o755},
+		"a*b.md":         {"glob\n", 0o644},
+		"axb.md":         {"other\n", 0o644},
+		"big.md":         {"0123456789", 0o644},
+	})
+	tests := []struct {
+		name    string
+		path    string
+		max     int64
+		want    string
+		ok      bool
+		wantErr bool
+	}{
+		{name: "present", path: ".ard/7/plan.md", max: 100, want: "## Design\nx\n", ok: true},
+		{name: "executable", path: "run.sh", max: 100, want: "#!/bin/sh\n", ok: true},
+		{name: "missing", path: ".ard/7/none.md", max: 100},
+		{name: "directory", path: ".ard/7", max: 100, wantErr: true},
+		{name: "symlink", path: "link.md", max: 100, wantErr: true},
+		{name: "over the cap", path: "big.md", max: 9, wantErr: true},
+		{name: "at the cap", path: "big.md", max: 10, want: "0123456789", ok: true},
+		{name: "glob characters are literal", path: "a*b.md", max: 100, want: "glob\n", ok: true},
+		{name: "parent path", path: "../x", max: 100, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b, ok, err := g.FileAt(ctx, clone, sha, tc.path, tc.max)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err == nil && (ok != tc.ok || string(b) != tc.want) {
+				t.Errorf("got (%q, %v), want (%q, %v)", b, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}

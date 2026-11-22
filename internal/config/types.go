@@ -105,6 +105,9 @@ type Role struct {
 	// Triage only: hold this role's request until these triage roles, if
 	// requested, are done. Ordering is owned by #15.
 	After []string
+	// PlanSection is the plan.md "## " heading this role may write (#130): the
+	// starter role's built-in section or a plan_section override; "" = none.
+	PlanSection string
 
 	// Worker only.
 	Tests           string   // default "make test"

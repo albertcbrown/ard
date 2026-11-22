@@ -292,6 +292,48 @@ func (g *Git) ChangedSince(ctx context.Context, dir, base string, paths ...strin
 	return cs, nil
 }
 
+// FileAt returns the contents of path at commit rev in the repository at dir.
+// ok is false (and err nil) when path does not exist at rev. A path that is a
+// tree, symlink or submodule at rev, or a blob larger than maxBytes, is an
+// error.
+func (g *Git) FileAt(ctx context.Context, dir, rev, path string, maxBytes int64) ([]byte, bool, error) {
+	if path == "" || strings.HasPrefix(path, "/") || slices.Contains(strings.Split(path, "/"), "..") {
+		return nil, false, fmt.Errorf("gitx: file %q at %.12s: bad path", path, rev)
+	}
+	out, _, err := g.run(ctx, dir, nil, "", nil, "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", rev, "--", path)
+	if err != nil {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %w", path, rev, err)
+	}
+	recs := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	if len(recs) == 1 && recs[0] == "" {
+		return nil, false, nil
+	}
+	if len(recs) != 1 {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %d ls-tree records", path, rev, len(recs))
+	}
+	meta, got, ok := strings.Cut(recs[0], "\t")
+	f := strings.Fields(meta)
+	if !ok || len(f) != 4 || got != path {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: bad ls-tree record %q", path, rev, recs[0])
+	}
+	mode, typ, obj := f[0], f[1], f[2]
+	if typ != "blob" || (mode != "100644" && mode != "100755") {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: not a regular file (mode %s %s)", path, rev, mode, typ)
+	}
+	size, perr := strconv.ParseInt(f[3], 10, 64)
+	if perr != nil {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: bad size in %q", path, rev, recs[0])
+	}
+	if size > maxBytes {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %d bytes, max %d", path, rev, size, maxBytes)
+	}
+	blob, _, err := g.run(ctx, dir, nil, "", nil, "cat-file", "blob", obj)
+	if err != nil {
+		return nil, false, fmt.Errorf("gitx: file %s at %.12s: %w", path, rev, err)
+	}
+	return []byte(blob), true, nil
+}
+
 // maxExportBytes caps the total size ExportPaths will write.
 var maxExportBytes int64 = 64 << 20
 

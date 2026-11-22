@@ -19,7 +19,6 @@ import (
 
 func (e *env) lead() Job {
 	e.write(".ard/7/triage-lead.md", roleFile("lead", "done", "next: [triage:architect, review:license-review]", "worker: engineer"))
-	e.write(".ard/7/plan.md", "the plan")
 	return e.claim(StageTriage, "lead")
 }
 
@@ -60,7 +59,7 @@ func TestRunLeadDone(t *testing.T) {
 		t.Fatalf("Run = %s, %v", out, err)
 	}
 	e.assertLeadClosed(j)
-	for _, want := range []string{".ard/7/triage-lead.md", ".ard/7/plan.md", logPath} {
+	for _, want := range []string{".ard/7/triage-lead.md", logPath} {
 		found := false
 		for _, files := range e.cm.commits {
 			if _, ok := files[want]; ok {
@@ -169,14 +168,14 @@ func TestRunFailedAndNeedsHuman(t *testing.T) {
 	})
 	t.Run("secret in plan.md", func(t *testing.T) {
 		e := newEnv(t)
-		e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
-		e.write(".ard/7/plan.md", planted())
-		j := e.claim(StageTriage, "lead")
+		e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+		e.write(".ard/7/plan.md", "## Implementation\n"+planted())
+		j := e.claim(StageTriage, "engineer")
 		out, err := New(e.d).Run(context.Background(), j)
 		if err != nil || out != OutcomeNeedsHuman {
 			t.Fatalf("Run = %s, %v", out, err)
 		}
-		if l := e.labels(7); !l["ard:needs-human"] || l["ard:triage:lead:done"] {
+		if l := e.labels(7); !l["ard:needs-human"] || l["ard:triage:engineer:done"] {
 			t.Errorf("labels = %v", l)
 		}
 		for _, files := range e.cm.commits {
@@ -305,7 +304,6 @@ func TestResumeUsesStagedCopy(t *testing.T) {
 	}
 	// The agent's file changes after Prepare; the worktree is even removed.
 	e.write(".ard/7/triage-lead.md", roleFile("lead", "blocked"))
-	e.write(".ard/7/plan.md", "tampered")
 	if err := os.RemoveAll(e.repo); err != nil {
 		t.Fatal(err)
 	}
@@ -314,8 +312,33 @@ func TestResumeUsesStagedCopy(t *testing.T) {
 	}
 	e.assertLeadClosed(j)
 	for _, files := range e.cm.commits {
-		if files[".ard/7/plan.md"] != "the plan" || !strings.Contains(files[".ard/7/triage-lead.md"], "status: done") {
+		if !strings.Contains(files[".ard/7/triage-lead.md"], "status: done") {
 			t.Errorf("committed changed bytes: %v", files)
+		}
+	}
+	// A shared file is committed from its staged copy too.
+	e3 := newEnv(t)
+	e3.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+	e3.write(".ard/7/plan.md", "## Implementation\nthe plan\n")
+	j3 := e3.claim(StageTriage, "engineer")
+	rec3, err := Prepare(context.Background(), j3, e3.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl3 := New(e3.d)
+	if err := cl3.save(context.Background(), rec3); err != nil {
+		t.Fatal(err)
+	}
+	e3.write(".ard/7/plan.md", "tampered")
+	if err := os.RemoveAll(e3.repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl3.Resume(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, files := range e3.cm.commits {
+		if got := files[".ard/7/plan.md"]; got != "## Implementation\nthe plan\n" {
+			t.Errorf("committed plan.md = %q", got)
 		}
 	}
 	// Run on a job that already has a record does not read the worktree.
@@ -445,5 +468,39 @@ func TestCommentsRequiredLive(t *testing.T) {
 	}
 	if err := cl.Resume(context.Background()); err == nil {
 		t.Error("Resume accepted a nil Comments")
+	}
+}
+
+func TestRunWriteDenied(t *testing.T) {
+	e := newEnv(t)
+	j := e.claim(StageWorker, "engineer")
+	e.write(".ard/7/worker-engineer.md", roleFile("engineer", "done"))
+	e.write(".ard/7/plan.md", "rewritten")
+	e.write(".ard/7/@octocat<!--x.md", "x")
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeNeedsHuman {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	l := e.labels(7)
+	if !l["ard:needs-human"] || l["ard:worker:engineer:running"] || l["ard:worker:engineer:done"] {
+		t.Errorf("labels = %v", l)
+	}
+	for _, files := range e.cm.commits {
+		for p := range files {
+			if !strings.HasPrefix(p, ".ard/7/logs/") {
+				t.Errorf("committed %s, want only the log", p)
+			}
+		}
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, timeZero)
+	if len(cs) != 1 {
+		t.Fatalf("comments = %d, want 1", len(cs))
+	}
+	b := cs[0].Body
+	if !strings.Contains(b, "write not allowed") || !strings.Contains(b, ".ard/7/plan.md") {
+		t.Errorf("comment lacks the reason: %s", b)
+	}
+	if strings.Contains(b, "@octocat") && !strings.Contains(b, "`") || strings.Contains(b, "<!--x") {
+		t.Errorf("comment not sanitised: %s", b)
 	}
 }

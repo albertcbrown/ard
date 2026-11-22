@@ -58,7 +58,7 @@ func TestEngineerPromptShape(t *testing.T) {
 		strings.Replace(agent.RoleFilePath(7, "triage", "engineer"), "/7/", "/N/", 1),
 		".ard-input/N/issue.md", ".ard-input/N/comments.md", ".ard/N/plan.md",
 		"role: engineer", "attempt: 1", "UNTRUSTED",
-		"## Implementation", "### Steps", "### Test plan", "### Risk", "### Size",
+		"## " + config.BuiltinPlanSections["engineer"], "### Steps", "### Test plan", "### Risk", "### Size",
 		"git push", "gh or any other command", "verdict", "worker",
 	} {
 		if !strings.Contains(p, want) {

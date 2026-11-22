@@ -52,12 +52,14 @@ roles:
     prompt: .ard/triage/architect/prompt.txt
     agent: kimi
     timeout: 30m
+    plan_section: Design
   - name: engineer
     kind: triage
     dir: .ard/triage/engineer
     prompt: .ard/triage/engineer/prompt.txt
     agent: kimi
     timeout: 30m
+    plan_section: Implementation
   - name: lead
     kind: triage
     dir: .ard/triage/lead
