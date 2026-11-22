@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/cli"
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/configsrc"
 	"github.com/albertcbrown/ard/internal/controller"
@@ -27,6 +28,7 @@ import (
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/pool"
+	"github.com/albertcbrown/ard/internal/reaper"
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/repopath"
 	"github.com/albertcbrown/ard/internal/scanner/stale"
@@ -132,6 +134,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	w := &wiring{
 		Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: config.DefaultMaxPods,
 		Repo: repo, Root: root, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners,
+		StateDir: stateDir, Started: time.Now(),
 	}
 	defer w.closeAll()
 	loader := &cfgLoader{src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
@@ -145,6 +148,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		log.Error("serve.config_unavailable", "error", cfgErr, "hint", "starting paused; will retry every tick")
 	} else {
 		w.MaxPods = cfg.MaxPods
+		w.cfg.Store(cfg)
 	}
 	// A scan can outlast a pause, so the scanners re-check after it. The
 	// check fails closed, like the gate's own.
@@ -163,15 +167,18 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 			if err != nil {
 				return nil, err
 			}
+			w.cfg.Store(c)
 			if p := w.pool.Load(); p != nil {
 				p.SetMax(c.MaxPods) // a reload may change max_pods
 			}
 			return c, nil
 		},
 		Pause: gate,
-		// Order matters: #16 needs the pool adopted before the first Offer,
-		// and #20's closeout-resume (when it lands) goes first.
+		// Order matters: closeout-resume goes first, so a job whose close-out
+		// was interrupted is finished (or stays running and is adopted) before
+		// the pool is built; #16 needs the pool adopted before the first Offer.
 		Startup: []controller.Hook{
+			{Name: "closeout-resume", Fn: w.resumeCloseouts},
 			{Name: "pool-adopt", Fn: func(ctx context.Context) error {
 				var cl workspaceCleaner
 				if ex, err := w.newExecutor(); err == nil {
@@ -236,6 +243,24 @@ type wiring struct {
 
 	statusIssue atomic.Int64 // the status issue number; 0 until the startup hook has run
 
+	// StateDir is the per-repo state directory; close-out stages files under it.
+	StateDir string
+	// Started is when this serve process started: the Reaper's restart cut-off.
+	Started time.Time
+	// cfg is the latest loaded config, for close-out's role checks and the
+	// Reaper's result parsing. nil until the first successful load.
+	cfg atomic.Pointer[config.Resolved]
+
+	// initMu guards the lazily built shared parts below: one main committer,
+	// one branch committer, one Closer, one executor, one Finisher and Reaper.
+	initMu sync.Mutex
+	mc     *lazyCommitter
+	br     *lazyBranches
+	cl     *closeout.Closer
+	exec   *local.Local
+	fin    *reaper.Finisher
+	rp     *reaper.Reaper
+
 	mu      sync.Mutex
 	closers []func(context.Context)
 }
@@ -264,11 +289,25 @@ func (w *wiring) closeAll() {
 // appends a state.EventHostUntrusted row to the controller database. Every
 // loop that runs jobs (scanners, and later triage, workers and reviewers)
 // must build its executor here, so host-mode warnings are recorded.
+//
+// There is one executor per process: it tracks the jobs it started, and the
+// Reaper must ask the same instance that the loops used. A build failure is
+// not cached.
 func (w *wiring) newExecutor() (*local.Local, error) {
-	return local.New(local.Options{
+	w.initMu.Lock()
+	defer w.initMu.Unlock()
+	if w.exec != nil {
+		return w.exec, nil
+	}
+	ex, err := local.New(local.Options{
 		Root: filepath.Join(w.Home, ".ard"), Log: w.Log,
 		OnHostUntrusted: recordHostUntrusted(w.Store),
 	})
+	if err != nil {
+		return nil, err
+	}
+	w.exec = ex
+	return ex, nil
 }
 
 // recordHostUntrusted returns the executor hook that appends a
@@ -291,15 +330,20 @@ func (w *wiring) Pool() *pool.Pool {
 	return p
 }
 
-// registerLoops returns the loops to run: the scanners loop (#23) and the
-// stale closer (#25) so far. Loops that run jobs build their executor with w.newExecutor(). The triage, worker, reviewer, merger and Reaper loops each
-// add one constructor call here. It is a variable so tests can observe wiring.
+// registerLoops returns the loops to run: the scanners loop (#23), the stale
+// closer (#25) and the Reaper (#37) so far. Loops that run jobs build their
+// executor with w.newExecutor(), end jobs through w.finisher() and share
+// w.closer(). The triage, worker, reviewer and merger loops each add one
+// constructor call here. It is a variable so tests can observe wiring.
 var registerLoops = func(w *wiring) []controller.Loop {
 	var loops []controller.Loop
 	if l := scannerLoop(w); l != nil {
 		loops = append(loops, l)
 	}
 	loops = append(loops, stale.New(w.Reader, w.Effects, nil))
+	if l := reaperLoop(w); l != nil {
+		loops = append(loops, l)
+	}
 	return loops
 }
 
