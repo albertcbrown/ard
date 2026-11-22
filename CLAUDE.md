@@ -45,6 +45,8 @@ internal/modelauth/ picks the one model credential (OAuth token or API key) from
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
 internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues
+internal/agentjob/  helpers the agent loops share: untrusted-input snapshot, command mapping, handle save, shutdown-aware wait, post-once
+internal/worker/    the worker loop: claim, agent/test/fix steps, diff guard, code-lane push, draft PR, FinishWith
 internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
 internal/roles/     starter role directories embedded for ard init (scanners/cve, triage/lead)

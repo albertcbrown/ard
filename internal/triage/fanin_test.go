@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
@@ -374,7 +375,7 @@ func TestGateBodyHash(t *testing.T) {
 		h := gateHarness(t, false)
 		n := h.human("t", "v1", leadDone)
 		h.seedLead(n, "engineer")
-		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: BodyHash(github.Issue{Title: "t", Body: "v0"}), LabeledAt: t0}); err != nil {
+		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: agentjob.BodyHash(github.Issue{Title: "t", Body: "v0"}), LabeledAt: t0}); err != nil {
 			t.Fatal(err)
 		}
 		h.mustTick()
@@ -390,7 +391,7 @@ func TestGateBodyHash(t *testing.T) {
 		h := gateHarness(t, false)
 		n := h.human("t", "v1", leadDone)
 		h.seedLead(n, "engineer")
-		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: BodyHash(h.issue(n)), LabeledAt: t0}); err != nil {
+		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: agentjob.BodyHash(h.issue(n)), LabeledAt: t0}); err != nil {
 			t.Fatal(err)
 		}
 		h.mustTick()

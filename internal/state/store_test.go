@@ -375,3 +375,42 @@ func TestOpenCloseouts(t *testing.T) {
 		t.Fatalf("OpenCloseouts = %+v, %v", got, err)
 	}
 }
+
+func TestSetBranchAndPR(t *testing.T) {
+	ctx := tctx(t)
+	s := newStore(t)
+	j, err := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "eng", Issue: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetBranch(ctx, j.ID, "worker/eng-7-x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPR(ctx, j.ID, 12); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Job(ctx, j.ID)
+	if got.Branch != "worker/eng-7-x" || got.PR != 12 {
+		t.Errorf("job = %+v", got)
+	}
+	for name, err := range map[string]error{
+		"empty branch": s.SetBranch(ctx, j.ID, ""),
+		"zero pr":      s.SetPR(ctx, j.ID, 0),
+	} {
+		if err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if err := s.SetBranch(ctx, "nope", "b"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing job: %v", err)
+	}
+	if err := s.Complete(ctx, j.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetBranch(ctx, j.ID, "other"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("done job SetBranch: %v", err)
+	}
+	if err := s.SetPR(ctx, j.ID, 13); !errors.Is(err, ErrNotFound) {
+		t.Errorf("done job SetPR: %v", err)
+	}
+}

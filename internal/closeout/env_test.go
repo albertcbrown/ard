@@ -209,7 +209,9 @@ func (e *env) deps(failAt int) Deps {
 		NewRedactor: func(Job) (Redactor, error) {
 			return redact.New(e.secrets, redact.Options{})
 		},
-		Changed:    gitx.New("").ChangedSince,
+		Changed: func(ctx context.Context, wt, base string, paths ...string) ([]gitx.PathChange, error) {
+			return gitx.New("").ChangedSince(ctx, e.repo, wt, base, paths...)
+		},
 		BaseFile:   gitx.New("").FileAt,
 		Repo:       github.Repo{Owner: "o", Name: "r"},
 		StagingDir: e.staging,

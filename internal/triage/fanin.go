@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
@@ -294,7 +295,7 @@ func (t *tick) gateReady(ctx context.Context, is github.Issue, jobID, worker str
 			}
 			return fmt.Errorf("triage gate issue %d: read admission: %w", n, err)
 		}
-		if hash := BodyHash(is); stored.BodyHash != hash {
+		if hash := agentjob.BodyHash(is); stored.BodyHash != hash {
 			return t.regateAfterTriage(ctx, is, hash, worker)
 		}
 	}

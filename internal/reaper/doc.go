@@ -32,6 +32,12 @@
 //     job out through the shared *closeout.Closer, ends the attempt and tidies
 //     the worktree. It re-reads the job row, so a kill reason the Reaper
 //     recorded is honoured.
+//     A worker job calls state.SetBranch (after its first push) and SetPR
+//     first, then Finisher.FinishWith with the handle of its final agent step,
+//     the closeout.WorkerResult and the logs of its earlier agent steps.
+//     A worker job runs several executor jobs (agent, tests, fixes) under one
+//     state job; the loop saves each step's handle before starting it, so the
+//     Reaper's heartbeat and deadline rules apply to the step that runs.
 //  5. Then Slot.Release, deferred so a panic still frees it.
 //
 // Never release the slot before close-out has finished.

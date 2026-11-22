@@ -53,8 +53,14 @@ func (w *wiring) closer() *closeout.Closer {
 		NewRedactor: func(closeout.Job) (closeout.Redactor, error) {
 			return redact.New(redact.FromEnviron(os.Environ()), redact.Options{})
 		},
-		Changed:    gitx.New("").ChangedSince,
-		BaseFile:   gitx.New("").FileAt,
+		// Job worktrees belong to the agent: git runs in the controller's own
+		// clone (w.Root) and never trusts a worktree's .git, index or config.
+		Changed: func(ctx context.Context, worktree, base string, paths ...string) ([]gitx.PathChange, error) {
+			return gitx.New("").ChangedSince(ctx, w.Root, worktree, base, paths...)
+		},
+		BaseFile: func(ctx context.Context, _, rev, path string, maxBytes int64) ([]byte, bool, error) {
+			return gitx.New("").FileAt(ctx, w.Root, rev, path, maxBytes)
+		},
 		Repo:       w.Repo,
 		StagingDir: staging,
 		Log:        w.Log,

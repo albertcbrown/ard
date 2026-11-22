@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
@@ -69,7 +70,7 @@ func TestClaimLead(t *testing.T) {
 		if strings.HasPrefix(f.Path, ".ard/") {
 			t.Errorf("untrusted input under .ard/: %s", f.Path)
 		}
-		if !strings.HasPrefix(string(f.Data), untrustedHeader) {
+		if !strings.HasPrefix(string(f.Data), agentjob.UntrustedHeader) {
 			t.Errorf("%s lacks the untrusted header", f.Path)
 		}
 	}
@@ -82,7 +83,7 @@ func TestClaimLead(t *testing.T) {
 		t.Errorf("the agent is not told about the untrusted files:\n%s", args)
 	}
 	a, err := h.store.Admission(context.Background(), n)
-	if err != nil || a.LabeledBy != "maint" || a.BodyHash != BodyHash(h.issue(n)) || a.JobID != h.fin.got()[0].JobID || a.LabeledAt.IsZero() {
+	if err != nil || a.LabeledBy != "maint" || a.BodyHash != agentjob.BodyHash(h.issue(n)) || a.JobID != h.fin.got()[0].JobID || a.LabeledAt.IsZero() {
 		t.Errorf("admission = %+v, %v", a, err)
 	}
 	if h.pool.Pool != nil {
@@ -443,5 +444,19 @@ func TestDryRunIntakeWritesNothing(t *testing.T) {
 	h.mustTick()
 	if h.has(n, lead) || len(h.gh.Writes()) != 0 || readLedger(t, h.ledger) != "" || h.ex.nPrepared() != 0 {
 		t.Errorf("dry-run intake wrote: writes %v ledger %q", h.gh.Writes(), readLedger(t, h.ledger))
+	}
+}
+
+// A running worker job owns plan.md: a re-applied intake label must not start a
+// triage job on the same issue.
+func TestRunningWorkerJobBlocksTriage(t *testing.T) {
+	h := newHarness(t)
+	n := h.gh.SeedIssue(github.Issue{Title: "t", Author: self, Labels: []string{lead}, CreatedAt: t0})
+	if _, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "worker", Role: "engineer", Issue: n}); err != nil {
+		t.Fatal(err)
+	}
+	h.mustTick()
+	if len(h.ex.prepared) != 0 || h.has(n, labels.Running(labels.StageTriage, "lead")) {
+		t.Error("triage was claimed while a worker job runs")
 	}
 }

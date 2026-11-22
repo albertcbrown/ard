@@ -36,7 +36,8 @@ func lbls(ls []Label) []string {
 
 func TestBuild(t *testing.T) {
 	lead := Job{Stage: StageTriage, Role: "lead", Issue: 7}
-	worker := Job{Stage: StageWorker, Role: "engineer", Issue: 7, PR: 9, Branch: "worker/engineer-x"}
+	worker := Job{Stage: StageWorker, Role: "engineer", Issue: 7, PR: 9, Branch: "worker/engineer-x",
+		Worker: &WorkerResult{PR: 9, Tests: TestsPassed}}
 	review := Job{Stage: StageReview, Role: "eng-review", Issue: 7, PR: 9, Branch: "worker/engineer-x"}
 	tests := []struct {
 		name         string
@@ -61,7 +62,8 @@ func TestBuild(t *testing.T) {
 		{"architect done", Job{Stage: StageTriage, Role: "architect", Issue: 7}, RoleFile{Status: "done"},
 			OutcomeDone, []string{"7:ard:triage:architect:done"}, []string{"7:ard:triage:architect:running"}, nil, nil, 0},
 		{"worker done requests reviewers on the PR", worker, RoleFile{Status: "done", Next: []string{"review:eng-review", "triage:architect"}},
-			OutcomeDone, []string{"7:ard:worker:engineer:done"}, []string{"7:ard:worker:engineer:running"},
+			OutcomeDone, []string{"7:ard:worker:engineer:done"},
+			[]string{"7:ard:tests:failed", "9:ard:tests:failed", "7:ard:worker:engineer:running"},
 			[]string{"9:ard:review:eng-review"}, nil, 1},
 		{"review approve", review, RoleFile{Status: "done", Verdict: "approve", Next: []string{"review:license-review"}},
 			OutcomeDone, []string{"9:ard:review:eng-review:done"}, []string{"9:ard:review:eng-review:changes", "9:ard:review:eng-review:running"}, nil, nil, 1},

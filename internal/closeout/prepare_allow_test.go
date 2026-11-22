@@ -173,6 +173,9 @@ func TestPrepareWriteAllowlist(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
 			j := e.claim(c.stage, c.role)
+			if c.stage == StageWorker {
+				j.PR, j.Worker = 5, &WorkerResult{PR: 5, Tests: TestsNone}
+			}
 			c.setup(e, &j)
 			rec, err := Prepare(context.Background(), j, e.d)
 			if err != nil {
