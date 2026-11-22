@@ -3,6 +3,9 @@ package triage
 import (
 	"strings"
 	"testing"
+
+	"github.com/albertcbrown/ard/internal/agent"
+	"github.com/albertcbrown/ard/internal/agentjob"
 )
 
 // A golden argv for the real Claude adapter, built the way the loop builds it.
@@ -11,7 +14,7 @@ func TestCommandClaudeArgv(t *testing.T) {
 	n := h.human("t", "b", lead)
 	cfg := h.cfg
 	role, _ := cfg.Role("triage", "lead")
-	cmd, err := h.loop.command(cfg, role, n, []string{".ard-input/1/issue.md"}, executorHandle())
+	cmd, err := agentjob.AgentCommand(h.loop.d.Agents, cfg, role, agent.StageTriage, n, 0, []string{".ard-input/1/issue.md"}, executorHandle(), h.loop.d.Model)
 	if err != nil {
 		t.Fatal(err)
 	}

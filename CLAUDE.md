@@ -45,11 +45,11 @@ internal/modelauth/ picks the one model credential (OAuth token or API key) from
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
 internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues
-internal/agentjob/  helpers the agent loops share: untrusted-input snapshot, command mapping, handle save, shutdown-aware wait, post-once
+internal/agentjob/  helpers the agent loops share: untrusted-input snapshot, admission re-check, agent command and executor job builders, handle save, shutdown-aware wait, post-once
 internal/worker/    the worker loop: claim, agent/test/fix steps, diff guard, code-lane push, draft PR, FinishWith
 internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
-internal/roles/     starter role directories embedded for ard init (scanners/cve, triage/lead)
+internal/roles/     starter role directories embedded for ard init (scanners/cve, triage/lead, triage/engineer, workers/engineer, reviewers/eng-review)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths, FileAt); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
@@ -60,6 +60,7 @@ internal/closeout/  job close-out: role file or failure cause -> labels, comment
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/limits/    the book of exhausted usage limits the pool consults (the reactive half; #63 adds readings and thresholds)
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
+internal/reviewer/  the reviewer loop: claims `ard:review:<role>` on ard's own PRs, pins the head, runs the agent on the diff, closes out through the shared Finisher (one PR review)
 internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects

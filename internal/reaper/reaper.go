@@ -386,7 +386,7 @@ func (r *Reaper) finish(ctx context.Context, sj state.Job, h executor.Handle, st
 		ev = "reaper.retry"
 	case closeout.OutcomeLimited:
 		ev = "reaper.usage_limit"
-	case closeout.OutcomeDone, closeout.OutcomeChanges, closeout.OutcomeNeedsHuman:
+	case closeout.OutcomeDone, closeout.OutcomeChanges, closeout.OutcomeStale, closeout.OutcomeNeedsHuman:
 		ev = "reaper.closeout"
 	}
 	r.log().Info(ev, append(attrs, "outcome", string(out))...)

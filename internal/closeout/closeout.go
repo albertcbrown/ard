@@ -58,6 +58,10 @@ type Job struct {
 	// ExtraLogs are further host logs to redact and commit beside LogPath: the
 	// earlier agent steps of a worker job. A withheld one holds the job.
 	ExtraLogs []string
+	// Review is the reviewer loop's context: the added lines for inline
+	// placement and whether the PR head moved. nil for every other job, and
+	// for a review closed out by the Reaper after a restart.
+	Review *ReviewContext
 }
 
 // CauseKind names why a job ended without a usable result.
@@ -115,6 +119,8 @@ type Record struct {
 	SHA       string
 	Synthetic bool // the commit was a dry-run: nothing reached the remote
 	CommentID int64
+	// ReviewMode says how a review reached GitHub (Review* constants).
+	ReviewMode string
 }
 
 // Effects is the subset of effects.Effects close-out uses.
@@ -122,12 +128,14 @@ type Effects interface {
 	AddLabels(ctx context.Context, n int, labels ...string) error
 	RemoveLabel(ctx context.Context, n int, label string) error
 	CreateComment(ctx context.Context, n int, body string) (github.Comment, error)
+	CreateReview(ctx context.Context, n int, in github.ReviewInput) error
 	DryRun() bool
 }
 
 // Comments lists existing comments (github.Reader).
 type Comments interface {
 	ListComments(ctx context.Context, n int, since time.Time) ([]github.Comment, error)
+	ListReviews(ctx context.Context, n int) ([]github.Review, error)
 }
 
 // Committer commits a file set to main (branch "") or a PR branch.
@@ -534,6 +542,9 @@ func (c *Closer) addGrouped(ctx context.Context, ls []Label) error {
 
 // comment posts the summary once; the marker makes a replay find it.
 func (c *Closer) comment(ctx context.Context, rec *Record) error {
+	if rec.Plan.Review != nil {
+		return c.postReview(ctx, rec)
+	}
 	n := rec.Job.target()
 	if n > 0 && c.d.Comments != nil {
 		cs, err := c.d.Comments.ListComments(ctx, n, time.Time{})
@@ -552,6 +563,73 @@ func (c *Closer) comment(ctx context.Context, rec *Record) error {
 		return fmt.Errorf("comment on #%d: %w", n, err)
 	}
 	rec.CommentID = cm.ID
+	return nil
+}
+
+// postReview posts a review job's summary and findings once: one PR review
+// with inline comments, else (GitHub answers 422: a line or the commit is not
+// in the PR) one review with every finding in its body, else a plain comment.
+// A 422 created nothing, so a replay walks the same chain. Any other error is
+// returned and the close-out stays resumable. The marker in the body makes a
+// replay after a crash find an earlier post.
+func (c *Closer) postReview(ctx context.Context, rec *Record) error {
+	j, rp := rec.Job, rec.Plan.Review
+	n := j.target()
+	if n > 0 && c.d.Comments != nil {
+		rs, err := c.d.Comments.ListReviews(ctx, n)
+		if err != nil {
+			return fmt.Errorf("list reviews on #%d: %w", n, err)
+		}
+		for _, r := range rs {
+			if strings.HasPrefix(r.Body, markerFor(j.ID)) {
+				rec.CommentID, rec.ReviewMode = r.ID, ReviewFound
+				return nil
+			}
+		}
+		cs, err := c.d.Comments.ListComments(ctx, n, time.Time{})
+		if err != nil {
+			return fmt.Errorf("list comments on #%d: %w", n, err)
+		}
+		for _, cm := range cs {
+			if strings.HasPrefix(cm.Body, markerFor(j.ID)) {
+				rec.CommentID, rec.ReviewMode = cm.ID, ReviewFound
+				return nil
+			}
+		}
+	}
+	dry := c.d.Effects.DryRun()
+	rejected := func(err error) bool {
+		var he *github.HTTPError
+		return errors.As(err, &he) && he.Status == 422
+	}
+	inline := inlineComments(rp)
+	if len(inline) > 0 {
+		err := c.d.Effects.CreateReview(ctx, n, github.ReviewInput{CommitSHA: rp.CommitSHA,
+			Body: RenderReview(*rec, c.d.Repo, dry, false), Comments: inline})
+		if err == nil {
+			rec.ReviewMode = ReviewInline
+			return nil
+		}
+		if !rejected(err) {
+			return fmt.Errorf("review on #%d: %w", n, err)
+		}
+		c.d.log().Warn("closeout.review_inline_rejected", "job", j.ID, "pr", n, "error", err)
+	}
+	body := RenderReview(*rec, c.d.Repo, dry, len(inline) > 0)
+	err := c.d.Effects.CreateReview(ctx, n, github.ReviewInput{CommitSHA: rp.CommitSHA, Body: body})
+	if err == nil {
+		rec.ReviewMode = ReviewBody
+		return nil
+	}
+	if !rejected(err) {
+		return fmt.Errorf("review on #%d: %w", n, err)
+	}
+	c.d.log().Warn("closeout.review_rejected", "job", j.ID, "pr", n, "error", err)
+	cm, err := c.d.Effects.CreateComment(ctx, n, body)
+	if err != nil {
+		return fmt.Errorf("comment on #%d: %w", n, err)
+	}
+	rec.CommentID, rec.ReviewMode = cm.ID, ReviewComment
 	return nil
 }
 

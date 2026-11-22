@@ -38,6 +38,9 @@
 //     A worker job runs several executor jobs (agent, tests, fixes) under one
 //     state job; the loop saves each step's handle before starting it, so the
 //     Reaper's heartbeat and deadline rules apply to the step that runs.
+//     A review job calls Finisher.FinishWith with FinishOptions.Review (the
+//     added lines for inline placement and whether the PR head moved); a
+//     review closed out without it lists every finding in the review body.
 //  5. Then Slot.Release, deferred so a panic still frees it.
 //
 // Never release the slot before close-out has finished.

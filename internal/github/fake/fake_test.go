@@ -218,3 +218,31 @@ func TestSearchInTitleText(t *testing.T) {
 		t.Error("quoted text without in:title should be rejected")
 	}
 }
+
+func TestCreateReviewThenListAndFail(t *testing.T) {
+	ctx := context.Background()
+	f := fake.New()
+	n := f.SeedPR(github.PullRequest{Title: "pr", HeadSHA: "abc"})
+	in := github.ReviewInput{CommitSHA: "abc", Body: "body", Comments: []github.InlineComment{{Path: "a.go", Line: 2, Body: "c"}}}
+	if err := f.CreateReview(ctx, n, in); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := f.ListReviews(ctx, n)
+	if err != nil || len(rs) != 1 || rs[0].Body != "body" || rs[0].State != "COMMENTED" || rs[0].CommitSHA != "abc" {
+		t.Fatalf("reviews = %+v, %v", rs, err)
+	}
+	if cs, _ := f.ListReviewComments(ctx, n); len(cs) != 1 || cs[0].Path != "a.go" {
+		t.Errorf("inline = %+v", cs)
+	}
+	f.FailNext("CreateReview", &github.HTTPError{Status: 422})
+	var he *github.HTTPError
+	if err := f.CreateReview(ctx, n, in); !errors.As(err, &he) || he.Status != 422 {
+		t.Fatalf("err = %v", err)
+	}
+	if rs, _ := f.ListReviews(ctx, n); len(rs) != 1 {
+		t.Errorf("a failed review was recorded: %+v", rs)
+	}
+	if _, err := f.ListReviews(ctx, 999); !errors.Is(err, github.ErrNotFound) {
+		t.Errorf("non-PR err = %v", err)
+	}
+}

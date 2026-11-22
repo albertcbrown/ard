@@ -373,28 +373,12 @@ func (jb *job) abnormalCause(ctx context.Context, st executor.Status) closeout.C
 
 func (jb *job) agentCommand(h executor.Handle, untrusted []string) (executor.Command, error) {
 	d := jb.l.d
-	a, err := d.Agents.Get(jb.role.Agent)
-	if err != nil {
-		return executor.Command{}, err
-	}
-	budget := jb.stepBudget
-	spec := agent.Spec{
-		Stage: agent.StageWorker, Role: jb.role.Name, Issue: jb.is.Number,
-		PromptFile: h.View.Role + "/prompt.txt", Untrusted: untrusted,
-		ConfigDir: h.View.ConfigDir, Model: jb.role.Model, MaxBudgetUSD: budget, Auth: d.Model.Auth,
-	}
-	if h.View.Sidecar != "" {
-		spec.ReadDirs = []string{h.View.Sidecar}
-	}
-	ac, err := a.Command(spec)
-	if err != nil {
-		return executor.Command{}, err
-	}
-	return agentjob.Command(ac, d.Model)
+	return agentjob.AgentCommand(d.Agents, jb.cfg, jb.role, agent.StageWorker, jb.is.Number, jb.stepBudget, untrusted, h, d.Model)
 }
 
 // triageInputs lists the regular files triage left for the worker, as paths
-// relative to the worktree: plan.md, the triage role files and the triage logs.
+// relative to the worktree: plan.md, the scanner's issue.md, the triage role
+// files and the triage logs.
 // They are agent-written, so the agent is told they are untrusted. Nothing is
 // followed through a symlink.
 func (jb *job) triageInputs(wt string) []string {
@@ -409,8 +393,13 @@ func (jb *job) triageInputs(wt string) []string {
 		return err == nil && fi.Mode().IsRegular()
 	}
 	var out []string
-	if plan := fmt.Sprintf(".ard/%d/plan.md", n); regular(plan) {
-		out = append(out, plan)
+	for _, rel := range []string{
+		fmt.Sprintf(".ard/%d/plan.md", n),
+		fmt.Sprintf(".ard/%d/issue.md", n),
+	} {
+		if regular(rel) {
+			out = append(out, rel)
+		}
 	}
 	list := func(dir, prefix string) {
 		d, err := root.Open(dir)
