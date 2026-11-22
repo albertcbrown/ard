@@ -107,10 +107,8 @@ func eval(cfg config.Intake, in Input) step {
 	label := Label(cfg)
 	// A label ard itself applies (ard:needs-human, a stage label, ...) can't
 	// be the intake label: the App's own writes would admit untrusted issues.
-	if !strings.EqualFold(label, labels.Pending) {
-		if _, ok := labels.Parse(label); ok {
-			return fin(OutcomeSkip, ReasonBadConfig)
-		}
+	if labels.CheckIntake(label) != nil {
+		return fin(OutcomeSkip, ReasonBadConfig)
 	}
 	if !hasLabel(in.Issue.Labels, label) {
 		return fin(OutcomeSkip, ReasonLabelAbsent)

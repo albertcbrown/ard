@@ -91,15 +91,71 @@ func TestRunDryRun(t *testing.T) {
 }
 
 func TestRunConfigErrorSkipsGitHub(t *testing.T) {
-	root := writeRepo(t, "executor: remote\n")
-	e, _ := env(root, false)
-	called := false
-	err := run(context.Background(), e, func(context.Context, string) (deps, error) {
-		called = true
-		return deps{}, nil
-	})
-	if err == nil || called {
-		t.Errorf("err=%v called=%v, want an error and no GitHub client", err, called)
+	tests := []struct{ name, cfg, wantErr string }{
+		{"invalid executor", "executor: remote\n", ""},
+		{"intake clash", "intake: {mode: label, label: \"ard:needs-human\"}\n", "intake.label"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := writeRepo(t, tt.cfg)
+			e, _ := env(root, false)
+			called := false
+			err := run(context.Background(), e, func(context.Context, string) (deps, error) {
+				called = true
+				return deps{}, nil
+			})
+			if err == nil || called {
+				t.Errorf("err=%v called=%v, want an error and no GitHub client", err, called)
+			}
+			if err != nil && !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRunCustomIntake(t *testing.T) {
+	root := writeRepo(t, "intake: {mode: label, label: \"ard:intake\"}\n")
+	f := fake.New()
+	open := func(context.Context, string) (deps, error) {
+		return deps{Reader: f, Writer: effects.NewLive(f, nil, quiet)}, nil
+	}
+	e, out := env(root, false)
+	if err := run(context.Background(), e, open); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "create  ard:intake\n") || !strings.HasSuffix(out.String(), "created 13, updated 0, unchanged 0, stale 0\n") {
+		t.Errorf("stdout:\n%s", out.String())
+	}
+	e, out = env(root, false)
+	if err := run(context.Background(), e, open); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "created 0, updated 0, unchanged 13, stale 0\n" {
+		t.Errorf("second run stdout:\n%s", out.String())
+	}
+	// Switching back to the default leaves the custom label stale, not deleted.
+	cfgPath := filepath.Join(root, ".ard", "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("intake: {mode: label}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, out = env(root, false)
+	if err := run(context.Background(), e, open); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "stale   ard:intake\n") || !strings.HasSuffix(out.String(), "stale 1\n") {
+		t.Errorf("third run stdout:\n%s", out.String())
+	}
+	have, err := f.ListLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, l := range have {
+		found = found || l.Name == "ard:intake"
+	}
+	if !found {
+		t.Error("ard:intake was deleted")
 	}
 }
 

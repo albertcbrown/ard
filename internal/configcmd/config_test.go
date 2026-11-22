@@ -265,3 +265,61 @@ func TestCheckWithoutRefIsUnchanged(t *testing.T) {
 		t.Errorf("stdout differs from the plain working-tree render:\n%s", stdout.String())
 	}
 }
+
+func TestCheckIntakeLabel(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        string
+		wantExit   int
+		wantStderr []string
+		noStderr   []string
+	}{
+		{"own label", `intake: {mode: label, label: "ard:needs-human"}`, 1, []string{".ard/config.yaml: intake.label:", "uses itself"}, nil},
+		{"stage label", `intake: {mode: label, label: "ard:triage:lead:done"}`, 1, []string{".ard/config.yaml: intake.label:", "uses itself"}, nil},
+		{"custom", `intake: {mode: label, label: "ard:intake"}`, 0, nil, nil},
+		{"label default", `intake: {mode: label}`, 0, nil, nil},
+		{"all", `intake: {mode: all}`, 0, nil, nil},
+		{"all with label", `intake: {mode: all, label: "ard:needs-human"}`, 1, []string{"only valid when intake.mode is label"}, []string{"uses itself"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeRepo(t, tc.cfg+"\n")
+			var stdout, stderr bytes.Buffer
+			code := cli.Run(
+				[]string{"config", "check", "--config", filepath.Join(root, ".ard", "config.yaml")},
+				&stdout, &stderr, cli.Handlers{ConfigCheck: Check}, "dev",
+			)
+			if code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\nstderr: %s", code, tc.wantExit, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "intake:") {
+				t.Errorf("stdout lacks the resolved config:\n%s", stdout.String())
+			}
+			for _, w := range tc.wantStderr {
+				if !strings.Contains(stderr.String(), w) {
+					t.Errorf("stderr missing %q:\n%s", w, stderr.String())
+				}
+			}
+			for _, w := range tc.noStderr {
+				if strings.Contains(stderr.String(), w) {
+					t.Errorf("stderr has %q:\n%s", w, stderr.String())
+				}
+			}
+		})
+	}
+
+	t.Run("ref", func(t *testing.T) {
+		root := gitRepo(t, map[string]string{
+			".ard/config.yaml":        `intake: {mode: label, label: "ard:needs-human"}` + "\n",
+			"*.ard/scanners/cve/scan": "#!/bin/sh\n",
+		})
+		var stdout, stderr bytes.Buffer
+		code := cli.Run(
+			[]string{"config", "check", "--config", filepath.Join(root, ".ard", "config.yaml"), "--ref", "HEAD"},
+			&stdout, &stderr, cli.Handlers{ConfigCheck: Check}, "dev",
+		)
+		if code != 1 || !strings.Contains(stderr.String(), "intake.label:") {
+			t.Errorf("exit = %d, stderr: %s", code, stderr.String())
+		}
+	})
+}

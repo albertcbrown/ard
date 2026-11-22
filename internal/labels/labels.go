@@ -8,7 +8,10 @@
 // package can use it without pulling in GitHub or the effect layer.
 package labels
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Prefix starts every label the controller owns.
 const Prefix = "ard:"
@@ -82,6 +85,23 @@ func Changes(role string) string { return Name(StageReview, role, StateChanges) 
 
 // Scanner is the label a scanner puts on the issues it files.
 func Scanner(name string) string { return Prefix + "scanner:" + name }
+
+// CheckIntake reports whether name may be the intake label (config
+// intake.label). It rejects any name Parse accepts, that is any static label
+// and any ard:<stage>:<role>[:<state>] or ard:scanner:<name>, except
+// ard:pending (the default intake label, matched case-insensitively). ""
+// means the default and is accepted. It checks nothing else: config already
+// enforces the ard: prefix, length and characters. This is the one copy of
+// the rule. intake.Admit, Desired and `ard config check` all call it.
+func CheckIntake(name string) error {
+	if name == "" || strings.EqualFold(name, Pending) {
+		return nil
+	}
+	if _, ok := Parse(name); ok {
+		return fmt.Errorf("%q is a label ard uses itself; choose a label outside ard's own label names, such as ard:intake", name)
+	}
+	return nil
+}
 
 // ParseStage parses a stage word as written in `next:` entries.
 func ParseStage(s string) (Stage, bool) {

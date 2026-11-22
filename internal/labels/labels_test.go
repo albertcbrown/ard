@@ -1,6 +1,9 @@
 package labels
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestConstructors(t *testing.T) {
 	tests := []struct{ got, want string }{
@@ -91,6 +94,43 @@ func TestStaticAreParsedStatic(t *testing.T) {
 	for _, s := range Static() {
 		if p, ok := Parse(s); !ok || p.Kind != KindStatic {
 			t.Errorf("Parse(%q) = %+v, %v", s, p, ok)
+		}
+	}
+}
+
+func TestCheckIntake(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{"", false},
+		{"ard:pending", false},
+		{"ARD:Pending", false},
+		{"ard:intake", false},
+		{"ard:ready-for-ard", false},
+		{"ard:needs-human", true},
+		{"ARD:NEEDS-HUMAN", true},
+		{"ard:hold", true},
+		{"ard:pause", true},
+		{"ard:approved", true},
+		{"ard:keep", true},
+		{"ard:executor:failed", true},
+		{"ard:triage:lead:done", true},
+		{"ard:worker:ghost", true}, // no such role is needed: the grammar alone bans it
+		{"ard:review:x:changes", true},
+		{"ard:scanner:cve", true},
+		// Parse rejects it: it is not a label ard applies, because the lead's
+		// request is ard:pending.
+		{"ard:triage:lead", false},
+	}
+	for _, tt := range tests {
+		err := CheckIntake(tt.name)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("CheckIntake(%q) = %v, wantErr %v", tt.name, err, tt.wantErr)
+			continue
+		}
+		if err != nil && (!strings.Contains(err.Error(), "uses itself") || !strings.Contains(err.Error(), tt.name)) {
+			t.Errorf("CheckIntake(%q) error = %q, want it to say 'uses itself' and name the label", tt.name, err)
 		}
 	}
 }

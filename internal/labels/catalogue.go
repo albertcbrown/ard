@@ -9,9 +9,9 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 )
 
-// GitHub's limits on a label.
+// GitHub's limit on a label description, in bytes. The name limit is
+// config.MaxLabelRunes, counted in characters with config.LabelRunes.
 const (
-	maxNameLen = 50
 	maxDescLen = 100
 )
 
@@ -19,7 +19,12 @@ const (
 type Label struct{ Name, Color, Description string }
 
 // Spec names the roles and scanners a repository has.
-type Spec struct{ Triage, Workers, Reviewers, Scanners []string }
+type Spec struct {
+	Triage, Workers, Reviewers, Scanners []string
+	// Intake is the configured intake.label; "" = the default (ard:pending,
+	// already static).
+	Intake string
+}
 
 // SpecFrom takes the role names out of a resolved configuration.
 func SpecFrom(r *config.Resolved) Spec {
@@ -30,12 +35,16 @@ func SpecFrom(r *config.Resolved) Spec {
 		}
 		return out
 	}
-	return Spec{
+	sp := Spec{
 		Triage:    names(config.KindTriage),
 		Workers:   names(config.KindWorker),
 		Reviewers: names(config.KindReviewer),
 		Scanners:  names(config.KindScanner),
 	}
+	if r.Intake.Mode == config.IntakeLabel {
+		sp.Intake = r.Intake.Label
+	}
+	return sp
 }
 
 // StageOf maps a role kind to its label stage. Scanners have no stage.
@@ -57,8 +66,9 @@ var roleStates = map[Stage][]State{
 	StageReview: {StateRequest, StateRunning, StateDone, StateChanges},
 }
 
-// Desired builds the full catalogue, sorted by name and deterministic. It is
-// the only code that decides which roles get which states. Every problem is
+// Desired builds the full catalogue (the statics, the role and scanner
+// labels, and the custom intake label when one is set), sorted by name and
+// deterministic. It is the only code that decides which roles get which states. Every problem is
 // collected and returned with errors.Join.
 func Desired(sp Spec) ([]Label, error) {
 	var (
@@ -93,7 +103,14 @@ func Desired(sp Spec) ([]Label, error) {
 		}
 		out = append(out, scannerLabel(n))
 	}
-	if err := validate(out); err != nil {
+	if sp.Intake != "" && !strings.EqualFold(sp.Intake, Pending) {
+		if err := CheckIntake(sp.Intake); err != nil {
+			errs = append(errs, fmt.Errorf("labels: intake.label: %w", err))
+		} else {
+			out = append(out, intakeLabel(sp.Intake))
+		}
+	}
+	if err := validate(out, sp.Intake); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
@@ -105,11 +122,14 @@ func Desired(sp Spec) ([]Label, error) {
 
 // validate checks GitHub's length limits and that names are unique
 // case-insensitively. Errors name the role that owns the label.
-func validate(ls []Label) error {
+func validate(ls []Label, intake string) error {
 	var errs []error
 	seen := map[string]bool{}
 	for _, l := range ls {
 		who := ""
+		if intake != "" && strings.EqualFold(l.Name, intake) {
+			who = "intake.label: "
+		}
 		if p, ok := Parse(l.Name); ok {
 			switch p.Kind {
 			case KindScanner:
@@ -119,8 +139,8 @@ func validate(ls []Label) error {
 				who = fmt.Sprintf("%s %q: ", kind, p.Role)
 			}
 		}
-		if n := len(l.Name); n > maxNameLen {
-			errs = append(errs, fmt.Errorf("labels: %slabel %q is %d chars (max %d)", who, l.Name, n, maxNameLen))
+		if n := config.LabelRunes(l.Name); n > config.MaxLabelRunes {
+			errs = append(errs, fmt.Errorf("labels: %slabel %q is %d chars (max %d)", who, l.Name, n, config.MaxLabelRunes))
 		}
 		if n := len(l.Description); n > maxDescLen {
 			errs = append(errs, fmt.Errorf("labels: %slabel %q: description is %d chars (max %d)", who, l.Name, n, maxDescLen))
