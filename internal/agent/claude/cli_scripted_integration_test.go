@@ -5,7 +5,7 @@
 // Bash, Read, Grep, Edit and Write. Credentials are dummies and no paid call
 // is made (#125). They pin the shipped behaviour: the adapter leaves
 // CLAUDE_CODE_SUBPROCESS_ENV_SCRUB unset (see docs/proposal.md), so the CLI
-// runs in dontAsk mode and Bash inherits the job's model credential. Re-run
+// runs in dontAsk mode and Bash inherits the API key (not the OAuth token). Re-run
 // them on every TestedVersion bump.
 package claude
 
@@ -185,20 +185,21 @@ func scriptRepo(t *testing.T) (work, markers string) {
 	return work, markers
 }
 
-// With the scrub unset, the CLI authenticates with the job's credential and
-// Bash children inherit it: the documented residual risk (the container is the
-// boundary). This pins the accepted behaviour, and fails if a release starts
-// scrubbing by default.
+// With the scrub unset, the CLI authenticates with the job's credential. The
+// API key reaches Bash children; the OAuth token is removed from them by the
+// CLI but stays in the parent claude process's env. This pins the accepted
+// residual risk (the container is the boundary) for the tested release.
 func TestCLIBashInheritsCredential(t *testing.T) {
 	const key, tok = "dummy-not-a-key-0000", "ard-dummy-oauth-not-a-token-0000"
 	for _, tc := range []struct {
-		name  string
-		auth  agent.Auth
-		env   string
-		value string
+		name      string
+		auth      agent.Auth
+		env       string
+		value     string
+		inherited bool
 	}{
-		{"api key", agent.AuthAPIKey, "ANTHROPIC_API_KEY", key},
-		{"oauth token", agent.AuthOAuthToken, "CLAUDE_CODE_OAUTH_TOKEN", tok},
+		{"api key", agent.AuthAPIKey, "ANTHROPIC_API_KEY", key, true},
+		{"oauth token", agent.AuthOAuthToken, "CLAUDE_CODE_OAUTH_TOKEN", tok, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			work, markers := scriptRepo(t)
@@ -215,8 +216,8 @@ func TestCLIBashInheritsCredential(t *testing.T) {
 				t.Fatalf("Bash did not run: %v\n%s", err, out)
 			}
 			for _, s := range []string{tc.env, tc.value} {
-				if !bytes.Contains(b, []byte(s)) {
-					t.Errorf("Bash env lacks %q", s)
+				if got := bytes.Contains(b, []byte(s)); got != tc.inherited {
+					t.Errorf("Bash env contains %q = %v, want %v", s, got, tc.inherited)
 				}
 			}
 			hs := headers()
@@ -280,7 +281,16 @@ func TestCLIDontAskOutcomes(t *testing.T) {
 			if in := cliInitEvent(t, out); in.PermissionMode != "dontAsk" {
 				t.Errorf("permissionMode = %q, want dontAsk", in.PermissionMode)
 			}
-			finalResult(t, out) // a result event proves nothing hung
+			res := finalResult(t, out) // a result event proves nothing hung
+			nd := 0
+			for _, d := range want {
+				if d {
+					nd++
+				}
+			}
+			if len(res.PermissionDenials) != nd {
+				t.Errorf("permission_denials = %d, want %d", len(res.PermissionDenials), nd)
+			}
 			var got []bool
 			for _, r := range toolResults(t, out) {
 				got = append(got, r.IsError)
