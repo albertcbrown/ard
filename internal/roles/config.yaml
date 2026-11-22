@@ -28,3 +28,4 @@ merge:
 
 overrides:
   scanners/cve: { every: 6h, max_open: 10, group_size: 1, autoclose: true }
+  triage/lead:  { model: claude-opus-5-5, timeout: 15m }
