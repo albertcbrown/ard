@@ -12,10 +12,12 @@ import (
 
 // Event kinds.
 const (
-	EventClaim     = "claim"
-	EventCloseout  = "closeout"
-	EventFailure   = "failure"
-	EventRetry     = "retry"
+	EventClaim    = "claim"
+	EventCloseout = "closeout"
+	EventFailure  = "failure"
+	EventRetry    = "retry"
+	// EventKill: the Reaper is about to kill a running job; data has the reason.
+	EventKill      = "kill"
 	EventTickError = "tick_error"
 	// EventHostUntrusted: a host-mode job of a role that reads untrusted
 	// input started. Stage, role, job and issue are in their columns.
