@@ -61,9 +61,15 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		cands    []candidate
 		roleSeen bool
 	)
-	if j.ExitCode != 0 {
+	switch {
+	case j.Cause.Kind != "":
+		failed = string(j.Cause.Kind)
+		if j.Cause.Detail != "" {
+			failed += ": " + j.Cause.Detail
+		}
+	case j.ExitCode != 0:
 		failed = fmt.Sprintf("agent exited %d", j.ExitCode)
-	} else {
+	default:
 		rf, failed, err = readResult(j, rolePath, d.log())
 		if err != nil {
 			return Record{}, err
@@ -120,8 +126,9 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	// 3. The log.
 	logWithheld, logReason := false, ""
 	var logRef *FileRef
+	var tail string
 	if j.LogPath != "" {
-		logRef, logReason, err = prepareLog(ctx, red, j, n, stage)
+		logRef, tail, logReason, err = prepareLog(ctx, red, j, n, stage)
 		if err != nil {
 			return Record{}, err
 		}
@@ -134,6 +141,8 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	// 4. The plan.
 	var plan Plan
 	switch {
+	case failed != "" && j.Cause.Retry:
+		plan = retryPlan(j, cleanReason(ctx, red, failed))
 	case failed != "":
 		plan = failedPlan(j, cleanReason(ctx, red, failed), logWithheld)
 	case hit != "":
@@ -157,6 +166,14 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	}
 	if logRef != nil {
 		plan.LogPath = logRef.Path
+	}
+	if plan.Outcome == OutcomeFailed || plan.Outcome == OutcomeRetry {
+		// The evidence stays for 24 h; the comment says until when and shows
+		// the log tail (already redacted, re-scanned and capped).
+		plan.KeepUntil = d.now().Add(failedKeep)
+		if j.LogPath != "" {
+			plan.Tail, plan.TailWithheld = tail, tail == ""
+		}
 	}
 	sort.SliceStable(files, func(a, b int) bool { return files[a].Path < files[b].Path })
 	plan.Files = files
@@ -257,26 +274,67 @@ func collect(ctx context.Context, j Job, d Deps, dir string) ([]candidate, strin
 }
 
 // prepareLog redacts the host log. It returns nil (and a reason) when the log
-// must stay host-local.
-func prepareLog(ctx context.Context, red Redactor, j Job, issue int, stage string) (*FileRef, string, error) {
+// must stay host-local. The second result is the comment tail: the last lines
+// of the redacted log, or "" when it is withheld or fails a second scan.
+func prepareLog(ctx context.Context, red Redactor, j Job, issue int, stage string) (*FileRef, string, string, error) {
 	cp, err := redact.CommitPath(issue, j.LogPath)
 	if err != nil {
-		return nil, "log name is not committable", nil
+		return nil, "", "log name is not committable", nil
 	}
 	dst := filepath.Join(stage, ".redacted.log")
 	res, err := red.Log(ctx, j.LogPath, dst)
 	_ = os.Remove(dst) // the capped Clean bytes are what get committed
 	switch {
 	case err != nil:
-		return nil, "redaction could not complete", nil
+		return nil, "", "redaction could not complete", nil
 	case res.Flagged:
-		return nil, "secret scan flagged it (rules: " + ruleList(res.Findings) + ")", nil
+		return nil, "", "secret scan flagged it (rules: " + ruleList(res.Findings) + ")", nil
 	}
 	ref, err := stageFile(stage, cp, res.Clean)
 	if err != nil {
-		return nil, "", fmt.Errorf("closeout job %s: %w", j.ID, err)
+		return nil, "", "", fmt.Errorf("closeout job %s: %w", j.ID, err)
 	}
-	return &ref, "", nil
+	return &ref, cleanTail(ctx, red, res.Clean), "", nil
+}
+
+const (
+	tailLines    = 50
+	tailLineRune = 300
+	tailMaxBytes = 8 << 10
+)
+
+// cleanTail cuts the last lines of an already redacted log and scans the cut
+// again. It fails closed: an error or a hit gives no tail.
+func cleanTail(ctx context.Context, red Redactor, clean []byte) string {
+	t := lastLines(clean, tailLines, tailLineRune, tailMaxBytes)
+	if t == "" {
+		return ""
+	}
+	res, err := red.Text(ctx, []byte(t))
+	if err != nil || res.Flagged {
+		return ""
+	}
+	return string(res.Clean)
+}
+
+// lastLines returns the last n lines of b, each cut to maxRunes runes, at most
+// maxBytes in all (whole lines are dropped from the front first).
+func lastLines(b []byte, n, maxRunes, maxBytes int) string {
+	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i, l := range lines {
+		l = strings.ToValidUTF8(l, "?")
+		if r := []rune(l); len(r) > maxRunes {
+			l = string(r[:maxRunes-1]) + "…"
+		}
+		lines[i] = l
+	}
+	for len(lines) > 0 && len(strings.Join(lines, "\n")) > maxBytes {
+		lines = lines[1:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // stageFile writes cleaned bytes under stage at the repo-relative path.

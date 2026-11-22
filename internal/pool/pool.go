@@ -98,7 +98,7 @@ func New(o Options) *Pool {
 			p.log.Warn("pool.adopt_duplicate", "key", k, "job_id", h.JobID)
 			continue
 		}
-		p.held[k] = &Slot{pool: p, cand: h.Candidate, jobID: h.JobID, grantedAt: p.now()}
+		p.held[k] = &Slot{pool: p, cand: h.Candidate, jobID: h.JobID, grantedAt: p.now(), adopted: true}
 	}
 	if len(p.held) > p.max {
 		p.log.Warn("pool.adopt_over_max", "held", len(p.held), "max", p.max)

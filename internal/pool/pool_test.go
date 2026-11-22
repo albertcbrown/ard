@@ -511,3 +511,19 @@ func TestConcurrency(t *testing.T) {
 		t.Fatalf("held %d at end", p.Stats().Held)
 	}
 }
+
+func TestSlotAdopted(t *testing.T) {
+	c := cand(ClassWorker, "eng", 5, 0)
+	p, _ := newPool(2, Held{Candidate: c, JobID: "J1"})
+	s, ok := p.Lookup(c.Key())
+	if !ok || !s.Adopted() || s.JobID() != "J1" {
+		t.Fatalf("adopted slot = %v %v", s, ok)
+	}
+	if !s.Release() {
+		t.Fatal("release of an adopted slot failed")
+	}
+	ds := p.Offer("w", time.Minute, []Candidate{c})
+	if ds[0].Verdict != Granted || ds[0].Slot.Adopted() {
+		t.Errorf("a granted slot is never adopted: %+v", ds[0])
+	}
+}

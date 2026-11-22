@@ -9,6 +9,7 @@ type Slot struct {
 	jobID     string
 	grantedAt time.Time
 	released  bool
+	adopted   bool
 }
 
 // Key returns the job key.
@@ -16,6 +17,11 @@ func (s *Slot) Key() string { return s.cand.Key() }
 
 // Candidate returns the candidate the slot was granted to.
 func (s *Slot) Candidate() Candidate { return s.cand }
+
+// Adopted reports whether the slot was built from a job that was already
+// running when the pool was created (restart recovery), so no goroutine of
+// this process drives it. The Reaper closes such a job out itself.
+func (s *Slot) Adopted() bool { return s.adopted }
 
 // JobID returns the id set by SetJobID, or "".
 func (s *Slot) JobID() string {

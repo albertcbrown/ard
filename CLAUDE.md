@@ -54,7 +54,8 @@ internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds
 internal/controller/ scheduler, kill switch (pause), leader lock, status issue
 internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, controller
 internal/committer/ the only commit/push path for .ard/<issue#>/ (main lane, per-branch lanes)
-internal/closeout/  job close-out: role file -> labels, comment, commits (resumable)
+internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); every job ends through its Closer
+internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects

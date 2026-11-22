@@ -1,15 +1,10 @@
 package servecmd
 
 import (
-	"context"
-	"fmt"
 	"path/filepath"
-	"sync"
 
-	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/github"
-	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/repopath"
 	"github.com/albertcbrown/ard/internal/scanner"
 )
@@ -18,14 +13,12 @@ import (
 // the pool is created lazily: the pool does not exist until the pool-adopt
 // startup hook has run, and a repo with no scanners never needs a committer.
 func scannerLoop(w *wiring) controller.Loop {
-	g := gitx.New("")
 	ex, err := w.newExecutor()
 	if err != nil {
 		w.Log.Error("scanner.executor_unavailable", "error", err)
 		return nil
 	}
-	lc := &lazyCommitter{w: w, g: g, remote: w.RemoteURL}
-	w.onClose(lc.close)
+	lc := w.mainCommitter()
 	eng := scanner.NewExecEngine(scanner.ExecDeps{
 		Pool:     func() scanner.Offerer { return w.Pool() },
 		Executor: ex,
@@ -39,64 +32,8 @@ func scannerLoop(w *wiring) controller.Loop {
 	})
 }
 
-// lazyCommitter builds the main-branch committer on first use. A failure to
-// build it is returned to the caller and retried on the next commit.
-type lazyCommitter struct {
-	w      *wiring
-	g      *gitx.Git
-	remote string
-
-	mu sync.Mutex
-	c  *committer.Committer
-}
-
-func (l *lazyCommitter) get(ctx context.Context) (*committer.Committer, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.c != nil {
-		return l.c, nil
-	}
-	id, err := l.w.Reader.Identity(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("identify github user: %w", err)
-	}
-	workDir, err := repoWorkDir(l.w.Home, l.w.Repo)
-	if err != nil {
-		return nil, fmt.Errorf("start committer: %w", err)
-	}
-	c, err := committer.NewMain(ctx, committer.Config{
-		RepoDir: l.w.Root, WorkDir: workDir,
-		RemoteURL: l.remote, Bot: id, Token: l.w.Token, Log: l.w.Log,
-	}, l.w.Effects, l.g)
-	if err != nil {
-		return nil, fmt.Errorf("start committer: %w", err)
-	}
-	l.c = c
-	return c, nil
-}
-
 // repoWorkDir is ~/.ard/work/<owner>/<repo>, shared with the local executor's
 // job worktrees (job IDs can never collide with the committer's lane names).
 func repoWorkDir(home string, r github.Repo) (string, error) {
 	return repopath.Join(filepath.Join(home, ".ard", "work"), r.String())
-}
-
-// Commit implements scanner.Committer.
-func (l *lazyCommitter) Commit(ctx context.Context, req committer.Request) (committer.Result, error) {
-	c, err := l.get(ctx)
-	if err != nil {
-		return committer.Result{}, err
-	}
-	return c.Commit(ctx, req)
-}
-
-func (l *lazyCommitter) close(ctx context.Context) {
-	l.mu.Lock()
-	c := l.c
-	l.mu.Unlock()
-	if c != nil {
-		if err := c.Close(ctx); err != nil {
-			l.w.Log.Warn("committer.close_failed", "error", err)
-		}
-	}
 }
