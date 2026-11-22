@@ -63,8 +63,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
-	// The root is handed to git and to executor.Job.RepoDir, which must be
-	// absolute; RepoRoot returns "." when --config is omitted.
+	// root is the operator's checkout, made absolute because RepoRoot returns "." when --config is omitted. It is read only (origin fallback, local paused); git worktrees and commits use the controller clone (#113).
 	if root, err = filepath.Abs(root); err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
