@@ -1,0 +1,36 @@
+# ard configuration for albertcbrown/ard (dogfooding). Started from `ard init`'s
+# template; human-owned. ard serve reads it from origin/main.
+# Anything unset takes its built-in default (docs/proposal.md, Configuration).
+# Validate with `ard config check`. ard serve reads this file from origin/main.
+
+# label: only issues a maintainer labels for triage enter the pipeline.
+# all: every human-filed issue enters.
+intake: { mode: label }
+
+merge:
+  # A PR touching any of these waits for a human approval. There is no
+  # built-in list: removing an entry removes its gate. An entry ending in /
+  # is a directory prefix; anything else is a glob (quote globs starting with *).
+  protected_paths:
+    - .github/
+    - .ard/config.yaml
+    - .ard/scanners/
+    - .ard/triage/
+    - .ard/workers/
+    - .ard/reviewers/
+    - "**/CODEOWNERS"
+    # Agent instructions a PR could plant to steer later agents.
+    - CLAUDE.md
+    - "**/CLAUDE.md"
+    - AGENTS.md
+    - "**/AGENTS.md"
+    - .claude/
+    - .mcp.json
+    # What builds, signs and deploys ard itself (docs/proposal.md, Delivery).
+    - "Jenkinsfile*"
+    - Dockerfile
+    - .dockerignore
+    - deploy/
+
+overrides:
+  scanners/cve: { every: 6h, max_open: 10, group_size: 1, autoclose: true }
