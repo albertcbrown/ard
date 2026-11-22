@@ -15,20 +15,22 @@ holds only fixed dummy text.
 
 ```bash
 claude --version                          # must equal TestedVersion; otherwise stop
-export CLAUDE_CODE_OAUTH_TOKEN=...        # from `claude setup-token`; this shell only
+read -rs CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN   # paste the token; not echoed or saved to history
 unset ANTHROPIC_API_KEY
 out=$(mktemp -d)                          # raw captures: never inside the repo
 ARD_CAPTURE=success,max_turns,budget,auth_bad_token,auth_none ARD_CAPTURE_OUT="$out" \
   go test -tags 'integration capture' -run '^TestCapture$' -timeout 60m -v ./internal/agent/claude/
 ARD_CAPTURE_OUT="$out" go test -tags 'integration capture' -run '^TestScrubCaptures$' -v ./internal/agent/claude/
-go test ./internal/agent/claude/          # the real-fixture table and the scrub checks
-less internal/agent/claude/testdata/real_*.jsonl   # read every line before committing
 git rm internal/agent/claude/testdata/REAL_FIXTURES_PENDING \
        internal/agent/claude/testdata/synthetic_{success,error_max_turns,budget_exceeded,auth_failure}.jsonl
+go test ./internal/agent/claude/          # the real-fixture table and the scrub checks
+less internal/agent/claude/testdata/real_*.jsonl   # read every line before committing
 make lint test
 git add internal/agent/claude/testdata/real_* && git commit -m "Add real stream-json captures"
 rm -rf "$out"; unset CLAUDE_CODE_OAUTH_TOKEN
 ```
+
+Check that extra usage is turned off in your Claude account settings first; if it is on, a limit run may be billed as overage instead of rejected.
 
 Cost: `success`, `max_turns` and `budget` are one small haiku run each and count
 against the 5-hour window. `auth_bad_token` and `auth_none` cost nothing. The
@@ -47,9 +49,12 @@ because the tests assert on them.
 
 `REAL_FIXTURES_PENDING` is the draft gate: `TestRealFixturesPresent` passes while
 it exists, fails if it exists once all four are committed, and fails without it
-while any is missing. The PR must not merge while it exists.
+while any is missing. The PR must not merge while it exists: CI has a step that fails while the marker
+exists, so CI stays red until the marker is removed.
 
 ## The usage-limit capture (optional, never burn quota on purpose)
+
+Check that extra usage is turned off in your Claude account settings first; if it is on, a limit run may be billed as overage instead of rejected.
 
 Until a real limit is captured, `synthetic_usage_limit.jsonl` stands in, modelled
 on the documented format. A real capture answers what a `-p` run does at a
