@@ -37,6 +37,11 @@ const (
 	// .ard/<issue#>/ is committed from triage and review) and the worker
 	// diff guard.
 	defaultDeny = "Bash(git commit *),Bash(git push *),Bash(git remote *),Bash(gh *)"
+	// isolationSettings turns off the git status snapshot (branch and commit
+	// subjects are third-party text, invariant 6) and every hook. --restricted
+	// still loads --settings, so this is the only settings source besides
+	// managed settings (#105).
+	isolationSettings = `{"includeGitInstructions":false,"disableAllHooks":true}`
 )
 
 // Command builds the argv and environment. It touches no filesystem.
@@ -50,9 +55,15 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 		allowed = strings.Join(s.Tools, ",")
 		tools = toolNames(s.Tools)
 	}
+	// Planted repo config must not steer the agent. --bare would do that but
+	// limits the CLI to Bash, Read and Edit and --tools cannot widen it, so it
+	// is not used (#105). Instead: --restricted limits settings to managed
+	// settings plus --settings; --safe-mode drops CLAUDE.md/AGENTS.md, skills,
+	// agents, hooks, MCP and auto memory; --strict-mcp-config drops .mcp.json;
+	// --disable-slash-commands drops skills and commands.
 	argv := []string{a.binary, "-p", "--output-format=stream-json", "--verbose",
-		"--bare", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
-		"--permission-mode=dontAsk", "--permission-prompts=none",
+		"--restricted", "--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+		"--permission-mode=dontAsk", "--permission-prompts=none", "--settings=" + isolationSettings,
 		"--tools=" + tools, "--allowed-tools=" + allowed}
 	argv = append(argv, "--disallowed-tools="+deny)
 	for _, d := range s.ReadDirs {
@@ -72,6 +83,7 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 			"CLAUDE_CONFIG_DIR":                        s.ConfigDir,
 			"DISABLE_AUTOUPDATER":                      "1",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":     "1",
 		},
 		PassEnv: []string{"ANTHROPIC_API_KEY"},
 	}, nil

@@ -391,3 +391,13 @@ func underAny(p string, paths []string) bool {
 	}
 	return false
 }
+
+// SetExec marks paths in dir's index as mode 100755 (git update-index
+// --chmod=+x), whatever core.fileMode says. The paths must already be staged.
+func (g *Git) SetExec(ctx context.Context, dir string, paths ...string) error {
+	args := append([]string{"--literal-pathspecs", "update-index", "--chmod=+x", "--"}, paths...)
+	if _, _, err := g.run(ctx, dir, nil, "", nil, args...); err != nil {
+		return fmt.Errorf("gitx: set exec: %w", err)
+	}
+	return nil
+}

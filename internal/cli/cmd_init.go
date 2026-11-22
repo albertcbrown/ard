@@ -10,7 +10,7 @@ func newInit(app *App) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Write a starting .ard/ directory into the repository",
+		Short: "Open a PR that adds the starter .ard/ directory",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.run(cmd, func(ctx context.Context, e *Env) error {
@@ -21,6 +21,6 @@ func newInit(app *App) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing .ard/ directory")
+	cmd.Flags().BoolVar(&force, "force", false, "propose starter files even where main has different contents (never deletes)")
 	return cmd
 }
