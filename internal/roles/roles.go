@@ -1,14 +1,15 @@
-// Package roles holds the starter role directories that `ard init` (#27)
-// writes into a target repo's .ard/. Paths in FS are relative to .ard/
-// (for example "scanners/cve/scan"). embed.FS reports every file as 0444, so
-// the writer must chmod files named in ExecutableNames to 0755.
+// Package roles holds the starter .ard/ tree that `ard init` (#27) proposes
+// to a target repo. Paths in FS are relative to .ard/ (for example
+// "config.yaml" or "scanners/cve/scan"). embed.FS reports every file as 0444,
+// so the writer must commit files named in ExecutableNames as 100755.
 package roles
 
 import "embed"
 
-// FS is the embedded starter roles.
+// FS is the starter .ard/ tree `ard init` proposes: config.yaml plus the role
+// directories; paths are relative to .ard/.
 //
-//go:embed scanners
+//go:embed config.yaml scanners
 var FS embed.FS
 
 // ExecutableNames lists base names that must be written 0755.

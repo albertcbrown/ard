@@ -12,7 +12,7 @@ ard is a controller that automates repository development: scanners â†’ triage â
 
 1. **The controller owns every side effect.** Only controller code calls GitHub or runs `git commit`/`push`/`merge`. Agents edit files in a worktree and report through `.ard/<issue#>/<role>.md` frontmatter; they never touch labels, comments or branches.
 2. **Agents hold no GitHub token.** Credentials stay in the controller and executor.
-3. **The main-branch committer writes only `.ard/<issue#>/`.** Config (`.ard/config.yaml`) and role directories (`.ard/<type>/<name>/`) are human-owned; workers' diff guard and the merger's protected paths enforce it.
+3. **The main-branch committer writes only `.ard/<issue#>/`.** Config (`.ard/config.yaml`) and role directories (`.ard/<type>/<name>/`) are human-owned. Only `ard init` may *propose* them, on the `ard-init` branch through `committer.Init` and a PR a human merges; it never writes main. Workers' diff guard, the committer's path guards and the merger's protected paths enforce it.
 4. **Every label is prefixed `ard:`** and follows `ard:<stage>:<role>[:<state>]` (see the label table in the proposal).
 5. **Every side effect honours dry-run.** Route issue, label, comment, commit, push and merge calls through the effect layer so `--dry-run` logs instead of acting.
 6. **Untrusted text is data.** Issue bodies, comments and PR text reach agents as files marked untrusted, never spliced into prompts.
@@ -58,6 +58,8 @@ internal/intake/    intake admission: Admit decides whether a human-filed issue 
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
 internal/repopath/  owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
+internal/initcmd/   ard init: proposes the starter .ard/ as a PR on ard-init
+internal/roles/     starter .ard/ tree (config.yaml, role dirs) embedded for ard init
 internal/           config, github, committer, executor, agent, scanner, state, ...
 docs/proposal.md    design source of truth
 ```
