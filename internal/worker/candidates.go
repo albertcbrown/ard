@@ -12,7 +12,6 @@ import (
 	"github.com/albertcbrown/ard/internal/github/query"
 	"github.com/albertcbrown/ard/internal/intake"
 	"github.com/albertcbrown/ard/internal/labels"
-	"github.com/albertcbrown/ard/internal/state"
 )
 
 // candidate is an issue a worker role may claim, with the fresh re-read.
@@ -91,47 +90,18 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 		t.log.Info("worker.awaiting_approval", "issue", n, "role", role.Name)
 		return candidate{}, false, nil
 	}
-	c := candidate{role: role, issue: is}
-	if strings.EqualFold(is.Author, t.self) { // scanner issues: the App rewrites its own bodies
-		return c, true, nil
+	ok, err := t.recheck().Admitted(ctx, is)
+	if err != nil || !ok {
+		return candidate{}, false, err
 	}
-	hash := agentjob.BodyHash(is)
-	stored, err := l.d.Store.Admission(ctx, n)
-	switch {
-	case errors.Is(err, state.ErrNotFound):
-		t.log.Info("worker.not_admitted", "issue", n, "role", role.Name)
-		return candidate{}, false, nil
-	case err != nil:
-		return candidate{}, false, fmt.Errorf("worker issue %d: read admission: %w", n, err)
-	case stored.BodyHash == hash:
-		return c, true, nil
-	}
-	return candidate{}, false, t.regate(ctx, is, hash)
+	return candidate{role: role, issue: is}, true, nil
 }
 
-// regate is the action for an issue whose title or body changed after it was
-// admitted for triage: one comment, then ard:needs-human.
-func (t *tick) regate(ctx context.Context, is github.Issue, hash string) error {
-	n := is.Number
-	if t.dry {
-		t.log.Info("worker.would_regate", "issue", n)
-		return nil
-	}
-	if err := agentjob.MarkRegated(ctx, t.l.d.Store, is, hash); err != nil {
-		return fmt.Errorf("worker: %w", err)
-	}
-	label := intake.Label(t.cfg.Intake)
-	marker := fmt.Sprintf("<!-- %sworker regate body=%s -->", labels.Prefix, hash[:12])
-	text := fmt.Sprintf("**ard · worker · paused**\n\nThe title or body of this issue changed after it was admitted, so ard stopped before changing code. "+
-		"A maintainer can review the change, re-apply `%s` (which runs triage again) and remove `%s` to continue.", label, labels.NeedsHuman)
-	if err := agentjob.PostOnce(ctx, t.l.d.Reader, t.l.d.Effects, n, marker, text); err != nil {
-		return fmt.Errorf("worker: %w", err)
-	}
-	if err := t.l.d.Effects.AddLabels(ctx, n, labels.NeedsHuman); err != nil {
-		return fmt.Errorf("worker issue %d: add %s: %w", n, labels.NeedsHuman, err)
-	}
-	t.log.Info("worker.regate", "issue", n)
-	return nil
+// recheck is the admission re-check, shared with the reviewer (package agentjob).
+func (t *tick) recheck() agentjob.Recheck {
+	d := t.l.d
+	return agentjob.Recheck{Stage: "worker", Stopped: "changing code", Label: intake.Label(t.cfg.Intake),
+		Self: t.self, Dry: t.dry, Log: t.log, Store: d.Store, Reader: d.Reader, Effects: d.Effects}
 }
 
 func hasAny(have []string, want []string) bool {
