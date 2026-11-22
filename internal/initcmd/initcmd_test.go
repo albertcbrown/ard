@@ -142,7 +142,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 	return m
 }
 
-var starterTree = []string{".ard/config.yaml", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan"}
+var starterTree = []string{".ard/config.yaml", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan", ".ard/triage/lead/prompt.txt"}
 
 func TestInitOpensPR(t *testing.T) {
 	h := newHarness(t)
@@ -190,7 +190,7 @@ func TestInitOpensPR(t *testing.T) {
 	if pr.HeadRef != "ard-init" || pr.BaseRef != "main" || pr.Draft {
 		t.Errorf("pr = %+v", pr)
 	}
-	for _, s := range []string{"bot-commits.yml", "ARD_BOT_LOGIN", "Squash and merge", ".ard/scanners/cve/scan"} {
+	for _, s := range []string{"bot-commits.yml", "ARD_BOT_LOGIN", "Squash and merge", ".ard/scanners/cve/scan", ".ard/triage/lead/prompt.txt"} {
 		if !strings.Contains(pr.Body, s) {
 			t.Errorf("PR body lacks %q:\n%s", s, pr.Body)
 		}
@@ -208,6 +208,18 @@ func TestInitOpensPR(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("label %s missing: %v", labels.Scanner("cve"), have)
+	}
+	names := map[string]bool{}
+	for _, l := range have {
+		names[l.Name] = true
+	}
+	for _, want := range []string{labels.Running(labels.StageTriage, "lead"), labels.Done(labels.StageTriage, "lead")} {
+		if !names[want] {
+			t.Errorf("label %s missing", want)
+		}
+	}
+	if names["ard:triage:lead"] {
+		t.Error("label ard:triage:lead must not exist: the lead's request label is ard:pending")
 	}
 	for _, s := range []string{"add  .ard/scanners/cve/scan (0755)", "add  .ard/config.yaml", "opened PR #"} {
 		if !strings.Contains(out, s) {
@@ -542,7 +554,12 @@ func TestPlan(t *testing.T) {
 		t.Errorf("err = %v, want a conflict on scan", err)
 	}
 	ops, err = plan(existing, files, true)
-	if err != nil || len(changed(ops)) != 1 || ops[len(ops)-1].Act != actOverwrite {
-		t.Errorf("force: %v, %v", ops, err)
+	if err != nil || len(changed(ops)) != 1 {
+		t.Fatalf("force: %v, %v", ops, err)
+	}
+	for _, op := range ops {
+		if (op.Act == actOverwrite) != (op.File.Path == ".ard/scanners/cve/scan") {
+			t.Errorf("force: op %+v", op)
+		}
 	}
 }

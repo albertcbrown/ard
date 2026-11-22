@@ -29,7 +29,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"config.yaml", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan"}
+	want := []string{"config.yaml", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "triage/lead/prompt.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
@@ -61,35 +61,12 @@ func TestExecutableNames(t *testing.T) {
 // This is what #27's writer must do: embed.FS drops modes (everything is 0444),
 // so files named in ExecutableNames are written 0755.
 func TestEmbeddedCveRoleLoadsAsScanner(t *testing.T) {
-	asArdDir := func(chmod bool) fstest.MapFS {
-		m := fstest.MapFS{}
-		err := fs.WalkDir(FS, ".", func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			b, err := FS.ReadFile(p)
-			if err != nil {
-				return err
-			}
-			mode := fs.FileMode(0o644)
-			if chmod && slices.Contains(ExecutableNames, path.Base(p)) {
-				mode = 0o755
-			}
-			m[".ard/"+p] = &fstest.MapFile{Data: b, Mode: mode}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return m
-	}
-
 	// Without the chmod, config rejects the role: the exec bit really is needed.
-	if _, err := config.LoadFS(asArdDir(false), "/repo"); err == nil || !strings.Contains(err.Error(), "executable") {
+	if _, err := config.LoadFS(starterFS(t, false), "/repo"); err == nil || !strings.Contains(err.Error(), "executable") {
 		t.Fatalf("want an 'executable' error without chmod, got %v", err)
 	}
 
-	res, err := config.LoadFS(asArdDir(true), "/repo")
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
 	if err != nil {
 		t.Fatalf("LoadFS: %v", err)
 	}
@@ -114,4 +91,29 @@ func TestEmbeddedCveRoleLoadsAsScanner(t *testing.T) {
 	if !slices.Equal(found.Extra, []string{"merge.jq"}) {
 		t.Errorf("Extra = %v, want [merge.jq]", found.Extra)
 	}
+}
+
+// starterFS lays the embedded starter out as a repo's .ard/ directory.
+func starterFS(t *testing.T, chmod bool) fstest.MapFS {
+	t.Helper()
+	m := fstest.MapFS{}
+	err := fs.WalkDir(FS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := FS.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		mode := fs.FileMode(0o644)
+		if chmod && slices.Contains(ExecutableNames, path.Base(p)) {
+			mode = 0o755
+		}
+		m[".ard/"+p] = &fstest.MapFile{Data: b, Mode: mode}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
