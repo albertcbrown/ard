@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/intake"
@@ -243,22 +244,8 @@ func (t *tick) sweep(ctx context.Context) []error {
 	return errs
 }
 
-// postOnce posts body with marker as its first line unless a comment already
-// starts with marker. The marker makes a replay after a crash safe.
 func (t *tick) postOnce(ctx context.Context, n int, marker, text string) error {
-	cs, err := t.l.d.Reader.ListComments(ctx, n, time.Time{})
-	if err != nil {
-		return fmt.Errorf("triage issue %d: list comments: %w", n, err)
-	}
-	for _, c := range cs {
-		if strings.HasPrefix(c.Body, marker) {
-			return nil
-		}
-	}
-	if _, err := t.l.d.Effects.CreateComment(ctx, n, marker+"\n"+text); err != nil {
-		return fmt.Errorf("triage issue %d: comment: %w", n, err)
-	}
-	return nil
+	return agentjob.PostOnce(ctx, t.l.d.Reader, t.l.d.Effects, n, marker, text)
 }
 
 // refuse is the action for intake.OutcomeRefuse: one comment (never naming
@@ -309,20 +296,6 @@ func (t *tick) regate(ctx context.Context, is github.Issue, hash string) error {
 	return nil
 }
 
-// markRegated records, the first time an issue is re-gated for a hash, the
-// issue's updated_at: a re-admitting relabel must come after it.
 func (t *tick) markRegated(ctx context.Context, is github.Issue, hash string) error {
-	st := t.l.d.Store
-	a, err := st.Admission(ctx, is.Number)
-	if err != nil {
-		return fmt.Errorf("triage issue %d: read admission: %w", is.Number, err)
-	}
-	if a.RegatedHash == hash && !a.RegatedAt.IsZero() {
-		return nil
-	}
-	a.RegatedAt, a.RegatedHash = is.UpdatedAt, hash
-	if err := st.SetAdmission(ctx, a); err != nil {
-		return fmt.Errorf("triage issue %d: %w", is.Number, err)
-	}
-	return nil
+	return agentjob.MarkRegated(ctx, t.l.d.Store, is, hash)
 }

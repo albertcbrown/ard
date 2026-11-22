@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log/slog"
 	"path/filepath"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
@@ -19,11 +18,6 @@ import (
 	"github.com/albertcbrown/ard/internal/reaper"
 	"github.com/albertcbrown/ard/internal/state"
 )
-
-// inputDir is where the untrusted snapshot goes, relative to the worktree. It
-// is outside .ard/<n>/, the only path close-out collects, so it is never
-// committed.
-func inputDir(n int) string { return fmt.Sprintf(".ard-input/%d", n) }
 
 // run claims one granted candidate and watches the job to the end, following
 // the contract in package reaper. It runs in an Inflight goroutine and holds
@@ -43,10 +37,10 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		log.Error("triage.claim_failed", "step", "list_comments", "error", err)
 		return
 	}
-	inputs := []executor.File{{Path: inputDir(n) + "/issue.md", Data: Snapshot(c.issue)}}
-	untrusted := []string{inputDir(n) + "/issue.md"}
-	inputs = append(inputs, executor.File{Path: inputDir(n) + "/comments.md", Data: Comments(comments)})
-	untrusted = append(untrusted, inputDir(n)+"/comments.md")
+	inputs := []executor.File{{Path: agentjob.InputDir(n) + "/issue.md", Data: agentjob.Snapshot(c.issue)}}
+	untrusted := []string{agentjob.InputDir(n) + "/issue.md"}
+	inputs = append(inputs, executor.File{Path: agentjob.InputDir(n) + "/comments.md", Data: agentjob.Comments(comments)})
+	untrusted = append(untrusted, agentjob.InputDir(n)+"/comments.md")
 
 	// 2. The claim record.
 	data, _ := json.Marshal(map[string]string{"admission_reason": string(c.reason), "labeled_by": labeledBy(c)})
@@ -133,7 +127,7 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		}
 		return
 	}
-	l.saveHandle(ctx, log, job.ID, h)
+	agentjob.SaveHandle(ctx, d.Store, log, job.ID, h)
 
 	cmd, err := l.command(cfg, role, n, untrusted, h)
 	if err != nil {
@@ -147,20 +141,11 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		finish(h, executor.Status{}, agent.Result{}, transient(closeout.CauseNoProcess, "could not start the agent", false))
 		return
 	}
-	l.saveHandle(ctx, log, job.ID, h)
+	agentjob.SaveHandle(ctx, d.Store, log, job.ID, h)
 
 	// 6. Wait. Shutdown leaves the agent running: after a restart pool-adopt
 	// and the Reaper own the job.
-	wctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() {
-		select {
-		case <-env.Stopping:
-			cancel()
-		case <-wctx.Done():
-		}
-	}()
-	st, err := executor.WaitFor(wctx, d.Executor, h, d.Poll)
+	st, err := agentjob.Wait(ctx, d.Executor, h, d.Poll, env.Stopping)
 	if err != nil {
 		log.Warn("triage.watch_ended", "error", err)
 		return
@@ -180,16 +165,6 @@ func labeledBy(c candidate) string {
 		return c.rec.LabeledBy
 	}
 	return ""
-}
-
-func (l *Loop) saveHandle(ctx context.Context, log *slog.Logger, id string, h executor.Handle) {
-	b, err := json.Marshal(h)
-	if err == nil {
-		err = l.d.Store.SetHandle(ctx, id, b)
-	}
-	if err != nil {
-		log.Error("triage.handle_not_saved", "error", err)
-	}
 }
 
 // command builds the agent invocation for a prepared job. The prompt and the
@@ -215,5 +190,5 @@ func (l *Loop) command(cfg *config.Resolved, role config.Role, n int, untrusted 
 	if err != nil {
 		return executor.Command{}, err
 	}
-	return Command(ac, l.d.Model)
+	return agentjob.Command(ac, l.d.Model)
 }

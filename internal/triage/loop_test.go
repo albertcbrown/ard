@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
@@ -69,7 +70,7 @@ func TestClaimLead(t *testing.T) {
 		if strings.HasPrefix(f.Path, ".ard/") {
 			t.Errorf("untrusted input under .ard/: %s", f.Path)
 		}
-		if !strings.HasPrefix(string(f.Data), untrustedHeader) {
+		if !strings.HasPrefix(string(f.Data), agentjob.UntrustedHeader) {
 			t.Errorf("%s lacks the untrusted header", f.Path)
 		}
 	}
@@ -82,7 +83,7 @@ func TestClaimLead(t *testing.T) {
 		t.Errorf("the agent is not told about the untrusted files:\n%s", args)
 	}
 	a, err := h.store.Admission(context.Background(), n)
-	if err != nil || a.LabeledBy != "maint" || a.BodyHash != BodyHash(h.issue(n)) || a.JobID != h.fin.got()[0].JobID || a.LabeledAt.IsZero() {
+	if err != nil || a.LabeledBy != "maint" || a.BodyHash != agentjob.BodyHash(h.issue(n)) || a.JobID != h.fin.got()[0].JobID || a.LabeledAt.IsZero() {
 		t.Errorf("admission = %+v, %v", a, err)
 	}
 	if h.pool.Pool != nil {

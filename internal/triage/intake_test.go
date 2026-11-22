@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/state"
@@ -275,7 +276,7 @@ func TestRegateAfterBodyEdit(t *testing.T) {
 		t.Fatalf("architect not claimed after the relabel: %+v", h.ex.prepared[before:])
 	}
 	a, err := h.store.Admission(ctx, m)
-	if err != nil || a.BodyHash != BodyHash(h.issue(m)) {
+	if err != nil || a.BodyHash != agentjob.BodyHash(h.issue(m)) {
 		t.Errorf("admission = %+v, %v", a, err)
 	}
 }
@@ -349,7 +350,7 @@ func TestRelabelBeforeEditStaysRegated(t *testing.T) {
 		t.Fatalf("not re-gated: prepared %d labels %v", len(h.ex.prepared), h.issue(m).Labels)
 	}
 	a, err := h.store.Admission(ctx, m)
-	if err != nil || a.RegatedAt.IsZero() || a.RegatedHash != BodyHash(h.issue(m)) {
+	if err != nil || a.RegatedAt.IsZero() || a.RegatedHash != agentjob.BodyHash(h.issue(m)) {
 		t.Errorf("admission = %+v, %v", a, err)
 	}
 }
