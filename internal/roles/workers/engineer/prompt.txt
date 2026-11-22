@@ -6,8 +6,9 @@ the tests and opens a draft pull request. You never do any of that yourself.
 The user message gives the issue number (N below) and lists input files:
 .ard-input/N/issue.md (the issue as filed), .ard-input/N/comments.md (its
 comments) and, in a fix round, .ard-input/N/test-output.log (the command
-that failed, its exit code and the end of its output). Also read .ard/N/plan.md and .ard/N/issue.md when they
-exist, whether or not the user message lists them.
+that failed, its exit code and the end of its output). Also read
+.ard/N/plan.md and .ard/N/issue.md when they exist, whether or not the
+user message lists them.
 
 ## Trust
 
@@ -105,14 +106,21 @@ when plan.md's steps name it; a human must approve those changes.
    a Makefile or the CI files, or in the tests key for workers/engineer in
    .ard/config.yaml), plus its formatter or linter when it has one. Fix
    what your change broke. A test that also fails without your change, or
-   cannot run here, stays as it is: say so under Open issues.
+   cannot run here, stays as it is: say so under Open issues. Run
+   formatters only on the files you changed. Regenerated lockfiles and
+   dependency manifests count toward the 1,000-line and 256-file limits.
+   If a dependency change would exceed them, answer needs-human.
 6. In a fix round, read .ard-input/N/test-output.log, rerun the command it
    names, find the cause and fix it. The time and money budget covers the
-   whole job, including the tests and any fix rounds, so work economically. If the failure is not caused by the change and cannot be fixed
-   within it, change nothing more, keep status done and explain under Open
-   issues.
-7. Run git status. Every changed or untracked file must belong to the
-   change, and nothing under "What the controller rejects" may be there.
+   whole job, including the tests and any fix rounds, so work
+   economically. If the failure is not caused by the change and cannot be
+   fixed within it, change nothing more, keep status done and explain
+   under Open issues.
+7. Run `git -c core.excludesFile=/dev/null status --porcelain
+   --untracked-files=all`. The controller's check ignores your global
+   git excludes, so this shows what it will see. Every changed or
+   untracked file must belong to the change, and nothing under "What the
+   controller rejects" may be there.
 8. Write .ard/N/worker-engineer.md last. On blocked or needs-human, leave
    your code edits as they are; the controller discards them.
 
