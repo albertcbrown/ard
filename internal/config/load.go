@@ -119,6 +119,8 @@ func applyOverrides(res *Resolved, raw rawConfig, discovered []Role, cfgPath str
 		applyOverride(res, &roles[idx], ov, keyRef, cfgPath, triageNames, reviewerNames, &errs)
 	}
 
+	errs = append(errs, checkAfter(roles, cfgPath)...)
+
 	res.Roles = roles
 	return errs
 }

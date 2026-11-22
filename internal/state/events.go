@@ -22,6 +22,8 @@ const (
 	// EventHostUntrusted: a host-mode job of a role that reads untrusted
 	// input started. Stage, role, job and issue are in their columns.
 	EventHostUntrusted = "host_untrusted"
+	// EventGate: the triage fan-in gate acted; data has verdict, reason and worker.
+	EventGate = "gate"
 )
 
 // Event is one row of the append-only event log. Data holds structured fields
