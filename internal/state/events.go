@@ -16,6 +16,8 @@ const (
 	EventCloseout = "closeout"
 	EventFailure  = "failure"
 	EventRetry    = "retry"
+	// EventUsageLimit: a job stopped at a usage limit. It is not a failure.
+	EventUsageLimit = "usage_limit"
 	// EventKill: the Reaper is about to kill a running job; data has the reason.
 	EventKill      = "kill"
 	EventTickError = "tick_error"

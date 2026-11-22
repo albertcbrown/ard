@@ -138,6 +138,7 @@ type harness struct {
 	results  map[string]agent.Result // Parse output by job id
 	busy     map[string]bool         // jobs whose ResumeJob reports ErrBusy
 	classify func(agent.Result) (closeout.Cause, bool)
+	limits   LimitRecorder // the Finisher's, kept across rebuild
 }
 
 func newHarness(t *testing.T) *harness {
@@ -188,7 +189,7 @@ func (b busyCloser) ResumeJob(ctx context.Context, id string) (closeout.Outcome,
 // restart. Jobs created earlier belong to the previous process.
 func (h *harness) rebuild() {
 	cl := busyCloser{Closer: h.closer, busy: h.busy}
-	h.fin = &Finisher{Closer: cl, Cleaner: h.ex, Store: h.store, Start: h.clk.t, Log: quiet,
+	h.fin = &Finisher{Closer: cl, Cleaner: h.ex, Store: h.store, Start: h.clk.t, Log: quiet, Limits: h.limits,
 		Classify: func(res agent.Result) (closeout.Cause, bool) {
 			if h.classify == nil {
 				return closeout.Cause{}, false

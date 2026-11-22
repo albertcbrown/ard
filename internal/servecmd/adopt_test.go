@@ -67,14 +67,14 @@ func TestAdoptPoolHoldsRunningJobs(t *testing.T) {
 		{ID: "a", Stage: "worker", Role: "w", Issue: 1, CreatedAt: at},
 		{ID: "b", Stage: "worker", Role: "w", Issue: 2, CreatedAt: at},
 	}}
-	p, err := adoptPool(context.Background(), l, 2, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p, err := adoptPool(context.Background(), l, 2, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st := p.Stats(); st.Held != 2 || st.Free != 0 {
 		t.Errorf("stats = %+v", st)
 	}
-	if _, err := adoptPool(context.Background(), lister{err: errors.New("db")}, 2, nil); err == nil {
+	if _, err := adoptPool(context.Background(), lister{err: errors.New("db")}, 2, nil, nil); err == nil {
 		t.Error("want lister error")
 	}
 }
@@ -120,9 +120,21 @@ func TestStaleScannerJobsAreFailedNotHeld(t *testing.T) {
 		t.Errorf("held = %+v, %v: a scanner job must never be held", held, err)
 	}
 	// With the stale job out of the way the scanner can be offered a slot.
-	p, _ := adoptPool(context.Background(), r, 2, log)
+	p, _ := adoptPool(context.Background(), r, 2, log, nil)
 	d := p.Offer("scanners", time.Minute, []pool.Candidate{{Class: pool.ClassScanner, Role: "cve", Since: at}})
 	if d[0].Verdict != pool.Granted {
 		t.Errorf("verdict = %v", d[0].Verdict)
+	}
+}
+
+func TestAdoptPoolPassesLimited(t *testing.T) {
+	until := time.Now().Add(time.Hour)
+	p, err := adoptPool(context.Background(), lister{}, 2, slog.New(slog.NewTextHandler(io.Discard, nil)), func(pool.Candidate) time.Time { return until })
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := pool.Candidate{Class: pool.ClassWorker, Role: "eng", Number: 1, Since: time.Now()}
+	if ds := p.Offer("w", time.Minute, []pool.Candidate{c}); ds[0].Verdict != pool.DeniedLimited {
+		t.Errorf("verdict = %v, want limited", ds[0].Verdict)
 	}
 }

@@ -141,6 +141,8 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	// 4. The plan.
 	var plan Plan
 	switch {
+	case failed != "" && j.Cause.Kind == CauseUsageLimit:
+		plan = limitedPlan(j, cleanReason(ctx, red, failed))
 	case failed != "" && j.Cause.Retry:
 		plan = retryPlan(j, cleanReason(ctx, red, failed))
 	case failed != "":
@@ -167,7 +169,7 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	if logRef != nil {
 		plan.LogPath = logRef.Path
 	}
-	if plan.Outcome == OutcomeFailed || plan.Outcome == OutcomeRetry {
+	if plan.Outcome == OutcomeFailed || plan.Outcome == OutcomeRetry || plan.Outcome == OutcomeLimited {
 		// The evidence stays for 24 h; the comment says until when and shows
 		// the log tail (already redacted, re-scanned and capped).
 		plan.KeepUntil = d.now().Add(failedKeep)

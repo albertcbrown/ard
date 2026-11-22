@@ -15,6 +15,8 @@ import (
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/limits"
+	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/reaper"
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state"
@@ -81,13 +83,89 @@ func (w *wiring) reaperParts() (*reaper.Finisher, *reaper.Reaper, error) {
 	if started.IsZero() {
 		started = time.Now()
 	}
-	w.fin = &reaper.Finisher{Closer: cl, Cleaner: ex, Store: w.Store, Start: started, Log: w.Log}
+	// With no credential Auth is "": only the rate_limit_event and limit-message
+	// signals count as a usage limit.
+	w.fin = &reaper.Finisher{Closer: cl, Cleaner: ex, Store: w.Store, Start: started, Log: w.Log,
+		Classify: reaper.UsageLimitClassifier(w.Model.Auth), Limits: lazyLimits{w}}
 	w.rp = reaper.New(reaper.Deps{
 		Store: w.Store, Executor: ex, Finisher: w.fin, Closer: cl,
 		Pool:   func() reaper.Lookup { return w.Pool() },
 		Reader: w.Reader, Effects: w.Effects, Parse: w.parseFunc(), Log: w.Log,
 	})
 	return w.fin, w.rp, nil
+}
+
+// lazyLimits is the Finisher's LimitRecorder. The book opens on first use (the
+// closeout-resume hook opens it at startup and fails serve on a read error), so
+// building the Finisher needs no state store.
+type lazyLimits struct{ w *wiring }
+
+func (l lazyLimits) Exhaust(ctx context.Context, family string, resetsAt time.Time) (time.Time, error) {
+	b, err := l.w.limitsBook(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return b.Exhaust(ctx, family, resetsAt)
+}
+
+func (l lazyLimits) Succeeded(ctx context.Context, family string) error {
+	b, err := l.w.limitsBook(ctx)
+	if err != nil {
+		return err
+	}
+	return b.Succeeded(ctx, family)
+}
+
+// limitsBook returns the one limits book of this process, opened on first use.
+// An open error is a real store read failure (a corrupt value only logs), so
+// it is returned and not cached.
+func (w *wiring) limitsBook(ctx context.Context) (*limits.Book, error) {
+	w.initMu.Lock()
+	defer w.initMu.Unlock()
+	if w.lim != nil {
+		return w.lim, nil
+	}
+	b, err := limits.Open(ctx, w.Store, time.Now, w.Log)
+	if err != nil {
+		return nil, fmt.Errorf("serve: %w", err)
+	}
+	w.lim = b
+	return b, nil
+}
+
+// limitedFor is the pool's Options.Limited: when a candidate may next start
+// given the usage limits recorded so far. Deterministic scanners use no model
+// and are never limited. A role missing from the config is never offered, so
+// it is not limited either.
+func (w *wiring) limitedFor(c pool.Candidate) time.Time {
+	var kind config.Kind
+	switch c.Class {
+	case pool.ClassScanner:
+		kind = config.KindScanner
+	case pool.ClassTriage:
+		kind = config.KindTriage
+	case pool.ClassWorker:
+		kind = config.KindWorker
+	case pool.ClassReview:
+		kind = config.KindReviewer
+	default:
+		return time.Time{}
+	}
+	cfg := w.cfg.Load()
+	if cfg == nil {
+		return time.Time{}
+	}
+	role, ok := cfg.Role(kind, c.Role)
+	if !ok || (kind == config.KindScanner && role.ScanPath != "") {
+		return time.Time{}
+	}
+	w.initMu.Lock()
+	book := w.lim
+	w.initMu.Unlock()
+	if book == nil {
+		return time.Time{}
+	}
+	return book.Until(limits.FamilyOf(role.Model))
 }
 
 // finisher returns the shared Finisher the loops call when a job's process
@@ -110,6 +188,10 @@ func reaperLoop(w *wiring) controller.Loop {
 // resumeCloseouts is the closeout-resume startup hook. It runs before the pool
 // is adopted, so it never touches the pool.
 func (w *wiring) resumeCloseouts(ctx context.Context) error {
+	// A store that cannot be read means state is broken: fail startup.
+	if _, err := w.limitsBook(ctx); err != nil {
+		return fmt.Errorf("closeout-resume: %w", err)
+	}
 	_, r, err := w.reaperParts()
 	if err != nil {
 		// Without an executor nothing runs jobs either; do not keep serve down.

@@ -44,7 +44,11 @@
 // request label, and the next claim is linked to it through retry_of. An
 // automatic retry that fails again is marked failed.
 //
-// A usage-limit stop must not use up that retry. No limit detection exists
-// yet; Finisher.Classify is the narrow hook #81 and #63 fill to name such a
-// stop as its own cause.
+// A usage-limit stop is not a failure. UsageLimitClassifier names it as its
+// own cause (usage_limit) and the close-out outcome is usage-limit: the job
+// gets no ard:executor:failed and keeps its request label, so the issue is
+// claimed again once the pool's pause for the limit ends (Finisher.Limits
+// records the pause before anything is posted). A limit stop neither uses up
+// nor grants the automatic retry; the re-run is a new job linked to the stopped
+// one through after_limit, which carries retry_of over.
 package reaper

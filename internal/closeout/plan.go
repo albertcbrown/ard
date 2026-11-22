@@ -19,6 +19,11 @@ const (
 	// off to one automatic retry: it gets no ard:executor:failed and keeps its
 	// request label, so the next claim runs it again as a new job.
 	OutcomeRetry Outcome = "retry"
+	// OutcomeLimited is a stop at a subscription usage limit. Its labels are
+	// those of OutcomeRetry: no ard:executor:failed, the request label stays,
+	// and the issue is claimed again once the pool's pause for the limit ends.
+	// It neither uses up nor grants the automatic retry.
+	OutcomeLimited Outcome = "usage-limit"
 )
 
 // Label is a label name with the issue or PR number it goes on.
@@ -135,6 +140,16 @@ func retryPlan(j Job, reason string) Plan {
 	st := labels.Stage(j.Stage)
 	return Plan{Outcome: OutcomeRetry, Reason: reason,
 		Remove: []Label{{n, labels.Running(st, j.Role)}}}
+}
+
+// limitedPlan is the plan for a job that stopped at a usage limit. It has
+// retryPlan's labels: it removes only :running, leaves the request label alone
+// and adds no terminal label. What differs is the state change (FailLimited)
+// and that it does not touch the automatic retry.
+func limitedPlan(j Job, reason string) Plan {
+	p := retryPlan(j, reason)
+	p.Outcome = OutcomeLimited
+	return p
 }
 
 // needsHumanPlan is the plan for a job held back by the secret scan.

@@ -20,7 +20,8 @@ import (
 )
 
 // recordVersion stays 1 across the Reaper's additions (Job.Cause, Plan.Tail,
-// Plan.TailWithheld, Plan.KeepUntil): older records decode them as zero, and
+// Plan.TailWithheld, Plan.KeepUntil) and the usage-limit ones (Cause.Family,
+// Cause.ResetsAt, OutcomeLimited): older records decode them as zero, and
 // zero means the earlier behaviour.
 const recordVersion = 1
 
@@ -60,6 +61,10 @@ const (
 	CauseNoProcess CauseKind = "no_process"         // never started, or its process vanished in this run
 	CauseRateLimit CauseKind = "rate_limit"         // the agent reported a transient API error
 	CauseCloneFail CauseKind = "clone_failed"       // a loop's Prepare failed at git or clone
+	// CauseUsageLimit: the run stopped at a subscription usage limit. It is
+	// not a failure and never hands off to the automatic retry (Retry is
+	// false); the issue is re-claimed after the reset.
+	CauseUsageLimit CauseKind = "usage_limit"
 )
 
 // Cause is why a job ended. Detail is fixed, non-secret text.
@@ -68,6 +73,12 @@ type Cause struct {
 	Detail    string
 	Transient bool // a named transient cause
 	Retry     bool // hand off to one automatic retry: Transient and the job is not itself a retry
+	// Family and ResetsAt are for CauseUsageLimit only. Family is the model
+	// family the limit names ("" is the whole account). ResetsAt is when the
+	// pause ends: the Finisher fills it from the limits book, so it is never
+	// zero by the time close-out sees it.
+	Family   string
+	ResetsAt time.Time
 }
 
 // ErrBusy means another close-out of the same job is in flight. Run and
@@ -123,6 +134,7 @@ type Redactor interface {
 // Store is the part of state.Store close-out uses.
 type Store interface {
 	FailRetry(ctx context.Context, id, reason string, keepUntil time.Time) error
+	FailLimited(ctx context.Context, id, reason string, keepUntil time.Time) error
 	Job(ctx context.Context, id string) (state.Job, error)
 	SetCloseout(ctx context.Context, id, phase string, plan json.RawMessage) error
 	OpenCloseouts(ctx context.Context) ([]state.Job, error)
@@ -436,10 +448,10 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 		return err
 	}
 	c.d.log().Warn("closeout: commit failed", "job", rec.Job.ID, "error", err)
-	if p.Outcome == OutcomeRetry {
-		// The log is evidence, not the result: a retry must not turn into a
-		// failure because it could not be committed (a worker that stopped
-		// before its first push has no branch to commit to).
+	if p.Outcome == OutcomeRetry || p.Outcome == OutcomeLimited {
+		// The log is evidence, not the result: a retry or a limit stop must
+		// not turn into a failure because it could not be committed (a worker
+		// that stopped before its first push has no branch to commit to).
 		p.Files, p.LogPath = nil, ""
 		p.Reason += "; log not committed: " + err.Error()
 		return nil
@@ -531,6 +543,8 @@ func (c *Closer) finish(ctx context.Context, rec Record) error {
 		err = c.d.Store.Fail(ctx, rec.Job.ID, clip(p.Reason, maxReasonRunes), keep)
 	case OutcomeRetry:
 		err = c.d.Store.FailRetry(ctx, rec.Job.ID, clip(p.Reason, maxReasonRunes), keep)
+	case OutcomeLimited:
+		err = c.d.Store.FailLimited(ctx, rec.Job.ID, clip(p.Reason, maxReasonRunes), keep)
 	default:
 		err = c.d.Store.Complete(ctx, rec.Job.ID, cost)
 	}

@@ -527,3 +527,53 @@ func TestSlotAdopted(t *testing.T) {
 		t.Errorf("a granted slot is never adopted: %+v", ds[0])
 	}
 }
+
+func TestLimited(t *testing.T) {
+	ck := &clock{t: t0.Add(1000 * time.Hour)}
+	until := ck.t.Add(time.Hour)
+	limitedRoles := map[string]time.Time{"sec": until}
+	p := New(Options{Max: 1, Now: ck.now, Limited: func(c Candidate) time.Time { return limitedRoles[c.Role] }})
+
+	if DeniedLimited.String() != "limited" {
+		t.Errorf("String = %q", DeniedLimited.String())
+	}
+	rev := cand(ClassReview, "sec", 9, 0)
+	wk := cand(ClassWorker, "eng", 5, 0)
+
+	// A limited reviewer reserves no demand: the worker takes the one slot.
+	ds := p.Offer("review", time.Minute, []Candidate{rev})
+	if ds[0].Verdict != DeniedLimited || ds[0].Slot != nil || !strings.Contains(ds[0].Reason, "usage limit until "+until.Format("15:04")+" UTC") {
+		t.Fatalf("review = %+v", ds[0])
+	}
+	if ds := p.Offer("worker", time.Minute, []Candidate{wk}); ds[0].Verdict != Granted {
+		t.Fatalf("worker = %+v: a limited reviewer held the slot back", ds[0])
+	}
+	if s := p.Stats(); s.Held != 1 {
+		t.Errorf("stats = %+v", s)
+	}
+	if s, ok := p.Lookup(wk.Key()); ok {
+		s.Release()
+	}
+
+	// One second before the reset it is still limited; at the reset it is granted.
+	ck.t = until.Add(-time.Second)
+	if ds := p.Offer("review", time.Minute, []Candidate{rev}); ds[0].Verdict != DeniedLimited {
+		t.Errorf("T-1s: %v", ds[0].Verdict)
+	}
+	ck.t = until
+	if ds := p.Offer("review", time.Minute, []Candidate{rev}); ds[0].Verdict != Granted {
+		t.Errorf("at T: %v", ds[0].Verdict)
+	}
+	// A held key is still a duplicate, not limited.
+	limitedRoles["sec"] = until.Add(time.Hour)
+	if ds := p.Offer("review", time.Minute, []Candidate{rev}); ds[0].Verdict != DeniedDuplicate {
+		t.Errorf("held key: %v, want duplicate", ds[0].Verdict)
+	}
+}
+
+func TestLimitedNilBehavesAsBefore(t *testing.T) {
+	p, _ := newPool(1)
+	if ds := p.Offer("w", time.Minute, []Candidate{cand(ClassWorker, "eng", 5, 0)}); ds[0].Verdict != Granted {
+		t.Errorf("verdict = %v", ds[0].Verdict)
+	}
+}
