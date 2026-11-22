@@ -53,6 +53,7 @@ internal/controller/ scheduler, kill switch (pause), leader lock, status issue
 internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, controller
 internal/committer/ the only commit/push path for .ard/<issue#>/ (main lane, per-branch lanes)
 internal/closeout/  job close-out: role file -> labels, comment, commits (resumable)
+internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
 internal/repopath/  owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only

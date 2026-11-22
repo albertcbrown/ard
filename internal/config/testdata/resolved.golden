@@ -13,6 +13,8 @@ intervals:
   workers: 5m
   reviewers: 5m
   merger: 5m
+intake:
+  mode: label
 protected_paths:
   - infra/
 stale:

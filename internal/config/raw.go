@@ -24,6 +24,7 @@ type rawConfig struct {
 	globalMaxOpen   *int
 	paused          *bool
 	intervals       rawIntervals
+	intake          rawIntake
 	protectedPaths  []string // merge.protected_paths
 	haveMerge       bool
 	stale           rawStale
@@ -36,6 +37,12 @@ type rawConfig struct {
 // apart from an explicit value.
 type rawIntervals struct {
 	scanners, triage, workers, reviewers, merger *Duration
+}
+
+// rawIntake keeps both keys optional so defaults can tell "unset" apart
+// from an explicit value (an explicit empty label is an error).
+type rawIntake struct {
+	mode, label *string
 }
 
 type rawStale struct {
@@ -110,6 +117,8 @@ func parseConfigDoc(doc *yaml.Node, cfgPath string) (rawConfig, Errors) {
 			errs = append(errs, decodeValue(value, cfgPath, name, &raw.paused)...)
 		case "intervals":
 			errs = append(errs, raw.intervals.parse(value, cfgPath, "intervals")...)
+		case "intake":
+			errs = append(errs, raw.parseIntake(value, cfgPath)...)
 		case "merge":
 			errs = append(errs, raw.parseMerge(value, cfgPath)...)
 		case "stale":
@@ -191,6 +200,39 @@ func (raw *rawConfig) parseMerge(n *yaml.Node, file string) Errors {
 			raw.protectedPaths = paths
 		default:
 			errs = append(errs, &Error{File: file, Key: "merge." + key.Value, Msg: "unknown key (want protected_paths)"})
+		}
+	}
+	return errs
+}
+
+// decodeString decodes a scalar into *dst, leaving it nil on a decode error
+// so the failure is reported once, not again as a bad value.
+func decodeString(value *yaml.Node, file, key string, dst **string) Errors {
+	var s *string
+	errs := decodeValue(value, file, key, &s)
+	if len(errs) == 0 {
+		*dst = s
+	}
+	return errs
+}
+
+func (raw *rawConfig) parseIntake(n *yaml.Node, file string) Errors {
+	var errs Errors
+	if n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return Errors{{File: file, Key: "intake", Msg: "must be a mapping with mode (all or label) and, in label mode, label"}}
+	}
+	for i := 0; i < len(n.Content); i += 2 {
+		key, value := n.Content[i], n.Content[i+1]
+		switch key.Value {
+		case "mode":
+			errs = append(errs, decodeString(value, file, "intake.mode", &raw.intake.mode)...)
+		case "label":
+			errs = append(errs, decodeString(value, file, "intake.label", &raw.intake.label)...)
+		default:
+			errs = append(errs, &Error{File: file, Key: "intake." + key.Value, Msg: "unknown key (want mode or label)"})
 		}
 	}
 	return errs

@@ -30,6 +30,7 @@ type resolvedYAML struct {
 	GlobalMaxOpen   int                    `yaml:"global_max_open"`
 	Paused          bool                   `yaml:"paused"`
 	Intervals       intervalsYAML          `yaml:"intervals"`
+	Intake          intakeYAML             `yaml:"intake"`
 	ProtectedPaths  []string               `yaml:"protected_paths,omitempty"`
 	Stale           staleYAML              `yaml:"stale"`
 	Sidecars        map[string]sidecarYAML `yaml:"sidecars,omitempty"`
@@ -42,6 +43,11 @@ type intervalsYAML struct {
 	Workers   Duration `yaml:"workers"`
 	Reviewers Duration `yaml:"reviewers"`
 	Merger    Duration `yaml:"merger"`
+}
+
+type intakeYAML struct {
+	Mode  IntakeMode `yaml:"mode"`
+	Label string     `yaml:"label,omitempty"`
 }
 
 type staleYAML struct {
@@ -110,6 +116,7 @@ func (r *Resolved) render() resolvedYAML {
 			Reviewers: r.Intervals.Reviewers,
 			Merger:    r.Intervals.Merger,
 		},
+		Intake:         intakeYAML{Mode: r.Intake.Mode, Label: r.Intake.Label},
 		ProtectedPaths: r.ProtectedPaths,
 		Stale: staleYAML{
 			InactiveFor: r.Stale.InactiveFor,
