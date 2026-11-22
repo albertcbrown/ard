@@ -1,0 +1,19 @@
+{{- /* HOME of the pod: ~/.ard (state, dry-run ledger, config snapshots, locks, pause file), the repo clone and the
+Go caches. Kept when the Application is deleted, so the soak ledger is never lost by a sync. */ -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ard-serve.name" . }}-home
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.storage.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}

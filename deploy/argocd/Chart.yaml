@@ -1,0 +1,7 @@
+apiVersion: v2
+name: ard-root
+description: >-
+  App of apps for ard: one Argo CD Application per target repository, each running deploy/charts/ard-serve
+  at the pinned commit. The deployment repository supplies the image pin and the site values.
+type: application
+version: 0.1.0
