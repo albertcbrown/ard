@@ -1,6 +1,7 @@
 package reaper
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -139,5 +140,22 @@ func TestCloseoutJob(t *testing.T) {
 			j.Cause.Kind != closeout.CauseQuiet {
 			t.Errorf("%v: job = %+v", tc.st.State, j)
 		}
+	}
+}
+
+// The controller persists the handle as JSON; Scrubbed must survive it.
+func TestCloseoutJobScrubbedSurvivesHandleJSON(t *testing.T) {
+	in := executor.Handle{Worktree: "/w", Scrubbed: []string{".ard/7/triage-lead.md"}}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h executor.Handle
+	if err := json.Unmarshal(b, &h); err != nil {
+		t.Fatal(err)
+	}
+	j := CloseoutJob(state.Job{ID: "J", Issue: 7, Stage: "triage", Role: "lead"}, h, executor.Status{State: executor.Exited}, closeout.Cause{}, agent.Result{})
+	if len(j.Scrubbed) != 1 || j.Scrubbed[0] != ".ard/7/triage-lead.md" {
+		t.Errorf("Scrubbed = %v", j.Scrubbed)
 	}
 }
