@@ -77,9 +77,9 @@ type LimitSignal string
 
 // The signals, strongest first.
 const (
-	SignalRateLimitEvent LimitSignal = "rate_limit_event" // rate_limit_event with status "rejected"
+	SignalRateLimitEvent LimitSignal = "rate_limit_event" // rejected rate_limit_event that carries a reset, a known scope or credits_required
 	SignalLimitMessage   LimitSignal = "limit_message"    // CLI error text "You've hit your ... limit" on a CLI-synthesised error
-	SignalRateLimitError LimitSignal = "rate_limit_error" // api_retry or assistant error rate_limit/billing_error, or a final 429
+	SignalRateLimitError LimitSignal = "rate_limit_error" // api_retry or assistant error rate_limit/billing_error, a bare rejected event, or a final 429
 )
 
 // LimitHit says the run met a usage or rate limit. Consumers act on it only

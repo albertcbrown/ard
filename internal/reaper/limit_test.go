@@ -79,6 +79,19 @@ func TestUsageLimitClassifier(t *testing.T) {
 			}
 		})
 	}
+	t.Run("an api key run killed after a bare rejected event is no limit stop", func(t *testing.T) {
+		in := `{"type":"system","subtype":"init","session_id":"s"}` + "\n" + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}` + "\n"
+		res, err := claude.New(claude.Options{}).Parse(strings.NewReader(in), -1)
+		if !errors.Is(err, agent.ErrNoResult) || res.LimitHit == nil {
+			t.Fatalf("parse = %+v, %v", res, err)
+		}
+		if _, ok := UsageLimitClassifier(agent.AuthAPIKey)(res); ok {
+			t.Error("an API-key throttle paused the account")
+		}
+		if _, ok := UsageLimitClassifier(agent.AuthOAuthToken)(res); !ok {
+			t.Error("oauth: not classified")
+		}
+	})
 	t.Run("an api key 429 keeps the transient rate_limit cause", func(t *testing.T) {
 		res := agent.Result{APIErrorStatus: 429, LimitHit: hit(agent.SignalRateLimitError, agent.ScopeUnknown, "")}
 		if _, ok := UsageLimitClassifier(agent.AuthAPIKey)(res); ok {

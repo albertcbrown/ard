@@ -173,7 +173,6 @@ func (a *limitAcc) rateLimitEvent(e rateLimitEvent) {
 	if i.Status != "rejected" && i.ErrorCode != "credits_required" {
 		return // allowed and allowed_warning belong to #63
 	}
-	a.note(agent.SignalRateLimitEvent)
 	if i.ErrorCode == "credits_required" {
 		a.positive = true
 	}
@@ -195,6 +194,16 @@ func (a *limitAcc) rateLimitEvent(e rateLimitEvent) {
 	}
 	if a.typed.scope != "" {
 		a.positive = true
+	}
+	// A bare rejected event (no reset, no scope) is what a plain 429 throttle
+	// emits too, so it is only as strong as an api_retry rate_limit; the
+	// strongest signal needs evidence only a usage limit carries. This keeps an
+	// API-key throttle, killed before the CLI's closing text, from looking like
+	// a subscription limit.
+	if i.ErrorCode == "credits_required" || a.resetsAt.IsZero() == false || a.typed.scope != "" {
+		a.note(agent.SignalRateLimitEvent)
+	} else {
+		a.note(agent.SignalRateLimitError)
 	}
 }
 

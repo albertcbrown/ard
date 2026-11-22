@@ -139,8 +139,11 @@ func TestParseReal(t *testing.T) {
 					t.Fatalf("result = %+v", r)
 				}
 				got := string(r.LimitHit.Scope)
-				if r.LimitHit.Scope == agent.ScopeModel {
+				switch r.LimitHit.Scope {
+				case agent.ScopeModel:
 					got = r.LimitHit.Family
+				case agent.ScopeUnknown:
+					got = "unknown" // named so by fixtureName in the capture harness
 				}
 				if got != scope {
 					t.Errorf("scope = %q, want %q", got, scope)

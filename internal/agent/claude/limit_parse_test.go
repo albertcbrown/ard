@@ -87,7 +87,8 @@ func TestParseLimitTextOnlyOnErrorPaths(t *testing.T) {
 		{"is_error result with 429", init + result(`"is_error":true,"api_error_status":429`), agent.SignalLimitMessage},
 		{"throttle text with a reset time is still a limit", init + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795000000}}` + "\n" + `{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"not your usage limit"}]}}` + "\n", agent.SignalRateLimitEvent},
 		{"throttle text alone is not", init + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}` + "\n" + `{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"Server is temporarily limiting requests (not your usage limit)"}]}}` + "\n", ""},
-		{"unknown rateLimitType keeps text scope", init + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"overage"}}` + "\n" + assistant(`,"error":"rate_limit"`), agent.SignalRateLimitEvent},
+		{"unknown rateLimitType keeps text scope", init + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"overage"}}` + "\n" + assistant(`,"error":"rate_limit"`), agent.SignalLimitMessage},
+		{"a bare rejected event is only a rate_limit_error", init + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}` + "\n", agent.SignalRateLimitError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
