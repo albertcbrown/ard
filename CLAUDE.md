@@ -45,7 +45,7 @@ internal/modelauth/ picks the one model credential (OAuth token or API key) from
 internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
 internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
 internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues
-internal/agentjob/  helpers the agent loops share: untrusted-input snapshot, command mapping, handle save, shutdown-aware wait, post-once
+internal/agentjob/  helpers the agent loops share: untrusted-input snapshot, admission re-check, agent command and executor job builders, handle save, shutdown-aware wait, post-once
 internal/worker/    the worker loop: claim, agent/test/fix steps, diff guard, code-lane push, draft PR, FinishWith
 internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
@@ -59,6 +59,7 @@ internal/committer/ the only commit/push path: .ard/<issue#>/ (main lane, per-br
 internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); per-role write allowlist (WritableFor); every job ends through its Closer
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
+internal/reviewer/  the reviewer loop: claims `ard:review:<role>` on ard's own PRs, pins the head, runs the agent on the diff, closes out through the shared Finisher (one PR review)
 internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
