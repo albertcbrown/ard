@@ -20,6 +20,8 @@ const engReviewPromptPath = "reviewers/eng-review/prompt.txt"
 
 func reviewJob() closeout.Job {
 	return closeout.Job{ID: "j", Issue: 7, Stage: closeout.StageReview, Role: "eng-review", Attempt: 1, PR: 12, BaseSHA: "abc",
+		// The live loop always passes a non-nil context; nil means a Reaper
+		// close-out after a restart, which is treated as stale.
 		Review: &closeout.ReviewContext{}}
 }
 
@@ -191,31 +193,32 @@ func TestEngReviewContractTraps(t *testing.T) {
 	tests := []struct {
 		name, file string
 		wantOK     bool
+		byCheck    bool // parses; closeout.check rejects it (see closeout/review_test.go)
 	}{
-		{"valid", hdr(""), true},
-		{"empty findings", hdr("findings: []\n"), true},
-		{"block message", one("    severity: low\n    message: |\n      Colon: here, `ticks`, \"quotes\" and # hash.\n"), true},
-		{"needs-human", "---\nrole: eng-review\nstatus: needs-human\nattempt: 1\n---\nNothing to review.\n", true},
-		{"role review-eng-review", strings.Replace(hdr(""), "role: eng-review", "role: review-eng-review", 1), false},
-		{"role reviewers/eng-review", strings.Replace(hdr(""), "role: eng-review", "role: reviewers/eng-review", 1), false},
-		{"verdict lgtm", strings.Replace(hdr(""), "approve", "lgtm", 1), false},
-		{"done without verdict", strings.Replace(hdr(""), "verdict: approve\n", "", 1), false},
-		{"worker", hdr("worker: engineer\n"), false},
-		{"extra key", hdr("score: 3\n"), false},
-		{"finding key lines", one("    lines: 3\n    severity: low\n    message: m\n"), false},
-		{"severity warning", one("    severity: warning\n    message: m\n"), false},
-		{"blocking yes", one("    severity: low\n    blocking: yes\n    message: m\n"), false},
-		{"quoted line", one("    line: \"4\"\n    severity: low\n    message: m\n"), false},
-		{"line 0", one("    line: 0\n    severity: low\n    message: m\n"), false},
-		{"backtick message", one("    severity: low\n    message: `x` is wrong\n"), false},
-		{"colon message", one("    severity: low\n    message: bad: really\n"), false},
-		{"numeric file", hdr("findings:\n  - file: 2024\n    severity: low\n    message: m\n"), false},
-		{"absolute file", hdr("findings:\n  - file: \"/abs.go\"\n    severity: low\n    message: m\n"), false},
-		{"dotdot file", hdr("findings:\n  - file: \"a/../b.go\"\n    severity: low\n    message: m\n"), false},
-		{"51 findings", hdr("findings:\n" + many), false},
-		{"empty message", one("    severity: low\n    message: \"\"\n"), false},
-		{"empty body", "---\nrole: eng-review\nstatus: done\nattempt: 1\nverdict: approve\n---\n", false},
-		{"leading blank line", "\n" + hdr(""), false},
+		{"valid", hdr(""), true, false},
+		{"empty findings", hdr("findings: []\n"), true, false},
+		{"block message", one("    severity: low\n    message: |\n      Colon: here, `ticks`, \"quotes\" and # hash.\n"), true, false},
+		{"needs-human", "---\nrole: eng-review\nstatus: needs-human\nattempt: 1\n---\nNothing to review.\n", true, false},
+		{"role review-eng-review", strings.Replace(hdr(""), "role: eng-review", "role: review-eng-review", 1), false, true},
+		{"role reviewers/eng-review", strings.Replace(hdr(""), "role: eng-review", "role: reviewers/eng-review", 1), false, true},
+		{"verdict lgtm", strings.Replace(hdr(""), "approve", "lgtm", 1), false, false},
+		{"done without verdict", strings.Replace(hdr(""), "verdict: approve\n", "", 1), false, true},
+		{"worker", hdr("worker: engineer\n"), false, true},
+		{"extra key", hdr("score: 3\n"), false, false},
+		{"finding key lines", one("    lines: 3\n    severity: low\n    message: m\n"), false, false},
+		{"severity warning", one("    severity: warning\n    message: m\n"), false, false},
+		{"blocking yes", one("    severity: low\n    blocking: yes\n    message: m\n"), false, false},
+		{"quoted line", one("    line: \"4\"\n    severity: low\n    message: m\n"), false, false},
+		{"line 0", one("    line: 0\n    severity: low\n    message: m\n"), false, false},
+		{"backtick message", one("    severity: low\n    message: `x` is wrong\n"), false, false},
+		{"colon message", one("    severity: low\n    message: bad: really\n"), false, false},
+		{"numeric file", hdr("findings:\n  - file: 2024\n    severity: low\n    message: m\n"), false, false},
+		{"absolute file", hdr("findings:\n  - file: \"/abs.go\"\n    severity: low\n    message: m\n"), false, false},
+		{"dotdot file", hdr("findings:\n  - file: \"a/../b.go\"\n    severity: low\n    message: m\n"), false, false},
+		{"51 findings", hdr("findings:\n" + many), false, false},
+		{"empty message", one("    severity: low\n    message: \"\"\n"), false, false},
+		{"empty body", "---\nrole: eng-review\nstatus: done\nattempt: 1\nverdict: approve\n---\n", false, false},
+		{"leading blank line", "\n" + hdr(""), false, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,11 +235,19 @@ func TestEngReviewContractTraps(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
+			if tc.byCheck {
+				// Parse accepts these; closeout.check (closeout/review_test.go)
+				// rejects them against the job. Assert the bad field is present.
+				if err != nil {
+					t.Fatalf("want a parse and a later check failure, got %v", err)
+				}
+				if rf.Role == "eng-review" && rf.Worker == "" && (rf.Status != "done" || rf.Verdict != "") {
+					t.Errorf("passes the role checks: %+v", rf)
+				}
 				return
 			}
-			if rf.Role == "eng-review" && rf.Worker == "" && (rf.Status != "done" || rf.Verdict != "") {
-				t.Errorf("parsed and passes the role checks: %+v", rf)
+			if err == nil {
+				t.Errorf("parsed without error: %+v", rf)
 			}
 		})
 	}
