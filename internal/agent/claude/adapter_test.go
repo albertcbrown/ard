@@ -263,3 +263,23 @@ func TestCredentialEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestUserMessageNamesRoleFile(t *testing.T) {
+	tests := []struct{ stage, want string }{
+		{agent.StageTriage, "write .ard/42/triage-default.md"},
+		{agent.StageWorker, "write .ard/42/worker-default.md"},
+		{agent.StageReview, "write .ard/42/review-default.md"},
+		{agent.StageScanner, "write .ard/42/scanner-default.md"},
+	}
+	for _, c := range tests {
+		s := spec()
+		s.Stage = c.stage
+		msg := userMessage(s)
+		if !strings.Contains(msg, c.want) {
+			t.Errorf("%s message lacks %q:\n%s", c.stage, c.want, msg)
+		}
+		if strings.Contains(msg, ".ard/42/default.md") {
+			t.Errorf("%s message names the old file", c.stage)
+		}
+	}
+}
