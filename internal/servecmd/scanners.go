@@ -32,8 +32,9 @@ func scannerLoop(w *wiring) controller.Loop {
 	})
 }
 
-// repoWorkDir is ~/.ard/work/<owner>/<repo>, shared with the local executor's
-// job worktrees (job IDs can never collide with the committer's lane names).
+// repoWorkDir is ~/.ard/work/<owner>/<repo>: the local executor's job
+// worktrees, and where committer lanes lived before #113 (lanes now live under
+// laneWorkDir; openClone deletes the old ones).
 func repoWorkDir(home string, r github.Repo) (string, error) {
 	return repopath.Join(filepath.Join(home, ".ard", "work"), r.String())
 }
