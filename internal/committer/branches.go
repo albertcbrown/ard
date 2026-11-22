@@ -29,19 +29,19 @@ func NewBranches(cfg Config, fx Effects, g *gitx.Git) *Branches {
 	return &Branches{core: c, cfgErr: err, lanes: map[string]*lane{}}
 }
 
-// Commit commits req to branch (worker/<role>-<slug>) and pushes it. A branch
-// that does not exist on the remote is ErrBranchGone; it is never created.
-func (b *Branches) Commit(ctx context.Context, branch string, req Request) (Result, error) {
+// laneFor returns the lane for branch, creating it on first use. Commit and
+// CommitCode share it, so .ard and code commits to one branch are serialised.
+func (b *Branches) laneFor(branch string) (*lane, error) {
 	if b.cfgErr != nil {
-		return Result{}, b.cfgErr
+		return nil, b.cfgErr
 	}
 	if !branchRe.MatchString(branch) {
-		return Result{}, fmt.Errorf("%w: branch %q is not worker/<name>", ErrInvalid, branch)
+		return nil, fmt.Errorf("%w: branch %q is not worker/<name>", ErrInvalid, branch)
 	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.closed {
-		b.mu.Unlock()
-		return Result{}, ErrClosed
+		return nil, ErrClosed
 	}
 	l, ok := b.lanes[branch]
 	if !ok {
@@ -49,7 +49,16 @@ func (b *Branches) Commit(ctx context.Context, branch string, req Request) (Resu
 		l = newLane(b.core, branch, wt, false)
 		b.lanes[branch] = l
 	}
-	b.mu.Unlock()
+	return l, nil
+}
+
+// Commit commits req to branch (worker/<role>-<slug>) and pushes it. A branch
+// that does not exist on the remote is ErrBranchGone; it is never created.
+func (b *Branches) Commit(ctx context.Context, branch string, req Request) (Result, error) {
+	l, err := b.laneFor(branch)
+	if err != nil {
+		return Result{}, err
+	}
 	return l.commit(ctx, req)
 }
 
