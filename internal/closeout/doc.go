@@ -14,17 +14,27 @@
 // committer (CLAUDE.md invariants 1 and 5). Agent text reaches GitHub only
 // after redaction and sanitising.
 //
-// Caller contract, for the loops (#15), the pool (#16) and the Reaper (#37):
+// Caller contract, for the loops (#29, #33, #35) and the Reaper (#37):
 //
 //   - serve, the loops and the Reaper share a single *Closer from New: the
-//     per-job busy lock only serialises Run and Resume within one instance.
-//   - serve startup calls Closer.Resume after taking the host lock and before
-//     adopting running jobs.
+//     per-job busy lock only serialises Run, Resume and ResumeJob within one
+//     instance. A caller that gets ErrBusy skips the job and looks again.
+//   - serve startup calls the Reaper's ResumeAll (which uses ResumeJob) after
+//     taking the host lock and before adopting running jobs.
+//   - Every way a job can end goes through Run, including a Reaper failure and
+//     a transient retry: set Job.Cause (reaper.Finisher does this) and Run
+//     commits only the log and applies the failed or retry plan. Callers do
+//     not post failure comments or swap labels themselves. Use
+//     reaper.Finisher.Finish, which also ends the attempt and tidies up.
 //   - The Reaper must not mark a job failed while its close-out phase is set
 //     and not closed: the agent has finished and a close-out is in flight. It
 //     resumes that job instead.
-//   - A job with no phase and an exited process is passed to Closer.Run.
+//   - Outcomes: done, changes and needs-human are results; failed sets
+//     ard:executor:failed; retry (a named transient cause) does not, and keeps
+//     the request label so the next claim runs the job again as a new job.
+//     Failed and retry comments carry the last 50 redacted log lines and the
+//     time the worktree and host files are kept until (24 h).
 //   - Closer never releases the pool slot or removes the worktree. The caller
-//     does both, keeping the worktree when the outcome is failed or needs-human
-//     and removing it otherwise.
+//     does both, keeping the worktree when the outcome is failed, retry or
+//     needs-human and removing it otherwise.
 package closeout

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 const (
@@ -69,9 +70,52 @@ func headerWord(p Plan) string {
 			return "blocked"
 		}
 		return "needs-human"
+	case OutcomeRetry:
+		return "retrying"
 	default:
 		return string(p.Outcome)
 	}
+}
+
+// fenceFor returns a code fence one backtick longer than the longest backtick
+// run in s, and at least three, so s cannot close it.
+func fenceFor(s string) string {
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(3, longest+1))
+}
+
+// evidenceLines are the extra lines of a failed or retry comment: what will
+// happen next, the log tail and how long the evidence is kept. Host paths are
+// never printed; they would reveal the user's home directory.
+func evidenceLines(r Record) (before []string, tail string) {
+	p := r.Plan
+	if p.Outcome != OutcomeFailed && p.Outcome != OutcomeRetry {
+		return nil, ""
+	}
+	if p.Outcome == OutcomeRetry {
+		before = append(before, "Retrying once as a new job.")
+	}
+	switch {
+	case p.Tail != "":
+		s := sanitize(p.Tail)
+		f := fenceFor(s)
+		tail = "Last 50 log lines:\n" + f + "\n" + s + "\n" + f
+	case p.TailWithheld:
+		tail = "Log tail withheld."
+	}
+	if !p.KeepUntil.IsZero() {
+		before = append(before, fmt.Sprintf("Kept until %s (worktree and host files of job `%s`); add `%s` to hold them longer.",
+			p.KeepUntil.UTC().Format("2006-01-02 15:04 UTC"), r.Job.ID, labels.Keep))
+	}
+	return before, tail
 }
 
 // RenderComment builds the close-out comment for a record. In dry-run, or
@@ -112,8 +156,13 @@ func RenderComment(r Record, repo github.Repo, dryRun bool) string {
 	if out := outputLine(r, repo, dryRun); out != "" {
 		lines = append(lines, out)
 	}
+	extra, tail := evidenceLines(r)
+	lines = append(lines, extra...)
 	if len(lines) > 0 {
 		b.WriteString("\n" + strings.Join(lines, "\n") + "\n")
+	}
+	if tail != "" {
+		b.WriteString("\n" + tail + "\n")
 	}
 	return b.String()
 }

@@ -1,0 +1,9 @@
+<!-- ard:closeout job=01JTEST attempt=1 -->
+**ard · triage:lead · retrying**
+
+`rate_limit: API status 429`
+
+Retrying once as a new job.
+Kept until 2026-01-03 03:04 UTC (worktree and host files of job `01JTEST`); add `ard:keep` to hold them longer.
+
+Log tail withheld.
