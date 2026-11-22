@@ -51,6 +51,21 @@ func TestDockerRun(t *testing.T) {
 		}
 	}
 
+	// A sidecar is mounted read-only at /sidecar.
+	sf := newSidecarFixture(t)
+	sf.push(t, map[string]string{"spec.md": "a"})
+	os.WriteFile(filepath.Join(sf.roleDir, "Dockerfile"), mustRead(t, df), 0o644)
+	os.WriteFile(filepath.Join(sf.roleDir, "sc.sh"), []byte("#!/bin/sh\ncat /sidecar/spec.md && ! touch /sidecar/x\n"), 0o755)
+	sj := sf.sjob("main")
+	sj.Dockerfile = filepath.Join(sf.roleDir, "Dockerfile")
+	sh, sst := sf.run(t, sj, executor.Command{Path: "/role/sc.sh"})
+	if sst.State != executor.Exited || sst.ExitCode != 0 || !strings.Contains(readFile(t, sh.StdoutPath), "a") {
+		t.Errorf("sidecar in docker: %+v stdout %q", sst, readFile(t, sh.StdoutPath))
+	}
+	if sh.View.Sidecar != "/sidecar" {
+		t.Errorf("View.Sidecar = %q", sh.View.Sidecar)
+	}
+
 	j := f.job(time.Second)
 	j.Dockerfile = filepath.Join(f.roleDir, "Dockerfile")
 	os.WriteFile(filepath.Join(f.roleDir, "sleep.sh"), []byte("#!/bin/sh\nsleep 300\n"), 0o755)

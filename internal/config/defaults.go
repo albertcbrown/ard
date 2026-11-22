@@ -6,6 +6,9 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/albertcbrown/ard/internal/gitref"
+	"github.com/albertcbrown/ard/internal/repopath"
 )
 
 // Built-in defaults, applied before the global config and per-role
@@ -178,8 +181,11 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		if sc.ref != nil {
 			entry.Ref = *sc.ref
 		}
-		if owner, rest, ok := strings.Cut(entry.Repo, "/"); !ok || owner == "" || rest == "" || strings.Contains(rest, "/") {
+		if _, _, err := repopath.Parts(entry.Repo); err != nil {
 			errs = append(errs, &Error{File: cfgPath, Key: key + ".repo", Msg: fmt.Sprintf("must be %q, got %q", "owner/name", entry.Repo)})
+		}
+		if err := gitref.Check(entry.Ref); err != nil {
+			errs = append(errs, &Error{File: cfgPath, Key: key + ".ref", Msg: fmt.Sprintf("invalid ref %q: %v", entry.Ref, err)})
 		}
 		res.Sidecars[name] = entry
 	}

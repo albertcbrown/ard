@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -288,6 +289,7 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 				os.RemoveAll(h.Worktree)
 			}
 		}
+		chmodWritable(filepath.Join(h.Home, sidecarDirName)) // a-w tree; derived from Home, not h.SidecarDir
 		if err := os.RemoveAll(h.Home); err != nil {
 			errs = append(errs, err)
 		}

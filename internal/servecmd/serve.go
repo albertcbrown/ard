@@ -312,7 +312,7 @@ func (w *wiring) newExecutor() (*local.Local, error) {
 		return w.exec, nil
 	}
 	ex, err := local.New(local.Options{
-		Root: filepath.Join(w.Home, ".ard"), Log: w.Log,
+		Root: filepath.Join(w.Home, ".ard"), Log: w.Log, SidecarToken: w.Token,
 		OnHostUntrusted: recordHostUntrusted(w.Store),
 	})
 	if err != nil {
@@ -343,16 +343,19 @@ func (w *wiring) Pool() *pool.Pool {
 }
 
 // registerLoops returns the loops to run: the scanners loop (#23), the stale
-// closer (#25) and the Reaper (#37) so far. Loops that run jobs build their
-// executor with w.newExecutor(), end jobs through w.finisher() and share
-// w.closer(). The triage, worker, reviewer and merger loops each add one
-// constructor call here. It is a variable so tests can observe wiring.
+// closer (#25), the triage loop (#29) and the Reaper (#37) so far. Loops that
+// run jobs build their executor with w.newExecutor(), end jobs through
+// w.finisher() and share w.closer(). The worker, reviewer and merger loops each
+// add one constructor call here. It is a variable so tests can observe wiring.
 var registerLoops = func(w *wiring) []controller.Loop {
 	var loops []controller.Loop
 	if l := scannerLoop(w); l != nil {
 		loops = append(loops, l)
 	}
 	loops = append(loops, stale.New(w.Reader, w.Effects, nil))
+	if l := triageLoop(w); l != nil {
+		loops = append(loops, l)
+	}
 	if l := reaperLoop(w); l != nil {
 		loops = append(loops, l)
 	}

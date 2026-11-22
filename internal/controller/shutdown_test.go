@@ -81,11 +81,11 @@ func TestInflightAcceptedDuringShutdownAndRejectedAfter(t *testing.T) {
 func TestInflightPanicRecovered(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		log, buf := newLog()
-		in := newInflight(context.Background(), log)
+		in := NewInflight(context.Background(), log)
 		if err := in.Go("p", func(context.Context) { panic("x") }); err != nil {
 			t.Fatal(err)
 		}
-		<-in.wait()
+		<-in.Wait()
 		if buf.count("inflight.panic") != 1 || len(in.Pending()) != 0 {
 			t.Errorf("log:\n%s pending=%v", buf.String(), in.Pending())
 		}

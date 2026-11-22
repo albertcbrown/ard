@@ -7,9 +7,9 @@ package roles
 import "embed"
 
 // FS is the starter .ard/ tree `ard init` proposes: config.yaml plus the role
-// directories; paths are relative to .ard/.
+// directories (scanners/cve, triage/lead and triage/engineer); paths are relative to .ard/.
 //
-//go:embed config.yaml scanners
+//go:embed config.yaml scanners triage
 var FS embed.FS
 
 // ExecutableNames lists base names that must be written 0755.

@@ -47,7 +47,7 @@ internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group,
 internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues
 internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction, secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
-internal/roles/     starter role directories embedded for ard init (scanners/cve)
+internal/roles/     starter role directories embedded for ard init (scanners/cve, triage/lead)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
@@ -58,8 +58,10 @@ internal/closeout/  job close-out: role file or failure cause -> labels, comment
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/limits/    the book of exhausted usage limits the pool consults (the reactive half; #63 adds readings and thresholds)
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
+internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), claim, watcher; closes out through the shared Finisher
 internal/labels/    the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
+internal/gitref/    ref-name checks shared by config and executor; leaf, stdlib only
 internal/repopath/  owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
 internal/initcmd/   ard init: proposes the starter .ard/ as a PR on ard-init
 internal/roles/     starter .ard/ tree (config.yaml, role dirs) embedded for ard init

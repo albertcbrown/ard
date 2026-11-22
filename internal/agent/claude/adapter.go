@@ -99,6 +99,11 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 	if err != nil {
 		return agent.Command{}, err
 	}
+	// CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is deliberately not set. The scrub
+	// would keep the model credential out of Bash children, but it needs
+	// bubblewrap plus unprivileged user namespaces, which Docker blocks under
+	// ard's flags, so every Bash call would fail. The residual risk and the
+	// reasoning are in docs/proposal.md (agent CLI adapters).
 	return agent.Command{
 		Argv: argv,
 		Env: map[string]string{

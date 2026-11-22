@@ -136,7 +136,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	// cancels them.
 	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelWork()
-	c.inflight = newInflight(workCtx, log)
+	c.inflight = NewInflight(workCtx, log)
 	stopping := make(chan struct{})
 
 	names := make([]string, len(c.loops))
@@ -167,7 +167,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	go func() {
 		wg.Wait() // every in-progress tick has returned
 		c.inflight.close()
-		<-c.inflight.wait()
+		<-c.inflight.Wait()
 		close(drained)
 	}()
 

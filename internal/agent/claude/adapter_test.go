@@ -247,8 +247,8 @@ func TestCredentialEnv(t *testing.T) {
 			if !reflect.DeepEqual(c.PassEnv, []string{tc.want}) {
 				t.Errorf("PassEnv = %v, want exactly [%s]", c.PassEnv, tc.want)
 			}
-			// CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is deliberately not set: on
-			// 2.1.328 it flips init.permissionMode from dontAsk to default.
+			// CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is deliberately not set: it
+			// needs bwrap and unprivileged userns, which Docker blocks (#125).
 			if _, ok := c.Env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"]; ok {
 				t.Errorf("env scrub set: %v", c.Env)
 			}

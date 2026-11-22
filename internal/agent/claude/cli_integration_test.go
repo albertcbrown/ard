@@ -456,8 +456,10 @@ func TestCLIAPIKeyBeatsOAuth(t *testing.T) {
 	}
 }
 
-// Pins why the adapter leaves CLAUDE_CODE_SUBPROCESS_ENV_SCRUB unset: on the
-// tested release it flips init.permissionMode from dontAsk to default.
+// Pins that CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 forces init.permissionMode to
+// default. This is no longer why the scrub is off (bwrap under Docker is; see
+// docs/proposal.md, #125), but re-check it on a TestedVersion bump when the
+// scrub is revisited for host mode.
 func TestCLIEnvScrubFlipsPermissionMode(t *testing.T) {
 	work, _ := plantRepo(t)
 	c := workerArgv(t, work)
