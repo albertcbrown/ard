@@ -17,7 +17,7 @@ fmt:
 	gofmt -w .
 
 # Renders the two Argo CD charts under deploy/ and checks them (needs helm and yq;
-# run by Jenkinsfile.ci, not part of `make test`).
+# run by the ard-ci pipeline, not part of `make test`).
 chart-test:
 	deploy/test-charts.sh
 
