@@ -2,7 +2,11 @@ package state
 
 import (
 	"errors"
+	"github.com/albertcbrown/ard/internal/state/sqlitex"
+	"io/fs"
+	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -190,5 +194,57 @@ func TestEndedSince(t *testing.T) {
 	js, err := s.EndedSince(ctx, c.t.Add(-time.Minute))
 	if err != nil || len(js) != 1 || js[0].ID != b.ID {
 		t.Errorf("EndedSince = %v, %v", js, err)
+	}
+}
+
+// An existing 0001 database upgrades in place and reopens cleanly.
+func TestUpgradeFromInit(t *testing.T) {
+	ctx := tctx(t)
+	dir := t.TempDir()
+	init, err := fs.ReadFile(migrationsFS, "migrations/0001_init.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqlitex.Open(ctx, filepath.Join(dir, ControllerFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlitex.Migrate(ctx, db, fstest.MapFS{"0001_init.sql": {Data: init}}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO jobs(id, stage, role, issue, status, attempt, created_at, updated_at)
+		VALUES('OLD','worker','eng',5,'failed',1,1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	versions := func(s *Store) int {
+		var n int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_version`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	s, err := Open(ctx, dir, Options{Now: func() time.Time { return t0 }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var max int
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&max); err != nil || max != 2 {
+		t.Fatalf("schema version = %d, %v", max, err)
+	}
+	j, err := s.Job(ctx, "OLD")
+	if err != nil || j.Branch != "" || j.RetryOf != "" || j.AutoRetry || j.KillReason != "" {
+		t.Fatalf("old row = %+v, %v", j, err)
+	}
+	n := versions(s)
+	s.Close()
+	s2, err := Open(ctx, dir, Options{Now: func() time.Time { return t0 }})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	if versions(s2) != n {
+		t.Errorf("reopen added schema_version rows")
 	}
 }

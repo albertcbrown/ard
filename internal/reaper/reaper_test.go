@@ -12,6 +12,7 @@ import (
 	"github.com/albertcbrown/ard/internal/agent"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/committer"
+	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/labels"
@@ -787,6 +788,22 @@ func TestNoRecord(t *testing.T) {
 			t.Error("failed a live job")
 		}
 	})
+	t.Run("a job claimed after the snapshot is not failed", func(t *testing.T) {
+		h := newHarness(t)
+		setup(h, 5)
+		h.r.d.Reader = &claimingReader{Reader: h.gh, onList: func() {
+			if _, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "worker", Role: "engineer", Issue: 5, Branch: "worker/engineer-x"}); err != nil {
+				t.Error(err)
+			}
+		}}
+		writes := h.writes()
+		for i := 0; i < 5; i++ {
+			h.mustTick()
+		}
+		if h.labels(5)[labels.ExecutorFailed] || !h.labels(5)[run] || len(h.comments(5)) != 0 || h.writes() != writes {
+			t.Errorf("failed a job that was just claimed: labels %v", h.labels(5))
+		}
+	})
 	t.Run("hold is skipped", func(t *testing.T) {
 		h := newHarness(t)
 		setup(h, 5, labels.Hold)
@@ -810,4 +827,23 @@ func TestNoRecord(t *testing.T) {
 			t.Errorf("ListIssues called %d times in dry-run", spy.lists)
 		}
 	})
+}
+
+func TestFinishSkipsJobThatEndedMeanwhile(t *testing.T) {
+	h := newHarness(t)
+	sj, _ := h.startJob(111, withStatus(executor.Status{State: executor.Gone}))
+	h.adopt()
+	// The owner finishes the job after the Reaper listed it.
+	h.r.d.Parse = func(ctx context.Context, _ *config.Resolved, s state.Job, _ executor.Handle, _ int) (agent.Result, error) {
+		return agent.Result{}, h.store.Complete(ctx, s.ID, nil)
+	}
+	before, _ := h.store.Attempts(context.Background(), sj.ID)
+	h.mustTick()
+	after, _ := h.store.Attempts(context.Background(), sj.ID)
+	if len(after) != 1 || after[0].EndedAt != before[0].EndedAt || after[0].Cause != "" || after[0].ExitCode != nil {
+		t.Errorf("attempt overwritten: %+v", after)
+	}
+	if got := h.job(sj.ID); got.Status != state.StatusDone || len(h.comments(111)) != 0 || len(h.ex.cleanupsOf(sj.ID)) != 0 {
+		t.Errorf("job = %+v comments %d cleanups %v", got, len(h.comments(111)), h.ex.cleanups)
+	}
 }

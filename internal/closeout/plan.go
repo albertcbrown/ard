@@ -128,14 +128,13 @@ func failedPlan(j Job, reason string, logWithheld bool) Plan {
 }
 
 // retryPlan is the plan for a job that failed for a transient cause and hands
-// off to one automatic retry. It removes only :running and re-asserts the
-// request label (adding it is idempotent), so the next claim finds it.
+// off to one automatic retry. It removes only :running and leaves the request
+// label alone: a human who removed it to cancel stays cancelled.
 func retryPlan(j Job, reason string) Plan {
 	n := j.target()
 	st := labels.Stage(j.Stage)
 	return Plan{Outcome: OutcomeRetry, Reason: reason,
-		Requests: []Label{{n, labels.Request(st, j.Role)}},
-		Remove:   []Label{{n, labels.Running(st, j.Role)}}}
+		Remove: []Label{{n, labels.Running(st, j.Role)}}}
 }
 
 // needsHumanPlan is the plan for a job held back by the secret scan.

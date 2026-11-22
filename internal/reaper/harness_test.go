@@ -388,3 +388,18 @@ func (s *spyReader) ListIssues(ctx context.Context, o github.ListIssuesOpts) ([]
 type dryEffects struct{ Effects }
 
 func (dryEffects) DryRun() bool { return true }
+
+// claimingReader runs onList after each ListIssues: a claim racing the check.
+type claimingReader struct {
+	Reader
+	onList func()
+}
+
+func (c *claimingReader) ListIssues(ctx context.Context, o github.ListIssuesOpts) ([]github.Issue, error) {
+	out, err := c.Reader.ListIssues(ctx, o)
+	if len(out) > 0 {
+		c.onList()
+		c.onList = func() {}
+	}
+	return out, err
+}

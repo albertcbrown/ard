@@ -87,6 +87,10 @@ func (r *Reaper) failNoRecord(ctx context.Context, n int, stage, role, label str
 	if !hasLabel(fresh.Labels, label) || hasLabel(fresh.Labels, labels.Hold) {
 		return nil
 	}
+	// A job claimed after the caller's snapshot has a row now: re-check.
+	if busy, err := r.hasJob(ctx, stage, role, n); err != nil || busy {
+		return err
+	}
 	tl, err := r.d.Reader.ListTimeline(ctx, n)
 	if err != nil {
 		return fmt.Errorf("reaper: timeline of #%d: %w", n, err)
@@ -128,4 +132,27 @@ func (r *Reaper) failNoRecord(ctx context.Context, n int, stage, role, label str
 	}
 	r.log().Warn("reaper.norecord", "issue", n, "stage", stage, "role", role, "label", label)
 	return nil
+}
+
+// hasJob reports whether a running job, or one that ended within the grace
+// period, accounts for the target n of stage and role (the PR for a review).
+func (r *Reaper) hasJob(ctx context.Context, stage, role string, n int) (bool, error) {
+	running, err := r.d.Store.RunningJobs(ctx)
+	if err != nil {
+		return false, fmt.Errorf("reaper: no-record re-check of #%d: %w", n, err)
+	}
+	recent, err := r.d.Store.EndedSince(ctx, r.now().Add(-noRecordGrace))
+	if err != nil {
+		return false, fmt.Errorf("reaper: no-record re-check of #%d: %w", n, err)
+	}
+	for _, sj := range append(running, recent...) {
+		t := sj.Issue
+		if sj.Stage == string(labels.StageReview) {
+			t = sj.PR
+		}
+		if sj.Stage == stage && sj.Role == role && t == n {
+			return true, nil
+		}
+	}
+	return false, nil
 }

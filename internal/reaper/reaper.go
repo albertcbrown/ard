@@ -352,7 +352,7 @@ func (r *Reaper) kill(ctx context.Context, sj state.Job, h executor.Handle, reas
 func (r *Reaper) finish(ctx context.Context, sj state.Job, h executor.Handle, st executor.Status, res agent.Result, override closeout.Cause, attrs []any) error {
 	out, err := r.d.Finisher.Finish(ctx, sj.ID, h, st, res, override)
 	switch {
-	case errors.Is(err, closeout.ErrBusy):
+	case errors.Is(err, closeout.ErrBusy), errors.Is(err, state.ErrNotRunning):
 		return nil
 	case err != nil:
 		return fmt.Errorf("reap job %s: %w", sj.ID, err)

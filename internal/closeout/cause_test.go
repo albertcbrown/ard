@@ -93,7 +93,31 @@ func TestCauseTailWithheldWhenFlagged(t *testing.T) {
 	}
 }
 
-func TestCauseRetryKeepsRequestLabel(t *testing.T) {
+func TestCauseRetryLeavesRequestLabelAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		present bool
+	}{{"kept when present", true}, {"stays removed when a human cancelled", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			if tc.present {
+				if err := e.gh.AddLabels(context.Background(), 7, "ard:worker:engineer"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			j := e.causeJob(StageWorker, "engineer", Cause{Kind: CauseRateLimit, Detail: "x", Transient: true, Retry: true})
+			if out, err := New(e.d).Run(context.Background(), j); err != nil || out != OutcomeRetry {
+				t.Fatalf("Run = %s, %v", out, err)
+			}
+			l := e.labels(7)
+			if l["ard:worker:engineer"] != tc.present || l["ard:worker:engineer:running"] || l["ard:executor:failed"] {
+				t.Errorf("labels = %v", l)
+			}
+		})
+	}
+}
+
+func TestCauseRetryHandsOff(t *testing.T) {
 	e := newEnv(t)
 	j := e.causeJob(StageWorker, "engineer", Cause{Kind: CauseRateLimit, Detail: "API status 429", Transient: true, Retry: true})
 	out, err := New(e.d).Run(context.Background(), j)
@@ -101,7 +125,7 @@ func TestCauseRetryKeepsRequestLabel(t *testing.T) {
 		t.Fatalf("Run = %s, %v", out, err)
 	}
 	l := e.labels(7)
-	if l["ard:executor:failed"] || l["ard:worker:engineer:running"] || !l["ard:worker:engineer"] {
+	if l["ard:executor:failed"] || l["ard:worker:engineer:running"] {
 		t.Errorf("labels = %v", l)
 	}
 	sj := e.sjob(j.ID)

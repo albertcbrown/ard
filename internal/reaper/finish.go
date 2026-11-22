@@ -145,6 +145,9 @@ func (f *Finisher) Finish(ctx context.Context, jobID string, h executor.Handle, 
 	if err != nil {
 		return "", fmt.Errorf("finish job %s: %w", jobID, err)
 	}
+	if sj.Status != state.StatusRunning && (sj.CloseoutPhase == "" || sj.CloseoutPhase == string(closeout.PhaseClosed)) {
+		return "", fmt.Errorf("finish job %s: %w", jobID, state.ErrNotRunning)
+	}
 	cause := override
 	if cause.Kind == "" && f.Classify != nil {
 		if c, ok := f.Classify(res); ok {
