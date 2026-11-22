@@ -189,8 +189,8 @@ func TestDefaultLoopsIncludeTheScannersLoop(t *testing.T) {
 	}
 	defer w.Scanners.Close()
 	loops := registerLoops(w)
-	if len(loops) != 4 || loops[0].Name() != "scanners" || loops[1].Name() != "stale" || loops[2].Name() != "triage" || loops[3].Name() != "reaper" ||
-		!loops[0].Claims() || !loops[1].Claims() || !loops[2].Claims() || loops[3].Claims() {
+	if len(loops) != 5 || loops[0].Name() != "scanners" || loops[1].Name() != "stale" || loops[2].Name() != "triage" || loops[3].Name() != "workers" || loops[4].Name() != "reaper" ||
+		!loops[0].Claims() || !loops[1].Claims() || !loops[2].Claims() || !loops[3].Claims() || loops[4].Claims() {
 		t.Fatalf("loops = %v: the scanners, stale and triage loops must exist and be skipped while paused, and the Reaper must keep running", loops)
 	}
 	if _, ok := loops[0].(controller.TickTimeouter); !ok {
