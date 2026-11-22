@@ -40,3 +40,17 @@ func TestTransient(t *testing.T) {
 		t.Error("OK result transient")
 	}
 }
+
+func TestValidateAuth(t *testing.T) {
+	tests := []struct {
+		auth agent.Auth
+		ok   bool
+	}{{"", false}, {"bogus", false}, {agent.AuthAPIKey, true}, {agent.AuthOAuthToken, true}}
+	for _, tc := range tests {
+		s := agent.Spec{Stage: agent.StageWorker, Role: "default", Issue: 1, PromptFile: "/p", ConfigDir: "/c", MaxBudgetUSD: 1, Auth: tc.auth}
+		err := s.Validate()
+		if tc.ok != (err == nil) || (!tc.ok && !errors.Is(err, agent.ErrInvalidSpec)) {
+			t.Errorf("Auth %q: err = %v", tc.auth, err)
+		}
+	}
+}

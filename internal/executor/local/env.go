@@ -2,6 +2,8 @@ package local
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -77,6 +79,42 @@ func (l *Local) checkFixed(env []string) error {
 		case !l.allowFixed[name]:
 			return fmt.Errorf("%w: %s is not in the fixed allow list", executor.ErrForbiddenEnv, name)
 		}
+	}
+	return nil
+}
+
+// checkConfigDir keeps a job on its own config dir. A Fixed entry for the
+// config-dir variable must equal View.ConfigDir, and a prepared dir must
+// still be the empty 0700 directory Prepare made.
+func (l *Local) checkConfigDir(h executor.Handle, fixed []string) error {
+	for _, kv := range fixed {
+		name, val, _ := strings.Cut(kv, "=")
+		if name == l.configDirEnv && (h.View.ConfigDir == "" || val != h.View.ConfigDir) {
+			return fmt.Errorf("%w: %s must be the job config dir", executor.ErrForbiddenEnv, name)
+		}
+	}
+	if h.View.ConfigDir == "" {
+		return nil
+	}
+	p := filepath.Join(h.Home, configDirName)
+	fail := func(why string) error {
+		return fmt.Errorf("%w: config dir %s: %s", executor.ErrNotPrepared, p, why)
+	}
+	st, err := os.Lstat(p)
+	switch {
+	case err != nil:
+		return fail(err.Error())
+	case !st.IsDir():
+		return fail("not a directory")
+	case st.Mode().Perm() != 0o700:
+		return fail(fmt.Sprintf("mode %o, want 700", st.Mode().Perm()))
+	}
+	ents, err := os.ReadDir(p)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if len(ents) != 0 {
+		return fail("not empty")
 	}
 	return nil
 }

@@ -2,7 +2,8 @@
 
 // These tests run the real CLI and make no paid model call. One has no API
 // key; the others send a dummy key to a loopback fake that answers 400. Re-run
-// them on every TestedVersion bump: part of the isolation they pin (AGENTS.md,
+// them on every TestedVersion bump (including the OAuth token and API key
+// precedence tests): part of the isolation they pin (AGENTS.md,
 // and CLAUDE.md, agents and skills under --restricted) is behaviour observed
 // only on the tested release. Settings env isolation is not pinned: no Bash
 // call is scripted.
@@ -95,6 +96,11 @@ func plantAgentsRepo(t *testing.T) string {
 // workerArgv returns the worker command for the planted repo.
 func workerArgv(t *testing.T, work string) agent.Command {
 	t.Helper()
+	return workerArgvAuth(t, work, agent.AuthAPIKey)
+}
+
+func workerArgvAuth(t *testing.T, work string, auth agent.Auth) agent.Command {
+	t.Helper()
 	bin, err := exec.LookPath("claude")
 	if err != nil {
 		t.Skip("claude not on PATH")
@@ -102,7 +108,7 @@ func workerArgv(t *testing.T, work string) agent.Command {
 	prompt := filepath.Join(t.TempDir(), "prompt.txt")
 	writeFile(t, prompt, "test")
 	c, err := New(Options{Binary: bin}).Command(agent.Spec{Stage: agent.StageWorker, Role: "default", Issue: 1,
-		PromptFile: prompt, ConfigDir: t.TempDir(), MaxBudgetUSD: 0.01})
+		PromptFile: prompt, ConfigDir: t.TempDir(), MaxBudgetUSD: 0.01, Auth: auth})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,12 +166,21 @@ func cliInitEvent(t *testing.T, out []byte) cliInit {
 // minutes) and records the bodies.
 func fakeAPI(t *testing.T) (url string, bodies func() [][]byte) {
 	t.Helper()
+	url, bodies, _ = fakeAPIHeaders(t)
+	return url, bodies
+}
+
+// fakeAPIHeaders is fakeAPI that also records each request's headers.
+func fakeAPIHeaders(t *testing.T) (url string, bodies func() [][]byte, headers func() []http.Header) {
+	t.Helper()
 	var mu sync.Mutex
 	var got [][]byte
+	var hdrs []http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		got = append(got, b)
+		hdrs = append(hdrs, r.Header.Clone())
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -173,9 +188,33 @@ func fakeAPI(t *testing.T) (url string, bodies func() [][]byte) {
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL, func() [][]byte {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(got)
+		}, func() []http.Header {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(hdrs)
+		}
+}
+
+// refusingProxy records every request it receives (CONNECT for https) and
+// refuses it, so a test sees any attempt to reach a non-loopback host.
+func refusingProxy(t *testing.T) (url string, hosts func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Method+" "+r.Host)
+		mu.Unlock()
+		http.Error(w, "refused", http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
-		return slices.Clone(got)
+		return slices.Clone(seen)
 	}
 }
 
@@ -339,5 +378,60 @@ func TestCLIPlantedConfigControl(t *testing.T) {
 	runCLI(t, awork, c, argv, "ANTHROPIC_API_KEY=dummy-not-a-key", "ANTHROPIC_BASE_URL="+url)
 	if !anyContains(bodies(), "PLANTED_AGENTS_MD") {
 		t.Error("control: PLANTED_AGENTS_MD not in any request body")
+	}
+}
+
+// Subscription auth with dummy values only: the CLI must send the env token
+// as a Bearer credential to the (loopback) base URL, no API key, and reach no
+// other host. A non-loopback request goes to a proxy that refuses it.
+func TestCLIUsesOAuthToken(t *testing.T) {
+	const tok = "ard-dummy-oauth-not-a-token-0000"
+	work, _ := plantRepo(t)
+	c := workerArgvAuth(t, work, agent.AuthOAuthToken)
+	url, _, headers := fakeAPIHeaders(t)
+	proxy, hosts := refusingProxy(t)
+	out, _ := runCLI(t, work, c, c.Argv, "CLAUDE_CODE_OAUTH_TOKEN="+tok, "ANTHROPIC_BASE_URL="+url,
+		"HTTPS_PROXY="+proxy, "HTTP_PROXY="+proxy, "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost")
+	hs := headers()
+	if len(hs) == 0 {
+		t.Fatal("no request reached the fake API")
+	}
+	for _, h := range hs {
+		if got := h.Get("Authorization"); got != "Bearer "+tok {
+			t.Errorf("Authorization = %q, want the Bearer token", got)
+		}
+		if h.Get("X-Api-Key") != "" {
+			t.Error("request carries X-Api-Key")
+		}
+	}
+	if hh := hosts(); len(hh) != 0 {
+		t.Errorf("CLI tried to reach outside hosts: %v", hh)
+	}
+	in := cliInitEvent(t, out)
+	t.Logf("apiKeySource with CLAUDE_CODE_OAUTH_TOKEN = %q", in.APIKeySource)
+	// Observed on 2.1.328: apiKeySource names API-key sources only, so the
+	// subscription token reports "none" even though it authenticates. It
+	// cannot verify the credential at runtime (see #81).
+	if in.APIKeySource != "none" {
+		t.Errorf("apiKeySource = %q, observed none", in.APIKeySource)
+	}
+}
+
+// Pins why the job gets exactly one credential: with both set, the API key
+// is used and the token is ignored without any warning.
+func TestCLIAPIKeyBeatsOAuth(t *testing.T) {
+	work, _ := plantRepo(t)
+	c := workerArgvAuth(t, work, agent.AuthAPIKey)
+	url, _, headers := fakeAPIHeaders(t)
+	runCLI(t, work, c, c.Argv, "ANTHROPIC_API_KEY=dummy-not-a-key", "CLAUDE_CODE_OAUTH_TOKEN=ard-dummy-oauth-not-a-token-0000",
+		"ANTHROPIC_BASE_URL="+url)
+	hs := headers()
+	if len(hs) == 0 {
+		t.Fatal("no request reached the fake API")
+	}
+	for _, h := range hs {
+		if h.Get("X-Api-Key") != "dummy-not-a-key" || strings.HasPrefix(h.Get("Authorization"), "Bearer ard-dummy-oauth") {
+			t.Errorf("headers = %v; want the API key to win", h)
+		}
 	}
 }

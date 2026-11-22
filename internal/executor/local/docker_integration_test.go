@@ -32,6 +32,9 @@ func TestDockerRun(t *testing.T) {
 		if st.State != executor.Exited {
 			t.Fatalf("%+v", st)
 		}
+		if h.View.ConfigDir != "/ard-config" {
+			t.Errorf("View.ConfigDir = %q, want /ard-config", h.View.ConfigDir)
+		}
 		if got := readFile(t, h.StdoutPath); !strings.Contains(got, "out") || strings.Contains(got, "err") {
 			t.Errorf("stdout %q", got)
 		}

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/agent/claude"
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/configsrc"
@@ -26,6 +27,7 @@ import (
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/modelauth"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/repopath"
@@ -42,6 +44,10 @@ type deps struct {
 	RemoteURL string         // where the controller fetches main from
 	Token     gitx.TokenFunc // mints a push and fetch credential; nil in tests
 	Close     func() error   // optional
+	// Model is the credential agent jobs receive. The zero value means none
+	// is set: deterministic scanners run, and a job that needs one fails
+	// through Model.Require.
+	Model modelauth.Credential
 }
 
 // builder constructs deps for repo. stateDir is where a dry-run ledger goes.
@@ -131,7 +137,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 
 	w := &wiring{
 		Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: config.DefaultMaxPods,
-		Repo: repo, Root: root, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners,
+		Repo: repo, Root: root, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners, Model: d.Model,
 	}
 	defer w.closeAll()
 	loader := &cfgLoader{src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
@@ -231,6 +237,7 @@ type wiring struct {
 	RemoteURL string
 	Token     gitx.TokenFunc
 	Scanners  *scannerdb.Registry
+	Model     modelauth.Credential           // zero when no model credential is set; see deps.Model
 	Paused    func(ctx context.Context) bool // nil = never paused
 	pool      atomic.Pointer[pool.Pool]
 
@@ -351,6 +358,18 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 	if auth.Kind() == github.AuthToken && !e.DryRun {
 		return deps{}, errors.New("ard serve: ARD_GITHUB_TOKEN auth is for --dry-run only; configure a GitHub App for live runs")
 	}
+	cred, err := modelauth.Resolve(modelauth.Mode(os.Getenv(modelauth.EnvMode)), claude.New(claude.Options{}).CredentialEnv, os.Getenv)
+	var model modelauth.Credential
+	switch {
+	case errors.Is(err, modelauth.ErrNoCredential):
+		// Only agent roles need one; deterministic scanners run without.
+		e.Log.Info("serve.model_credential_unset", "hint", "agent jobs will fail until one is set", "error", err)
+	case err != nil:
+		return deps{}, fmt.Errorf("ard serve: model credential: %w", err)
+	default:
+		model = cred
+		e.Log.Info("serve.model_credential", "credential", cred)
+	}
 	red, err := redact.New(redact.FromEnviron(os.Environ()), redact.Options{})
 	if err != nil {
 		return deps{}, fmt.Errorf("ard serve: %w", err)
@@ -368,7 +387,7 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 	if err != nil {
 		return deps{}, fmt.Errorf("ard serve: %w", err)
 	}
-	d := deps{Reader: rd, Effects: fx, Token: auth.Token, RemoteURL: fmt.Sprintf("https://github.com/%s.git", repo)}
+	d := deps{Reader: rd, Effects: fx, Token: auth.Token, RemoteURL: fmt.Sprintf("https://github.com/%s.git", repo), Model: model}
 	if c, ok := fx.(interface{ Close() error }); ok {
 		d.Close = c.Close
 	}

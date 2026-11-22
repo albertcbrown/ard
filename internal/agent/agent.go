@@ -24,6 +24,16 @@ const (
 	StageReview  = "review"
 )
 
+// Auth names which model credential the job receives. Adapters map it to
+// their CLI's env var; the value never reaches the adapter.
+type Auth string
+
+// The supported credentials.
+const (
+	AuthAPIKey     Auth = "api_key"
+	AuthOAuthToken Auth = "oauth_token"
+)
+
 // Spec describes one agent run. Untrusted inputs are paths only; the adapter
 // never reads their contents.
 type Spec struct {
@@ -38,6 +48,7 @@ type Spec struct {
 	MaxBudgetUSD float64  // > 0, finite
 	MaxTurns     int      // 0 = omit the flag
 	Tools        []string // nil = the adapter's default profile
+	Auth         Auth     // required; AuthAPIKey or AuthOAuthToken
 }
 
 // Command is what the executor should run. Argv[0] is the binary; run with
@@ -153,6 +164,9 @@ func (s Spec) Validate() error {
 	}
 	if s.Issue < 1 {
 		return invalid("Issue", "must be >= 1")
+	}
+	if s.Auth != AuthAPIKey && s.Auth != AuthOAuthToken {
+		return invalid("Auth", fmt.Sprintf("%q", s.Auth))
 	}
 	if err := absPath("PromptFile", s.PromptFile); err != nil {
 		return err
