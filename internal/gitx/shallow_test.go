@@ -199,6 +199,10 @@ func TestClassifyFetch(t *testing.T) {
 		{"fatal: not our ref abc", false, nil},
 		{"The requested URL returned error: 404", false, nil},
 		{"fatal: Could not resolve host", true, nil},
+		{"fatal: '/tmp/x/missing.git' does not appear to be a git repository\nfatal: Could not read from remote repository.", true, nil},
+		{"fatal: unable to access 'https://nope.invalid/a/b.git/': Could not resolve host: nope.invalid", true, nil},
+		{"fatal: unable to access 'https://localhost:1/a.git/': Failed to connect to localhost port 1: Connection refused", true, nil},
+		{"fatal: could not read Username for 'https://github.com': terminal prompts disabled", true, nil},
 	}
 	for _, tc := range tests {
 		if got := classifyFetch(tc.stderr, tc.shallow); got != tc.want {

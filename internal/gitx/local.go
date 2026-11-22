@@ -158,10 +158,13 @@ func (g *Git) fetch(ctx context.Context, repoDir, url, refspec string, token Tok
 // of them.
 func classifyFetch(stderr string, shallow bool) error {
 	if shallow {
-		for _, m := range []string{"Repository not found", "' not found", "returned error: 403", "returned error: 404"} {
+		for _, m := range []string{"Repository not found", "returned error: 403", "returned error: 404"} {
 			if strings.Contains(stderr, m) {
 				return ErrRepoAccess
 			}
+		}
+		if strings.Contains(stderr, "fatal: repository '") && strings.Contains(stderr, "' not found") {
+			return ErrRepoAccess
 		}
 	}
 	if strings.Contains(stderr, "couldn't find remote ref") || (shallow && strings.Contains(stderr, "not our ref")) {
