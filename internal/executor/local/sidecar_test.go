@@ -397,3 +397,37 @@ func TestSidecarOldHandle(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// accessGit fails every fetch with gitx.ErrRepoAccess.
+type accessGit struct {
+	*countGit
+}
+
+func (a accessGit) FetchShallow(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error {
+	a.fetches.Add(1)
+	return gitx.ErrRepoAccess
+}
+
+func TestSidecarRepoAccessIsPermanent(t *testing.T) {
+	sf := newSidecarFixture(t)
+	ag := accessGit{sf.cg}
+	sf.opts.SidecarGit = ag
+	l, err := New(sf.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sf.l = l
+	j := sf.sjob("main")
+	j.Sidecar.Name = "vpe-specs"
+	_, err = sf.l.Prepare(context.Background(), j)
+	if !errors.Is(err, gitx.ErrRepoAccess) || errors.Is(err, executor.ErrClone) {
+		t.Fatalf("err = %v; want ErrRepoAccess and not ErrClone", err)
+	}
+	if !strings.Contains(err.Error(), `"vpe-specs"`) {
+		t.Errorf("error does not name the sidecar key: %v", err)
+	}
+	if n := sf.cg.fetches.Load(); n != 1 {
+		t.Errorf("fetches = %d; want 1", n)
+	}
+	sf.assertCleanFailure(t, j)
+}

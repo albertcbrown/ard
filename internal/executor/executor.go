@@ -49,6 +49,7 @@ type Job struct {
 
 // Sidecar is a read-only companion repo the executor clones for the job.
 type Sidecar struct {
+	Name string // config key, for messages
 	Repo string // "owner/name"
 	Ref  string // branch, tag or full 40-hex SHA (gitref.Check)
 }

@@ -183,6 +183,7 @@ func (r *Resolved) HostUntrusted() []Role {
 }
 
 // SidecarFor returns the sidecar the role mounts; ok is false when it has none.
+// Loops set executor.Sidecar.Name from role.Sidecar so errors name the key.
 func (r *Resolved) SidecarFor(role Role) (sc Sidecar, ok bool) {
 	if role.Sidecar == "" {
 		return Sidecar{}, false

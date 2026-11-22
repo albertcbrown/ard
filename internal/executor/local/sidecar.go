@@ -83,14 +83,14 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 	ctx, cancel := context.WithTimeout(ctx, l.sidecarTimeout)
 	defer cancel()
 	wrap := func(e error) error {
-		if errors.Is(e, gitx.ErrRefNotFound) {
-			return fmt.Errorf("sidecar %s@%s: %w", s.Repo, s.Ref, e)
+		if permanentFetch(e) {
+			return fmt.Errorf("sidecar %q (%s@%s): %w", s.Name, s.Repo, s.Ref, e)
 		}
-		return fmt.Errorf("sidecar %s@%s: %w: %w", s.Repo, s.Ref, executor.ErrClone, e)
+		return fmt.Errorf("sidecar %q (%s@%s): %w: %w", s.Name, s.Repo, s.Ref, executor.ErrClone, e)
 	}
 	cache, err := l.sidecarCache(jobRepo, s.Repo)
 	if err != nil {
-		return "", false, fmt.Errorf("sidecar %s@%s: %w", s.Repo, s.Ref, err)
+		return "", false, fmt.Errorf("sidecar %q (%s@%s): %w", s.Name, s.Repo, s.Ref, err)
 	}
 	unlock, err := l.lockSidecar(ctx, cache)
 	if err != nil {
@@ -137,7 +137,7 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 		}
 		fetched = true
 		ferr := fetch()
-		if ferr != nil && !errors.Is(ferr, gitx.ErrRefNotFound) && ctx.Err() == nil {
+		if ferr != nil && !permanentFetch(ferr) && ctx.Err() == nil {
 			if rerr := reinit(); rerr != nil {
 				return "", fetched, wrap(errors.Join(ferr, rerr))
 			}
@@ -154,7 +154,13 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 		}
 	}
 	if err := l.sgit.ExportTree(ctx, cache, sha, dest); err != nil {
-		return "", fetched, fmt.Errorf("sidecar %s@%s: export: %w", s.Repo, s.Ref, err)
+		return "", fetched, fmt.Errorf("sidecar %q (%s@%s): export: %w", s.Name, s.Repo, s.Ref, err)
 	}
 	return sha, fetched, nil
+}
+
+// permanentFetch reports a fetch failure a retry cannot fix: a missing ref
+// or a repository that is missing or unreadable.
+func permanentFetch(err error) bool {
+	return errors.Is(err, gitx.ErrRefNotFound) || errors.Is(err, gitx.ErrRepoAccess)
 }

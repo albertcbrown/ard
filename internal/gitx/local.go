@@ -47,6 +47,11 @@ func (g *Git) worktreeLock(ctx context.Context, repoDir string) (func(), error) 
 // ErrRefNotFound means a fetch named a remote ref that does not exist.
 var ErrRefNotFound = errors.New("gitx: remote ref not found")
 
+// ErrRepoAccess means a fetch got a 404 or 403 from the remote: the
+// repository does not exist or the credential cannot read it. Retrying
+// cannot help.
+var ErrRepoAccess = errors.New("repository not found or access denied")
+
 // Change is one entry of the staged diff.
 type Change struct {
 	Path    string
@@ -141,10 +146,26 @@ func (g *Git) fetch(ctx context.Context, repoDir, url, refspec string, token Tok
 	}
 	_, stderr, err := g.run(ctx, repoDir, env, "", secrets, append(args, url, refspec)...)
 	if err != nil {
-		if strings.Contains(stderr, "couldn't find remote ref") || (shallow && strings.Contains(stderr, "not our ref")) {
-			return fmt.Errorf("gitx: fetch %s: %w", refspec, ErrRefNotFound)
+		if cerr := classifyFetch(stderr, shallow); cerr != nil {
+			return fmt.Errorf("gitx: fetch %s: %w", refspec, cerr)
 		}
 		return fmt.Errorf("gitx: fetch %s: %w", refspec, err)
+	}
+	return nil
+}
+
+// classifyFetch maps git's stderr to a typed cause, or nil when it is none
+// of them.
+func classifyFetch(stderr string, shallow bool) error {
+	if shallow {
+		for _, m := range []string{"Repository not found", "' not found", "returned error: 403", "returned error: 404"} {
+			if strings.Contains(stderr, m) {
+				return ErrRepoAccess
+			}
+		}
+	}
+	if strings.Contains(stderr, "couldn't find remote ref") || (shallow && strings.Contains(stderr, "not our ref")) {
+		return ErrRefNotFound
 	}
 	return nil
 }

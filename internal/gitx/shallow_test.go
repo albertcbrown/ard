@@ -182,3 +182,27 @@ func TestExportTree(t *testing.T) {
 		}
 	})
 }
+
+func TestClassifyFetch(t *testing.T) {
+	tests := []struct {
+		stderr  string
+		shallow bool
+		want    error
+	}{
+		{"remote: Repository not found.\nfatal: repository 'x' not found", true, ErrRepoAccess},
+		{"fatal: repository 'https://github.com/a/b.git/' not found", true, ErrRepoAccess},
+		{"fatal: unable to access 'u': The requested URL returned error: 403", true, ErrRepoAccess},
+		{"fatal: unable to access 'u': The requested URL returned error: 404", true, ErrRepoAccess},
+		{"fatal: couldn't find remote ref nope", true, ErrRefNotFound},
+		{"fatal: couldn't find remote ref nope", false, ErrRefNotFound},
+		{"fatal: not our ref abc", true, ErrRefNotFound},
+		{"fatal: not our ref abc", false, nil},
+		{"The requested URL returned error: 404", false, nil},
+		{"fatal: Could not resolve host", true, nil},
+	}
+	for _, tc := range tests {
+		if got := classifyFetch(tc.stderr, tc.shallow); got != tc.want {
+			t.Errorf("classifyFetch(%q, %v) = %v; want %v", tc.stderr, tc.shallow, got, tc.want)
+		}
+	}
+}
