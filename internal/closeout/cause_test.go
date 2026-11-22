@@ -228,3 +228,117 @@ func TestResumeJobAndBusy(t *testing.T) {
 		t.Errorf("labels = %v", l)
 	}
 }
+
+var limitReset = time.Date(2026, 11, 22, 15, 45, 0, 0, time.UTC)
+
+func limitCause() Cause {
+	return Cause{Kind: CauseUsageLimit, Detail: "session limit", Transient: true, Family: "", ResetsAt: limitReset}
+}
+
+// A usage-limit stop is not a failure: only :running comes off, the request
+// label stays, and the job keeps its retry budget.
+func TestCauseUsageLimit(t *testing.T) {
+	e := newEnv(t)
+	if err := e.gh.AddLabels(context.Background(), 7, "ard:worker:engineer"); err != nil {
+		t.Fatal(err)
+	}
+	j := e.causeJob(StageWorker, "engineer", limitCause())
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeLimited {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	if l := e.labels(7); !l["ard:worker:engineer"] || l["ard:worker:engineer:running"] || l["ard:executor:failed"] || l["ard:needs-human"] {
+		t.Errorf("labels = %v", l)
+	}
+	sj := e.sjob(j.ID)
+	if sj.Status != state.StatusFailed || !sj.LimitStop || sj.AutoRetry {
+		t.Errorf("job = %+v", sj)
+	}
+	if evs, _ := e.store.Events(context.Background(), state.EventFilter{Kind: state.EventUsageLimit}); len(evs) != 1 {
+		t.Errorf("usage_limit events = %d", len(evs))
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, time.Time{})
+	if len(cs) != 1 {
+		t.Fatalf("comments = %d", len(cs))
+	}
+	for _, want := range []string{"usage limit", "Paused for usage limit until 2026-11-22 15:45 UTC (account)", "re-runs after the reset", "Kept until"} {
+		if !strings.Contains(cs[0].Body, want) {
+			t.Errorf("comment lacks %q:\n%s", want, cs[0].Body)
+		}
+	}
+	next, err := e.store.CreateJob(context.Background(), state.NewJob{Stage: StageWorker, Role: "engineer", Issue: 7})
+	if err != nil || next.AfterLimit != j.ID || next.RetryOf != "" {
+		t.Errorf("next = %+v, %v", next, err)
+	}
+}
+
+// The limit plan wins over a Retry flag: a limit never hands off to the retry.
+func TestCauseUsageLimitIgnoresRetryFlag(t *testing.T) {
+	e := newEnv(t)
+	c := limitCause()
+	c.Retry = true
+	j := e.causeJob(StageWorker, "engineer", c)
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeLimited {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	if sj := e.sjob(j.ID); sj.AutoRetry {
+		t.Errorf("job = %+v", sj)
+	}
+}
+
+func TestLimitedPlanLabels(t *testing.T) {
+	j := Job{ID: "J", Issue: 7, Stage: StageWorker, Role: "engineer"}
+	p := limitedPlan(j, "usage_limit: weekly limit")
+	if p.Outcome != OutcomeLimited || len(p.Terminal) != 0 || len(p.Requests) != 0 ||
+		len(p.Remove) != 1 || p.Remove[0] != (Label{7, "ard:worker:engineer:running"}) {
+		t.Errorf("plan = %+v", p)
+	}
+}
+
+// A worker that hit a limit before its first push has no branch to commit the
+// log to; the limit stop must stay a limit stop.
+func TestCauseUsageLimitCommitFailureKeepsOutcome(t *testing.T) {
+	e := newEnv(t)
+	e.cm.err = committer.ErrBranchGone
+	j := e.causeJob(StageWorker, "engineer", limitCause())
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeLimited {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	if l := e.labels(7); l["ard:executor:failed"] {
+		t.Errorf("labels = %v", l)
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, time.Time{})
+	if len(cs) != 1 || !strings.Contains(cs[0].Body, "log not committed") || !strings.Contains(cs[0].Body, "Paused for usage limit") {
+		t.Errorf("comments = %+v", cs)
+	}
+}
+
+// A record resumed from phase committed finishes with exactly one comment.
+func TestCauseUsageLimitResume(t *testing.T) {
+	e := newEnv(t)
+	j := e.causeJob(StageTriage, "lead", limitCause())
+	e.d = e.deps(0)
+	e.fstore.failAt = 3
+	c := New(e.d)
+	if _, err := c.Run(context.Background(), j); err == nil {
+		t.Fatal("expected the injected store failure")
+	}
+	e.fstore.failAt = 0
+	if sj := e.sjob(j.ID); sj.CloseoutPhase != string(PhaseCommitted) {
+		t.Fatalf("phase = %q", sj.CloseoutPhase)
+	}
+	out, err := c.ResumeJob(context.Background(), j.ID)
+	if err != nil || out != OutcomeLimited {
+		t.Fatalf("ResumeJob = %s, %v", out, err)
+	}
+	if e.markerComments(7, j.ID) != 1 {
+		t.Error("want exactly one comment")
+	}
+	// The resumed record still carries the reset time.
+	rec, err := decode(e.sjob(j.ID))
+	if err != nil || !rec.Job.Cause.ResetsAt.Equal(limitReset) {
+		t.Errorf("record = %+v, %v", rec.Job.Cause, err)
+	}
+}

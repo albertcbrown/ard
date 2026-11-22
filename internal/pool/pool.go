@@ -22,9 +22,10 @@ const (
 	DeniedIssueBusy         // triage only: a triage job on the same issue is held or granted earlier in the batch
 	DeniedDuplicate         // same key already held, or earlier in this batch
 	DeniedInvalid           // malformed candidate (caller bug)
+	DeniedLimited           // its account or model family is out of quota until a reset time
 )
 
-var verdictNames = [...]string{"granted", "full", "outranked", "issue-busy", "duplicate", "invalid"}
+var verdictNames = [...]string{"granted", "full", "outranked", "issue-busy", "duplicate", "invalid", "limited"}
 
 // String returns the verdict's log name.
 func (v Verdict) String() string {
@@ -55,6 +56,11 @@ type Options struct {
 	Log         *slog.Logger     // nil means discard
 	Held        []Held           // running jobs from state; held even if they exceed Max
 	StarveAfter time.Duration    // 0 means 24h
+	// Limited reports when a candidate may next start because its account or
+	// model family is out of quota: zero or a past time means it may start
+	// now. nil disables the check. A limited candidate takes no slot and
+	// reserves no demand: it does not hold lower classes back.
+	Limited func(c Candidate) time.Time
 }
 
 // Pool is the in-memory slot arbiter. One mutex guards all state; there are
@@ -65,6 +71,7 @@ type Pool struct {
 	now         func() time.Time
 	log         *slog.Logger
 	starveAfter time.Duration
+	limited     func(c Candidate) time.Time
 	held        map[string]*Slot
 	demand      map[string]*loopDemand
 	firstDenied map[string]time.Time
@@ -78,6 +85,7 @@ func New(o Options) *Pool {
 		now:         o.Now,
 		log:         o.Log,
 		starveAfter: o.StarveAfter,
+		limited:     o.Limited,
 		held:        map[string]*Slot{},
 		demand:      map[string]*loopDemand{},
 		firstDenied: map[string]time.Time{},
@@ -161,6 +169,13 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 		if p.held[k] != nil || inBatch[k] {
 			decisions[i].Verdict, decisions[i].Reason = DeniedDuplicate, "already held or offered earlier in this batch"
 			continue
+		}
+		if p.limited != nil {
+			if until := p.limited(c); now.Before(until) {
+				decisions[i].Verdict = DeniedLimited
+				decisions[i].Reason = "usage limit until " + until.UTC().Format("15:04") + " UTC"
+				continue
+			}
 		}
 		inBatch[k] = true
 		items = append(items, item{c, i})

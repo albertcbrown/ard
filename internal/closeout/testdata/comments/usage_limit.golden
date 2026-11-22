@@ -1,0 +1,13 @@
+<!-- ard:closeout job=01JTEST attempt=1 -->
+**ard · worker:eng · usage limit**
+
+`usage_limit: opus limit`
+
+Output: log [.ard/7/logs/worker-eng-20260102T030405Z.log](https://github.com/o/r/blob/abc123/.ard/7/logs/worker-eng-20260102T030405Z.log) · job `01JTEST` · attempt 1
+Paused for usage limit until 2026-11-22 15:45 UTC (opus); re-runs after the reset.
+Kept until 2026-01-03 03:04 UTC (worktree and host files of job `01JTEST`); add `ard:keep` to hold them longer.
+
+Last 50 log lines:
+```
+last line
+```

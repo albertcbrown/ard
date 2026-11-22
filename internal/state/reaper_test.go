@@ -230,11 +230,11 @@ func TestUpgradeFromInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var max int
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&max); err != nil || max != 3 {
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&max); err != nil || max != 4 {
 		t.Fatalf("schema version = %d, %v", max, err)
 	}
 	j, err := s.Job(ctx, "OLD")
-	if err != nil || j.Branch != "" || j.RetryOf != "" || j.AutoRetry || j.KillReason != "" {
+	if err != nil || j.Branch != "" || j.RetryOf != "" || j.AutoRetry || j.KillReason != "" || j.LimitStop || j.AfterLimit != "" {
 		t.Fatalf("old row = %+v, %v", j, err)
 	}
 	n := versions(s)
@@ -247,4 +247,98 @@ func TestUpgradeFromInit(t *testing.T) {
 	if versions(s2) != n {
 		t.Errorf("reopen added schema_version rows")
 	}
+}
+
+func TestFailLimited(t *testing.T) {
+	ctx := tctx(t)
+	s := newStore(t)
+	j := claim(t, s, "eng", 5)
+	if err := s.FailLimited(ctx, j.ID, "usage_limit: session limit", t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Job(ctx, j.ID)
+	if got.Status != StatusFailed || !got.LimitStop || got.AutoRetry || got.FailReason == "" || got.KeepUntil.IsZero() {
+		t.Errorf("job = %+v", got)
+	}
+	if evs, _ := s.Events(ctx, EventFilter{Kind: EventUsageLimit}); len(evs) != 1 {
+		t.Errorf("usage_limit events = %d, want 1", len(evs))
+	}
+	if evs, _ := s.Events(ctx, EventFilter{Kind: EventFailure}); len(evs) != 0 {
+		t.Errorf("failure events = %d, want 0: a limit stop is not a failure", len(evs))
+	}
+	if err := s.FailLimited(ctx, j.ID, "again", time.Time{}); err != nil { // repeating is a no-op
+		t.Errorf("repeat: %v", err)
+	}
+	if err := s.Complete(ctx, j.ID, nil); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("complete after limit stop: %v", err)
+	}
+}
+
+func TestLimitStopLinkage(t *testing.T) {
+	ctx := tctx(t)
+	t.Run("a fresh job's limit stop leaves its retry unused", func(t *testing.T) {
+		s := newStore(t)
+		b := claim(t, s, "eng", 5)
+		if err := s.FailLimited(ctx, b.ID, "limit", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		c := claim(t, s, "eng", 5)
+		if c.AfterLimit != b.ID || c.RetryOf != "" {
+			t.Fatalf("c = after_limit %q retry_of %q, want %q and empty", c.AfterLimit, c.RetryOf, b.ID)
+		}
+		// c fails transiently: its one automatic retry is still there.
+		if err := s.FailRetry(ctx, c.ID, "rate_limit", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		d := claim(t, s, "eng", 5)
+		if d.RetryOf != c.ID || d.AfterLimit != "" {
+			t.Errorf("d = %+v, want retry_of %s", d, c.ID)
+		}
+	})
+	t.Run("a limit stop of an automatic retry keeps the link and grants no second retry", func(t *testing.T) {
+		s := newStore(t)
+		a := claim(t, s, "eng", 5)
+		if err := s.FailRetry(ctx, a.ID, "rate_limit", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		b := claim(t, s, "eng", 5)
+		if b.RetryOf != a.ID {
+			t.Fatalf("b = %+v", b)
+		}
+		if err := s.FailLimited(ctx, b.ID, "limit", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		c := claim(t, s, "eng", 5)
+		if c.AfterLimit != b.ID || c.RetryOf != a.ID {
+			t.Fatalf("c = after_limit %q retry_of %q, want %q and %q", c.AfterLimit, c.RetryOf, b.ID, a.ID)
+		}
+	})
+	t.Run("only the first claim after a limit stop is linked", func(t *testing.T) {
+		s := newStore(t)
+		b := claim(t, s, "eng", 5)
+		_ = s.FailLimited(ctx, b.ID, "limit", time.Time{})
+		c := claim(t, s, "eng", 5)
+		if err := s.Fail(ctx, c.ID, "x", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		if d := claim(t, s, "eng", 5); d.AfterLimit != "" || d.RetryOf != "" {
+			t.Errorf("d = %+v", d)
+		}
+	})
+	t.Run("another issue or role is never linked, nor a plain failure", func(t *testing.T) {
+		s := newStore(t)
+		b := claim(t, s, "eng", 5)
+		_ = s.FailLimited(ctx, b.ID, "limit", time.Time{})
+		if o := claim(t, s, "eng", 6); o.AfterLimit != "" {
+			t.Errorf("other issue linked: %+v", o)
+		}
+		if o := claim(t, s, "other", 5); o.AfterLimit != "" {
+			t.Errorf("other role linked: %+v", o)
+		}
+		p := claim(t, s, "plain", 5)
+		_ = s.Fail(ctx, p.ID, "x", time.Time{})
+		if q := claim(t, s, "plain", 5); q.AfterLimit != "" {
+			t.Errorf("plain failure linked: %+v", q)
+		}
+	})
 }

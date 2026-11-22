@@ -53,14 +53,16 @@ func heldJobs(ctx context.Context, l jobLister) ([]pool.Held, error) {
 	return out, nil
 }
 
-// adoptPool builds the slot pool holding every job already running.
-func adoptPool(ctx context.Context, l jobLister, maxPods int, log *slog.Logger) (*pool.Pool, error) {
+// adoptPool builds the slot pool holding every job already running. limited,
+// when non-nil, is the pool's Options.Limited: it keeps candidates whose
+// account or model family is out of quota from starting.
+func adoptPool(ctx context.Context, l jobLister, maxPods int, log *slog.Logger, limited func(pool.Candidate) time.Time) (*pool.Pool, error) {
 	held, err := heldJobs(ctx, l)
 	if err != nil {
 		return nil, err
 	}
 	log.Info("pool.adopt", "held", len(held), "max", maxPods)
-	return pool.New(pool.Options{Max: maxPods, Held: held, Log: log}), nil
+	return pool.New(pool.Options{Max: maxPods, Held: held, Log: log, Limited: limited}), nil
 }
 
 // scannerJobStore is what retiring stale scanner jobs needs; *state.Store

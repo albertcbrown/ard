@@ -44,6 +44,14 @@ func TestRenderComment(t *testing.T) {
 			KeepUntil: time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC)}}, false},
 		{"retry_tail_withheld", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeRetry, Reason: "rate_limit: API status 429",
 			TailWithheld: true, KeepUntil: time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC)}}, false},
+		{"usage_limit", Record{Job: Job{ID: "01JTEST", Issue: 7, Stage: StageWorker, Role: "eng", Attempt: 1,
+			Cause: Cause{Kind: CauseUsageLimit, Family: "opus", ResetsAt: time.Date(2026, 11, 22, 15, 45, 0, 0, time.UTC)}},
+			SHA: "abc123", Plan: Plan{Outcome: OutcomeLimited, Reason: "usage_limit: opus limit",
+				LogPath: ".ard/7/logs/worker-eng-20260102T030405Z.log", Tail: "last line",
+				KeepUntil: time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC)}}, false},
+		{"usage_limit_account_no_time", Record{Job: Job{ID: "01JTEST", Issue: 7, Stage: StageWorker, Role: "eng", Attempt: 1,
+			Cause: Cause{Kind: CauseUsageLimit}},
+			Plan: Plan{Outcome: OutcomeLimited, Reason: "usage_limit: usage limit"}}, false},
 		{"truncated", Record{Job: lead, SHA: "abc123", Plan: Plan{Outcome: OutcomeDone, Summary: long, RolePath: ".ard/7/triage-lead.md"}}, false},
 	}
 	for _, tc := range tests {

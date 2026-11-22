@@ -11,6 +11,7 @@ import (
 	"github.com/albertcbrown/ard/internal/agent"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/limits"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -41,12 +42,15 @@ type Finisher struct {
 	// Start is when this serve process started: a job created before it
 	// belongs to a previous process (see CauseOf).
 	Start time.Time
-	// Classify is the hook for a cause CauseOf cannot see, such as a usage
-	// limit (#81, #63). When it reports ok its cause replaces CauseOf's. nil
-	// means none. A usage-limit cause must have Retry false so it does not use
-	// up the one automatic retry.
+	// Classify is the hook for a cause CauseOf cannot see: serve sets it to
+	// UsageLimitClassifier. When it reports ok its cause replaces CauseOf's.
+	// nil means none. A usage-limit cause must have Retry false so it does not
+	// use up the one automatic retry.
 	Classify func(res agent.Result) (closeout.Cause, bool)
-	Log      *slog.Logger
+	// Limits records a usage-limit stop so the pool starts no job into the
+	// limit. nil records nothing.
+	Limits LimitRecorder
+	Log    *slog.Logger
 }
 
 func (f *Finisher) log() *slog.Logger {
@@ -181,6 +185,17 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	if cause.Kind == "" {
 		cause = CauseOf(sj, st, res, f.Start)
 	}
+	// A usage-limit stop is recorded before anything else, so the pool blocks
+	// the account no later than the comment says. An error here is returned
+	// with nothing posted and the next tick retries: no job may start into a
+	// limit the book could not record (fail closed).
+	if cause.Kind == closeout.CauseUsageLimit && f.Limits != nil {
+		until, err := f.Limits.Exhaust(ctx, cause.Family, cause.ResetsAt)
+		if err != nil {
+			return "", fmt.Errorf("finish job %s: record usage limit: %w", jobID, err)
+		}
+		cause.ResetsAt = until
+	}
 	cj := CloseoutJob(sj, h, st, cause, res)
 	cj.Worker, cj.ExtraLogs, cj.Review = o.Worker, o.ExtraLogs, o.Review
 	// End the attempt before close-out: a crash after it leaves a resumable
@@ -200,18 +215,39 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	if err != nil {
 		return "", fmt.Errorf("finish job %s: %w", jobID, err)
 	}
-	f.log().Info("reaper.finish", "job", jobID, "issue", sj.Issue, "stage", sj.Stage, "role", sj.Role,
-		"cause", string(cause.Kind), "outcome", string(out), "retry", cause.Retry)
+	attrs := []any{"job", jobID, "issue", sj.Issue, "stage", sj.Stage, "role", sj.Role,
+		"cause", string(cause.Kind), "outcome", string(out), "retry", cause.Retry}
+	if cause.Kind == closeout.CauseUsageLimit {
+		attrs = append(attrs, "family", cause.Family, "until", cause.ResetsAt.UTC())
+	}
+	f.log().Info("reaper.finish", append(attrs, usageAttrs(res)...)...)
+	if res.OK && cause.Kind == "" && (out == closeout.OutcomeDone || out == closeout.OutcomeChanges) && f.Limits != nil {
+		// A job that ended well proves the account is usable: the no-reset
+		// backoff starts over. Best effort.
+		if err := f.Limits.Succeeded(ctx, limits.FamilyOf(res.Model)); err != nil {
+			f.log().Warn("reaper.limits_succeeded", "job", jobID, "error", err)
+		}
+	}
 	f.Tidy(ctx, sj, h, out)
 	return out, nil
 }
 
+// usageAttrs are the token totals for the reaper.finish event. Storing them
+// is #57 and #64.
+func usageAttrs(res agent.Result) []any {
+	if res.Usage == nil {
+		return nil
+	}
+	u := res.Usage
+	return []any{"tokens_in", u.Input, "tokens_out", u.Output, "tokens_cache_write", u.CacheWrite, "tokens_cache_read", u.CacheRead}
+}
+
 // Tidy removes the worktree of a closed-out job unless the outcome keeps it
-// (failed, retry, needs-human), and marks the job cleaned when it did. It logs
+// (failed, retry, usage-limit, needs-human), and marks the job cleaned when it did. It logs
 // and ignores errors: close-out is already done and retention retries later.
 func (f *Finisher) Tidy(ctx context.Context, sj state.Job, h executor.Handle, out closeout.Outcome) {
 	switch out {
-	case closeout.OutcomeFailed, closeout.OutcomeRetry, closeout.OutcomeNeedsHuman:
+	case closeout.OutcomeFailed, closeout.OutcomeRetry, closeout.OutcomeLimited, closeout.OutcomeNeedsHuman:
 		if h.JobID != "" && f.Cleaner != nil {
 			if err := f.Cleaner.Cleanup(ctx, h, executor.CleanupOptions{KeepWorktree: true}); err != nil {
 				f.log().Warn("reaper.cleanup", "job", sj.ID, "error", err)

@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"s","model":"claude-test","claude_code_version":"2.1.328","tools":["Read"],"mcp_servers":[]}
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":500,"error_status":429,"error":"rate_limit","uuid":"u1","session_id":"s"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795000000,"rateLimitType":"seven_day"},"uuid":"u2","session_id":"s"}
+{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your weekly limit · resets Mon 12:00am"}]},"session_id":"s"}
+{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"terminal_reason":"api_error","duration_ms":1200,"num_turns":1,"total_cost_usd":0,"session_id":"s","result":"You've hit your weekly limit · resets Mon 12:00am","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}

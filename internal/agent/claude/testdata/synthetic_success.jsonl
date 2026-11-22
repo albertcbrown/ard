@@ -1,4 +1,0 @@
-{"type":"system","subtype":"init","session_id":"sess-1","model":"claude-test","claude_code_version":"2.1.328","tools":["Read"],"mcp_servers":[]}
-{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}
-{"type":"user","message":{"content":[{"type":"tool_result","content":"x"}]}}
-{"type":"result","subtype":"success","is_error":false,"duration_ms":4200,"num_turns":7,"total_cost_usd":0.42,"session_id":"sess-1b","result":"done","permission_denials":[{"tool_name":"Bash"}],"terminal_reason":"completed"}

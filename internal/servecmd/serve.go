@@ -28,6 +28,7 @@ import (
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/limits"
 	"github.com/albertcbrown/ard/internal/modelauth"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/reaper"
@@ -199,7 +200,10 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 				if err := failStaleScannerJobs(ctx, store, cl, log); err != nil {
 					return err
 				}
-				p, err := adoptPool(ctx, store, w.MaxPods, log)
+				if _, err := w.limitsBook(ctx); err != nil {
+					return err
+				}
+				p, err := adoptPool(ctx, store, w.MaxPods, log, w.limitedFor)
 				if err != nil {
 					return err
 				}
@@ -273,6 +277,7 @@ type wiring struct {
 	exec   *local.Local
 	fin    *reaper.Finisher
 	rp     *reaper.Reaper
+	lim    *limits.Book
 
 	mu      sync.Mutex
 	closers []func(context.Context)

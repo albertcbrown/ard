@@ -212,12 +212,34 @@ func (r *Reaper) resume(ctx context.Context, sj state.Job, usePool bool) error {
 		return fmt.Errorf("reap job %s: resume: %w", sj.ID, err)
 	}
 	r.log().Info("reaper.resume", "job", sj.ID, "issue", sj.Issue, "stage", sj.Stage, "role", sj.Role, "outcome", string(out))
+	if out == closeout.OutcomeLimited {
+		r.rerecordLimit(ctx, sj)
+	}
 	h, _ := decodeHandle(sj.Handle)
 	r.d.Finisher.Tidy(ctx, sj, h, out)
 	if usePool {
 		r.releaseAdopted(sj)
 	}
 	return nil
+}
+
+// rerecordLimit records a resumed usage-limit stop in the limits book again.
+// It covers a crash between Exhaust and a lost meta write, and is idempotent.
+// A pause that has already ended is not recorded. A failure is logged: the
+// close-out is done, and the book still holds the pause unless its own write
+// failed, in which case the next stop records it.
+func (r *Reaper) rerecordLimit(ctx context.Context, sj state.Job) {
+	fin := r.d.Finisher
+	if fin == nil || fin.Limits == nil {
+		return
+	}
+	family, resetsAt, ok := recordedLimit(sj.CloseoutPlan)
+	if !ok || !resetsAt.After(r.now()) {
+		return
+	}
+	if _, err := fin.Limits.Exhaust(ctx, family, resetsAt); err != nil {
+		r.log().Error("reaper.limits_rerecord_failed", "job", sj.ID, "error", err)
+	}
 }
 
 // Tick runs one poll. Every step is best effort per job: errors are collected
@@ -362,6 +384,8 @@ func (r *Reaper) finish(ctx context.Context, sj state.Job, h executor.Handle, st
 	switch out {
 	case closeout.OutcomeRetry:
 		ev = "reaper.retry"
+	case closeout.OutcomeLimited:
+		ev = "reaper.usage_limit"
 	case closeout.OutcomeDone, closeout.OutcomeChanges, closeout.OutcomeStale, closeout.OutcomeNeedsHuman:
 		ev = "reaper.closeout"
 	}

@@ -51,6 +51,12 @@ type Job struct {
 	AutoRetry bool
 	// KillReason is why the Reaper killed the job, set before the kill.
 	KillReason string
+	// LimitStop is true when this failed job stopped at a usage limit. It is
+	// not a failure and uses up no retry: count failures by the "failure"
+	// event, not the status.
+	LimitStop bool
+	// AfterLimit is the id of the usage-limited job this job re-runs.
+	AfterLimit string
 }
 
 // NewJob describes a claim. Data goes on the claim event.
@@ -63,20 +69,20 @@ type NewJob struct {
 
 const jobCols = `id, stage, role, issue, pr, status, attempt, handle, closeout_phase, closeout_plan,
 	fail_reason, keep_until, cleaned_at, cost_usd, created_at, updated_at, ended_at,
-	branch, retry_of, auto_retry, kill_reason`
+	branch, retry_of, auto_retry, kill_reason, limit_stop, after_limit`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanJob(r scanner) (Job, error) {
 	var j Job
 	var pr, keep, cleaned, ended sql.NullInt64
-	var handle, phase, plan, reason, branch, retryOf, killReason sql.NullString
-	var autoRetry int
+	var handle, phase, plan, reason, branch, retryOf, killReason, afterLimit sql.NullString
+	var autoRetry, limitStop int
 	var cost sql.NullFloat64
 	var created, updated int64
 	if err := r.Scan(&j.ID, &j.Stage, &j.Role, &j.Issue, &pr, &j.Status, &j.Attempt, &handle, &phase, &plan,
 		&reason, &keep, &cleaned, &cost, &created, &updated, &ended,
-		&branch, &retryOf, &autoRetry, &killReason); err != nil {
+		&branch, &retryOf, &autoRetry, &killReason, &limitStop, &afterLimit); err != nil {
 		return Job{}, err
 	}
 	j.PR = int(pr.Int64)
@@ -94,6 +100,7 @@ func scanJob(r scanner) (Job, error) {
 		j.CostUSD = &c
 	}
 	j.Branch, j.RetryOf, j.KillReason, j.AutoRetry = branch.String, retryOf.String, killReason.String, autoRetry != 0
+	j.LimitStop, j.AfterLimit = limitStop != 0, afterLimit.String
 	j.CreatedAt = time.Unix(created, 0).UTC()
 	j.UpdatedAt = time.Unix(updated, 0).UTC()
 	return j, nil
@@ -121,11 +128,19 @@ func (n NewJob) validate() error {
 // CreateJob is the claim record: in one transaction it mints the ULID,
 // inserts a running job with attempt 0 and appends a "claim" event.
 //
-// If the newest earlier job with the same stage, role and issue failed into
-// an automatic retry (auto_retry = 1) that no job references yet, the new job
-// is that retry and its retry_of points at it. Any other claim, including a
-// human retry after a plain failure, has retry_of unset. Only the first claim
-// after a handoff is linked.
+// If the newest earlier job with the same stage, role and issue stopped at a
+// usage limit (limit_stop = 1) that no job re-runs yet, the new job is its
+// re-run: after_limit points at it and retry_of is copied from it. A limit
+// stop therefore neither uses up nor grants the automatic retry: a fresh job's
+// limit stop leaves its one retry unused, and the limit stop of an automatic
+// retry leaves its re-run still linked to the original, so it gets no second
+// retry.
+//
+// Otherwise, if the newest earlier job that failed into an automatic retry
+// (auto_retry = 1) is referenced by no job yet, the new job is that retry and
+// its retry_of points at it. Any other claim, including a human retry after a
+// plain failure, has retry_of unset. Only the first claim after a handoff or
+// a limit stop is linked.
 func (s *Store) CreateJob(ctx context.Context, n NewJob) (Job, error) {
 	if err := n.validate(); err != nil {
 		return Job{}, fmt.Errorf("create job: %w", err)
@@ -148,12 +163,42 @@ func (s *Store) CreateJob(ctx context.Context, n NewJob) (Job, error) {
 	if n.Branch != "" {
 		branch = n.Branch
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO jobs(id, stage, role, issue, pr, status, attempt, branch, retry_of, created_at, updated_at)
-		VALUES(?,?,?,?,?,'running',0,?,
-		  (SELECT p.id FROM jobs p WHERE p.stage = ? AND p.role = ? AND p.issue = ? AND p.auto_retry = 1
+	var prevID string
+	var prevRetryOf sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT p.id, p.retry_of FROM jobs p
+		WHERE p.stage = ? AND p.role = ? AND p.issue = ?
+		ORDER BY p.created_at DESC, p.id DESC LIMIT 1`, n.Stage, n.Role, n.Issue).Scan(&prevID, &prevRetryOf)
+	var afterLimit, retryOf any
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return Job{}, fmt.Errorf("claim %s/%s issue %d: find previous job: %w", n.Stage, n.Role, n.Issue, err)
+	default:
+		var limited int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs p WHERE p.id = ? AND p.status = 'failed' AND p.limit_stop = 1
+			AND NOT EXISTS (SELECT 1 FROM jobs c WHERE c.after_limit = p.id)`, prevID).Scan(&limited); err != nil {
+			return Job{}, fmt.Errorf("claim %s/%s issue %d: check limit stop: %w", n.Stage, n.Role, n.Issue, err)
+		}
+		if limited > 0 {
+			afterLimit = prevID
+			if prevRetryOf.Valid {
+				retryOf = prevRetryOf.String
+			}
+		}
+	}
+	retryExpr := `(SELECT p.id FROM jobs p WHERE p.stage = ? AND p.role = ? AND p.issue = ? AND p.auto_retry = 1
 		     AND p.status = 'failed' AND NOT EXISTS (SELECT 1 FROM jobs c WHERE c.retry_of = p.id)
-		   ORDER BY p.created_at DESC, p.id DESC LIMIT 1),
-		  ?,?)`, id, n.Stage, n.Role, n.Issue, pr, branch, n.Stage, n.Role, n.Issue, now.Unix(), now.Unix()); err != nil {
+		   ORDER BY p.created_at DESC, p.id DESC LIMIT 1)`
+	args := []any{id, n.Stage, n.Role, n.Issue, pr, branch}
+	if afterLimit != nil {
+		retryExpr = `?`
+		args = append(args, retryOf)
+	} else {
+		args = append(args, n.Stage, n.Role, n.Issue)
+	}
+	args = append(args, afterLimit, now.Unix(), now.Unix())
+	if _, err := tx.ExecContext(ctx, `INSERT INTO jobs(id, stage, role, issue, pr, status, attempt, branch, retry_of, after_limit, created_at, updated_at)
+		VALUES(?,?,?,?,?,'running',0,?,`+retryExpr+`,?,?,?)`, args...); err != nil {
 		if isUnique(err) {
 			return Job{}, fmt.Errorf("claim %s/%s issue %d: %w", n.Stage, n.Role, n.Issue, ErrConflict)
 		}
@@ -445,9 +490,19 @@ func (s *Store) Attempts(ctx context.Context, id string) ([]Attempt, error) {
 	return out, nil
 }
 
+// endMark says how a failed job hands off: nowhere (a plain failure), to one
+// automatic retry, or to a re-run after a usage limit.
+type endMark int
+
+const (
+	markNone endMark = iota
+	markAutoRetry
+	markLimitStop
+)
+
 // finish moves a running job to a terminal status with its event. Repeating the
 // same transition is a no-op; any other non-running status is ErrNotRunning.
-func (s *Store) finish(ctx context.Context, op, id string, to Status, kind, reason string, keep time.Time, cost *float64, autoRetry bool) error {
+func (s *Store) finish(ctx context.Context, op, id string, to Status, kind, reason string, keep time.Time, cost *float64, mark endMark) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("%s %s: begin: %w", op, id, err)
@@ -474,13 +529,16 @@ func (s *Store) finish(ctx context.Context, op, id string, to Status, kind, reas
 	if reason != "" {
 		r = reason
 	}
-	retry := 0
-	if autoRetry {
+	retry, limited := 0, 0
+	switch mark {
+	case markAutoRetry:
 		retry = 1
+	case markLimitStop:
+		limited = 1
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ?, cost_usd = COALESCE(?, cost_usd), fail_reason = ?,
-		keep_until = ?, ended_at = ?, updated_at = ?, auto_retry = ? WHERE id = ?`,
-		string(to), c, r, sqlitex.ToUnix(keep), now.Unix(), now.Unix(), retry, id); err != nil {
+		keep_until = ?, ended_at = ?, updated_at = ?, auto_retry = ?, limit_stop = ? WHERE id = ?`,
+		string(to), c, r, sqlitex.ToUnix(keep), now.Unix(), now.Unix(), retry, limited, id); err != nil {
 		return fmt.Errorf("%s %s: %w", op, id, err)
 	}
 	var data json.RawMessage
@@ -498,19 +556,28 @@ func (s *Store) finish(ctx context.Context, op, id string, to Status, kind, reas
 
 // Complete marks the job done and appends a "closeout" event.
 func (s *Store) Complete(ctx context.Context, id string, costUSD *float64) error {
-	return s.finish(ctx, "complete job", id, StatusDone, EventCloseout, "", time.Time{}, costUSD, false)
+	return s.finish(ctx, "complete job", id, StatusDone, EventCloseout, "", time.Time{}, costUSD, markNone)
 }
 
 // Fail marks the job failed, records keep_until and appends a "failure" event.
 func (s *Store) Fail(ctx context.Context, id, reason string, keepUntil time.Time) error {
-	return s.finish(ctx, "fail job", id, StatusFailed, EventFailure, reason, keepUntil, nil, false)
+	return s.finish(ctx, "fail job", id, StatusFailed, EventFailure, reason, keepUntil, nil, markNone)
 }
 
 // FailRetry is Fail for a job that hands off to one automatic retry: it also
 // sets auto_retry = 1 and appends a "retry" event instead of "failure". The
 // next claim of the same stage, role and issue becomes the retry (CreateJob).
 func (s *Store) FailRetry(ctx context.Context, id, reason string, keepUntil time.Time) error {
-	return s.finish(ctx, "fail job for retry", id, StatusFailed, EventRetry, reason, keepUntil, nil, true)
+	return s.finish(ctx, "fail job for retry", id, StatusFailed, EventRetry, reason, keepUntil, nil, markAutoRetry)
+}
+
+// FailLimited is Fail for a job that stopped at a usage limit: status stays
+// failed (so the CHECK constraint needs no table rebuild), limit_stop is set
+// and a "usage_limit" event is appended instead of "failure". It uses up no
+// retry; the next claim of the same stage, role and issue re-runs it
+// (CreateJob).
+func (s *Store) FailLimited(ctx context.Context, id, reason string, keepUntil time.Time) error {
+	return s.finish(ctx, "fail job for usage limit", id, StatusFailed, EventUsageLimit, reason, keepUntil, nil, markLimitStop)
 }
 
 // SetKillReason records why the Reaper is about to kill a running job. The

@@ -76,6 +76,8 @@ func headerWord(p Plan) string {
 		return "needs-human"
 	case OutcomeRetry:
 		return "retrying"
+	case OutcomeLimited:
+		return "usage limit"
 	default:
 		return string(p.Outcome)
 	}
@@ -101,11 +103,14 @@ func fenceFor(s string) string {
 // never printed; they would reveal the user's home directory.
 func evidenceLines(r Record) (before []string, tail string) {
 	p := r.Plan
-	if p.Outcome != OutcomeFailed && p.Outcome != OutcomeRetry {
+	if p.Outcome != OutcomeFailed && p.Outcome != OutcomeRetry && p.Outcome != OutcomeLimited {
 		return nil, ""
 	}
 	if p.Outcome == OutcomeRetry {
 		before = append(before, "Retrying once as a new job.")
+	}
+	if p.Outcome == OutcomeLimited {
+		before = append(before, limitLine(r.Job.Cause))
 	}
 	switch {
 	case p.Tail != "":
@@ -120,6 +125,20 @@ func evidenceLines(r Record) (before []string, tail string) {
 			p.KeepUntil.UTC().Format("2006-01-02 15:04 UTC"), r.Job.ID, labels.Keep))
 	}
 	return before, tail
+}
+
+// limitLine says when a usage-limit stop re-runs. The family is a fixed word
+// (opus, sonnet) or "account"; nothing the CLI printed is echoed.
+func limitLine(c Cause) string {
+	who := "account"
+	if c.Family != "" {
+		who = c.Family
+	}
+	if c.ResetsAt.IsZero() {
+		return "Paused for usage limit; re-runs after the reset (" + sanitize(who) + ")."
+	}
+	return fmt.Sprintf("Paused for usage limit until %s (%s); re-runs after the reset.",
+		c.ResetsAt.UTC().Format("2006-01-02 15:04 UTC"), sanitize(who))
 }
 
 // RenderComment builds the close-out comment for a record. In dry-run, or

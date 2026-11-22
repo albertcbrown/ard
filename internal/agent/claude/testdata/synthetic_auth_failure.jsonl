@@ -1,4 +1,0 @@
-{"type":"system","subtype":"ui_invalidate"}
-{"type":"system","subtype":"init","session_id":"s","model":"m","claude_code_version":"2.1.328"}
-{"type":"assistant","error":"authentication_failed","message":{"content":[]}}
-{"type":"result","subtype":"success","is_error":true,"num_turns":1,"total_cost_usd":0,"terminal_reason":"api_error","result":"Not logged in"}

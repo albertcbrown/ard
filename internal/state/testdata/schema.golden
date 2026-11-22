@@ -41,7 +41,7 @@ CREATE TABLE jobs(
   keep_until INTEGER,
   cleaned_at INTEGER,
   cost_usd REAL,
-  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, ended_at INTEGER, branch TEXT, retry_of TEXT, auto_retry INTEGER NOT NULL DEFAULT 0, kill_reason TEXT);
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, ended_at INTEGER, branch TEXT, retry_of TEXT, auto_retry INTEGER NOT NULL DEFAULT 0, kill_reason TEXT, limit_stop INTEGER NOT NULL DEFAULT 0, after_limit TEXT);
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE schema_version(
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL);

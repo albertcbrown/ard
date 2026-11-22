@@ -3,7 +3,7 @@
 // These tests run the real CLI and make no paid model call. One has no API
 // key; the others send a dummy key to a loopback fake that answers 400. Re-run
 // them on every TestedVersion bump (including the OAuth token and API key
-// precedence tests): part of the isolation they pin (AGENTS.md,
+// precedence tests and TestCLIRateLimitStream): part of the isolation they pin (AGENTS.md,
 // and CLAUDE.md, agents and skills under --restricted) is behaviour observed
 // only on the tested release. Settings env isolation is not pinned: no Bash
 // call is scripted.
@@ -119,7 +119,14 @@ func workerArgvAuth(t *testing.T, work string, auth agent.Auth) agent.Command {
 // and the exit code. HOME is its own empty directory, never the worktree.
 func runCLI(t *testing.T, work string, c agent.Command, argv []string, extraEnv ...string) ([]byte, int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	return runCLITimeout(t, 2*time.Minute, work, c, argv, extraEnv...)
+}
+
+// runCLITimeout is runCLI with its own timeout (the capture harness waits
+// minutes for a rejected token).
+func runCLITimeout(t *testing.T, timeout time.Duration, work string, c agent.Command, argv []string, extraEnv ...string) ([]byte, int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = work
@@ -466,5 +473,66 @@ func TestCLIEnvScrubFlipsPermissionMode(t *testing.T) {
 		if got := cliInitEvent(t, out).PermissionMode; got != tc.want {
 			t.Errorf("%q: permissionMode = %q, want %q", tc.extra, got, tc.want)
 		}
+	}
+}
+
+// rateLimitAPI answers every request with 429 and retry-after: 0, a
+// rate-limit error body, as the API does for a throttled account.
+func rateLimitAPI(t *testing.T) (url string, requests func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		n++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"fake rate limit"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n
+	}
+}
+
+// TestCLIRateLimitStream pins the real CLI's stream shape for a throttled
+// request at no cost: a loopback fake answers 429. Observed on 2.1.328: the
+// CLI retries (api_retry, error rate_limit), emits a rate_limit_event with
+// status "rejected" but no resetsAt, and ends is_error with api_error_status
+// 429 and the text "(not your usage limit)". Parse must read that as an
+// ordinary transient failure and not as a usage limit, or every throttle would
+// pause the account. Whether a real usage limit exits or waits, and its exit
+// code, is settled only by a real capture (testdata/CAPTURE.md).
+func TestCLIRateLimitStream(t *testing.T) {
+	work, _ := plantRepo(t)
+	c := workerArgvAuth(t, work, agent.AuthOAuthToken)
+	url, requests := rateLimitAPI(t)
+	proxy, hosts := refusingProxy(t)
+	start := time.Now()
+	out, code := runCLITimeout(t, 5*time.Minute, work, c, c.Argv, "CLAUDE_CODE_OAUTH_TOKEN=ard-dummy-oauth-not-a-token-0000",
+		"ANTHROPIC_BASE_URL="+url, "CLAUDE_CODE_MAX_RETRIES=1",
+		"HTTPS_PROXY="+proxy, "HTTP_PROXY="+proxy, "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost")
+	if hh := hosts(); len(hh) != 0 {
+		t.Errorf("CLI tried to reach outside hosts: %v", hh)
+	}
+	res, err := New(Options{}).Parse(bytes.NewReader(out), code)
+	if err != nil {
+		t.Fatalf("Parse: %v\n%s", err, out)
+	}
+	t.Logf("exit %d after %s, %d requests, api_retry %d, rate_limit_event %d",
+		code, time.Since(start).Round(time.Second), requests(), countEvents(out, "system", "api_retry"), countEvents(out, "rate_limit_event", ""))
+	if res.OK || res.APIErrorStatus != 429 || !res.Transient() {
+		t.Errorf("result = %+v, want a failed transient 429", res)
+	}
+	if res.LimitHit != nil {
+		t.Errorf("LimitHit = %+v: a throttle is not a usage limit\n%s", res.LimitHit, out)
+	}
+	if countEvents(out, "system", "api_retry") == 0 {
+		t.Errorf("no api_retry event:\n%s", out)
 	}
 }

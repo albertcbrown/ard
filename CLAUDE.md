@@ -58,6 +58,7 @@ internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, con
 internal/committer/ the only commit/push path: .ard/<issue#>/ (main lane, per-branch lanes) and worker code on worker/ branches (CommitCode, CheckCodePath)
 internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); per-role write allowlist (WritableFor); every job ends through its Closer
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
+internal/limits/    the book of exhausted usage limits the pool consults (the reactive half; #63 adds readings and thresholds)
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/reviewer/  the reviewer loop: claims `ard:review:<role>` on ard's own PRs, pins the head, runs the agent on the diff, closes out through the shared Finisher (one PR review)
 internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher
