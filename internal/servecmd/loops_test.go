@@ -62,7 +62,7 @@ func TestSelectLoopsUnknownName(t *testing.T) {
 	if !errors.As(err, &ee) || ee.Code != 2 {
 		t.Fatalf("err = %v, want ExitError code 2", err)
 	}
-	for _, s := range []string{`"scaners"`, "scanners, stale, triage, workers, reviewers, reviewfix, merger, janitor, reaper"} {
+	for _, s := range []string{`"scaners"`, "scanners, stale, triage, workers, reviewers, reviewfix, merger, janitor, reaper, budget"} {
 		if !strings.Contains(err.Error(), s) {
 			t.Errorf("error %q does not name %s", err, s)
 		}

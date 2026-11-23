@@ -77,8 +77,7 @@ func (g *Gate) Denied(c pool.Candidate) (bool, string) {
 	if !ok || (kind == config.KindScanner && role.ScanPath != "") {
 		return false, ""
 	}
-	now := g.now().UTC()
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	dayStart := utcDayStart(g.now())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	per, repo, err := g.store.SpendSince(ctx, dayStart)
@@ -116,4 +115,54 @@ func (g *Gate) capped(dayStart time.Time, scope, role string, sp state.Spend, li
 		g.log.Warn("budget.capped", "scope", scope, "role", role, "spent_usd", sp.USD, "cap_usd", limit, "unpriced", sp.Unpriced)
 	}
 	return reason
+}
+
+// utcDayStart is 00:00 UTC of t's UTC day: the one day rule of the gate and
+// the notice loop.
+func utcDayStart(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// Cap is one reached cap. Scope is "repo" or "role"; Stage and Role are empty
+// for the repo cap.
+type Cap struct {
+	Scope, Stage, Role string
+	Spent              state.Spend
+	Limit              float64
+}
+
+// Capped returns every cap reached today (repo first, then roles in config
+// order) and the UTC day start. It applies the rules of Denied, logs nothing.
+func (g *Gate) Capped(ctx context.Context) ([]Cap, time.Time, error) {
+	dayStart := utcDayStart(g.now())
+	cfg := g.cfg()
+	if cfg == nil {
+		return nil, dayStart, nil
+	}
+	per, repo, err := g.store.SpendSince(ctx, dayStart)
+	if err != nil {
+		return nil, dayStart, err
+	}
+	var out []Cap
+	if cfg.BudgetUSDPerDay > 0 && repo.USD >= cfg.BudgetUSDPerDay {
+		out = append(out, Cap{Scope: "repo", Spent: repo, Limit: cfg.BudgetUSDPerDay})
+	}
+	stages := map[config.Kind]string{config.KindScanner: "scanner", config.KindTriage: "triage", config.KindWorker: "worker", config.KindReviewer: "review"}
+	for _, role := range cfg.Roles {
+		if role.Kind == config.KindScanner && role.ScanPath != "" {
+			continue
+		}
+		stage, ok := stages[role.Kind]
+		if !ok {
+			continue
+		}
+		if limit, set := cfg.RoleBudgetUSDPerDay(role); set {
+			sp := per[state.RoleKey{Stage: stage, Role: role.Name}]
+			if sp.USD >= limit {
+				out = append(out, Cap{Scope: "role", Stage: stage, Role: role.Name, Spent: sp, Limit: limit})
+			}
+		}
+	}
+	return out, dayStart, nil
 }

@@ -189,7 +189,7 @@ func TestDefaultLoopsIncludeTheScannersLoop(t *testing.T) {
 	}
 	defer w.Scanners.Close()
 	loops := registerLoops(w)
-	if len(loops) != 10 || loops[0].Name() != "scanners" || loops[1].Name() != "stale" || loops[2].Name() != "triage" || loops[3].Name() != "workers" || loops[4].Name() != "reviewers" || loops[5].Name() != "reviewfix" || loops[6].Name() != "merger" || loops[7].Name() != "janitor" || loops[8].Name() != "reaper" || loops[9].Name() != "costs" ||
+	if len(loops) != 11 || loops[0].Name() != "scanners" || loops[1].Name() != "stale" || loops[2].Name() != "triage" || loops[3].Name() != "workers" || loops[4].Name() != "reviewers" || loops[5].Name() != "reviewfix" || loops[6].Name() != "merger" || loops[7].Name() != "janitor" || loops[8].Name() != "reaper" || loops[9].Name() != "costs" || loops[10].Name() != "budget" ||
 		!loops[0].Claims() || !loops[1].Claims() || !loops[2].Claims() || !loops[3].Claims() || !loops[4].Claims() || !loops[5].Claims() || !loops[6].Claims() || !loops[7].Claims() || loops[8].Claims() || loops[9].Claims() {
 		t.Fatalf("loops = %v: the scanners, stale, triage, workers, reviewers and merger loops must exist and be skipped while paused, and the Reaper and the costs loop must keep running", loops)
 	}
