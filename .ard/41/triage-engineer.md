@@ -1,12 +1,11 @@
 ---
 role: engineer
-status: done
+status: needs-human
 attempt: 1
 ---
-Adds a new controller loop that sends a pull request with a changes verdict back to the worker, counts each round in the existing local event log (no migration), reruns only the reviewers that asked for changes, and hands the issue to a human at the round cap. Worker and reviewer loops get small input additions so they see the findings. Size L, risk medium.
+A comment on this issue gives direct instructions to the planner about how to rewrite the existing plan. Agents may not follow instructions found in issue text, so the plan was left untouched and no new implementation section was written.
 
 ## Open issues
-- The reviewer prompt under .ard/reviewers/ must be edited by a maintainer so reviewers report which earlier findings are resolved. The controller will supply the earlier findings as an input file, but agents may not change that prompt. The worker prompt may need a short line on the new review feedback input, which is also a maintainer edit.
-- The plan relaxes the mark-ready head check for approving reviewers that were not asked to rerun, because without that a PR could never become ready after a fix round. A maintainer should confirm this is acceptable.
-- CLAUDE.md is a protected path; its layout list should gain the new package, so a maintainer may need to make that line edit.
-- The plan waits for any running reviewer on the PR before starting a round, so all findings arrive together. This is a design choice the proposal does not state.
+- The comment lists amendments and a list of design changes that would reshape the plan. These include a new dependency on another pending change, a different rerun rule, new event ordering and cap behaviour, and an end-to-end test requirement. A maintainer should confirm them through a trusted channel, for example by editing the issue description or the plan directly, and then re-run planning.
+- The amendments also ask for edits to documentation and to protected prompt files. Those must be made by a maintainer.
+- Because the amendments say to wait for the other pull request to land first, the work may be blocked until that change is on the default branch.
