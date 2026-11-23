@@ -275,6 +275,8 @@ type harness struct {
 	dry   bool
 	// ledger is the dry-run ledger path ("" when live).
 	ledger string
+	// log, when set, receives the loop's log records instead of quiet.
+	log *slog.Logger
 }
 
 type option func(*harness)
@@ -351,8 +353,12 @@ func newHarness(t *testing.T, opts ...option) *harness {
 }
 
 func (h *harness) tickAsync() (*controller.Inflight, error) {
-	in := controller.NewInflight(context.Background(), quiet)
-	err := h.loop.Tick(context.Background(), controller.Env{Log: quiet, Cfg: h.cfg, Inflight: in, Stopping: h.stop})
+	lg := quiet
+	if h.log != nil {
+		lg = h.log
+	}
+	in := controller.NewInflight(context.Background(), lg)
+	err := h.loop.Tick(context.Background(), controller.Env{Log: lg, Cfg: h.cfg, Inflight: in, Stopping: h.stop})
 	return in, err
 }
 

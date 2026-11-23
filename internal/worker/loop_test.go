@@ -1,11 +1,14 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -957,5 +960,181 @@ func TestReviewersFailOpenWithoutKnownHead(t *testing.T) {
 	h.mustTick()
 	if got := strings.Join(h.only().Opts.Worker.Reviewers, ","); got != "eng-review,license-review,sec-review" {
 		t.Errorf("reviewers = %q, want path rule to fail open", got)
+	}
+}
+
+// syncBuf is a goroutine-safe log sink.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func (h *harness) captureLog() *syncBuf {
+	buf := &syncBuf{}
+	h.log = slog.New(slog.NewTextHandler(buf, nil))
+	return buf
+}
+
+// gateLicense gives license-review a go.mod path rule.
+func gateLicense(h *harness) {
+	for i := range h.cfg.Roles {
+		if h.cfg.Roles[i].Name == "license-review" {
+			h.cfg.Roles[i].When = &config.When{Paths: []string{"**/go.mod"}}
+		}
+	}
+}
+
+func TestReviewersDeferredBypassesWhen(t *testing.T) {
+	tests := []struct {
+		name     string
+		deferred []string
+		want     string
+	}{
+		{"not deferred, gated out", nil, "eng-review,sec-review"},
+		{"deferred bypasses when", []string{"license-review"}, "eng-review,sec-review,license-review"},
+		{"deferred twice, no duplicate", []string{"license-review", "license-review", "eng-review"}, "eng-review,sec-review,license-review"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, noTests)
+			h.cfg.Roles[0].Reviewers = nil
+			gateLicense(h)
+			h.code.shas[0] = h.commitFiles(map[string]string{"a.txt": "x"})
+			n := h.issue("t")
+			if len(tt.deferred) > 0 {
+				h.seedDeferred(n, tt.deferred...)
+			}
+			h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+			h.mustTick()
+			if got := strings.Join(h.only().Opts.Worker.Reviewers, ","); got != tt.want {
+				t.Errorf("reviewers = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReviewersMonotonicAcrossRuns(t *testing.T) {
+	h := newHarness(t, noTests)
+	h.cfg.Roles[0].Reviewers = nil
+	gateLicense(h)
+	h.code.shas[0] = h.commitFiles(map[string]string{"a.txt": "x"})
+	h.code.shas[1] = h.commitFiles(map[string]string{"a.txt": "x", "go.mod": "module x\n"})
+	n := h.issue("t")
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	// The fake finisher closes nothing, so free the issue for a second claim.
+	for _, j := range h.jobs() {
+		if err := h.store.Complete(context.Background(), j.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.gh.RemoveLabel(context.Background(), n, labels.Running(labels.StageWorker, "engineer")); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(h.fin.got()[0].Opts.Worker.Reviewers, ","); got != "eng-review,sec-review" {
+		t.Fatalf("run 1 reviewers = %q, want license-review skipped", got)
+	}
+	h.mustTick()
+	got := h.fin.got()
+	if len(got) != 2 {
+		t.Fatalf("FinishWith calls = %d, want 2", len(got))
+	}
+	// Run 2 recomputes from the whole PR diff: go.mod now matches, and the
+	// reviewers run 1 requested are still selected, each once.
+	if g := strings.Join(got[1].Opts.Worker.Reviewers, ","); g != "eng-review,license-review,sec-review" {
+		t.Errorf("run 2 reviewers = %q, want license-review added and none duplicated", g)
+	}
+}
+
+func TestReviewersStoreErrorFallsBackToLabels(t *testing.T) {
+	arch := &config.When{Triage: []string{"architect"}}
+	tests := []struct {
+		name   string
+		labels []string
+		want   string
+	}{
+		{"label only counts", []string{labels.Done(labels.StageTriage, "architect")}, "eng-review,license-review,sec-review"},
+		{"no label, gated out", nil, "eng-review,sec-review"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, noTests)
+			h.cfg.Roles[0].Reviewers = nil
+			h.cfg.Roles = append(h.cfg.Roles, config.Role{Kind: config.KindTriage, Name: "architect", Dir: ".ard/triage/architect"})
+			for i := range h.cfg.Roles {
+				if h.cfg.Roles[i].Name == "license-review" {
+					h.cfg.Roles[i].When = arch
+				}
+			}
+			buf := h.captureLog()
+			h.code.shas[0] = h.commitFiles(map[string]string{"a.txt": "x"})
+			n := h.issue("t", tt.labels...)
+			// A triage close-out the store cannot decode makes TriageRoles fail.
+			sj, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "triage", Role: "architect", Issue: n})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.store.SetCloseout(context.Background(), sj.ID, "closed", []byte(`{"Version":99}`)); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.store.Complete(context.Background(), sj.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+			h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+			h.mustTick()
+			if got := strings.Join(h.only().Opts.Worker.Reviewers, ","); got != tt.want {
+				t.Errorf("reviewers = %q, want %q", got, tt.want)
+			}
+			if !strings.Contains(buf.String(), "worker.reviewers_failed") || !strings.Contains(buf.String(), "step=triage") {
+				t.Errorf("no reviewers_failed step=triage in log:\n%s", buf.String())
+			}
+		})
+	}
+}
+
+func TestReviewersEmptySelectionLogs(t *testing.T) {
+	tests := []struct {
+		name string
+		gate bool // every reviewer path-gated on go.mod
+		want int  // worker.no_reviewers lines
+	}{
+		{"every reviewer gated out", true, 1},
+		{"reviewers selected", false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, noTests)
+			h.cfg.Roles[0].Reviewers = nil
+			if tt.gate {
+				for i := range h.cfg.Roles {
+					if h.cfg.Roles[i].Kind == config.KindReviewer {
+						h.cfg.Roles[i].When = &config.When{Paths: []string{"**/go.mod"}}
+					}
+				}
+			}
+			buf := h.captureLog()
+			h.code.shas[0] = h.commitFiles(map[string]string{"a.txt": "x"})
+			h.issue("t")
+			h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+			h.mustTick()
+			if tt.gate && len(h.only().Opts.Worker.Reviewers) != 0 {
+				t.Errorf("reviewers = %v, want none", h.only().Opts.Worker.Reviewers)
+			}
+			if got := strings.Count(buf.String(), "worker.no_reviewers"); got != tt.want {
+				t.Errorf("worker.no_reviewers lines = %d, want %d\n%s", got, tt.want, buf.String())
+			}
+		})
 	}
 }

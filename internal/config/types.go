@@ -278,5 +278,10 @@ func matchWhen(entry, p string) bool {
 		return strings.HasPrefix(p, entry) || p == strings.TrimSuffix(entry, "/")
 	}
 	m, err := doublestar.Match(entry, p)
-	return err == nil && m
+	if err != nil {
+		// A malformed pattern (Load rejects them, so only a hand-built When
+		// reaches this) fails closed: it matches nothing.
+		return false
+	}
+	return m
 }
