@@ -56,6 +56,9 @@ type deps struct {
 // builder constructs deps for repo. stateDir is where a dry-run ledger goes.
 type builder func(ctx context.Context, e *cli.Env, repo github.Repo, stateDir string) (deps, error)
 
+// gitBin is the git binary the version check runs; empty means "git". Tests override it.
+var gitBin = ""
+
 // Serve is the handler behind `ard serve`.
 func Serve(ctx context.Context, e *cli.Env) error { return serve(ctx, e, buildDeps) }
 
@@ -71,6 +74,9 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 	repo, err := resolveRepo(ctx, e.Repo, root)
 	if err != nil {
 		return err
+	}
+	if err := gitx.New(gitBin).CheckVersion(ctx); err != nil {
+		return &cli.ExitError{Code: 1, Err: fmt.Errorf("ard serve: %w", err)}
 	}
 
 	home, err := os.UserHomeDir()
