@@ -8,9 +8,9 @@ import (
 	"github.com/albertcbrown/ard/internal/redact"
 )
 
-// Limits of one job's diff.
+// Fixed limits of one job's diff. The line thresholds are per worker role
+// (Lines).
 const (
-	MaxLines    = 1000    // changed lines in the whole PR
 	MaxFiles    = 256     // changed files in one step
 	MaxFileSize = 1 << 20 // bytes in one file
 	maxShown    = 3       // reject entries named in a hold reason
@@ -69,6 +69,14 @@ func (r Reject) String() string {
 	return p + ": " + r.Why
 }
 
+// Lines are a worker role's thresholds on the whole PR's changed lines
+// (diff_warn_lines and diff_max_lines). Above Warn the PR proceeds with a
+// note; above Max it is held for a human.
+type Lines struct {
+	Warn int
+	Max  int
+}
+
 // Verdict is the guard's decision on one step's changes.
 type Verdict struct {
 	Commit  []Change // changes the code lane may commit
@@ -76,6 +84,10 @@ type Verdict struct {
 	Lines   int    // changed lines in the whole PR
 	NoCode  bool   // nothing to commit
 	Hold    string // non-empty: a human must look; nothing is pushed
+	// Large is a fixed note, set when the PR is over the warn threshold but
+	// not held: "Large change: N changed lines (warn at W)". It never quotes
+	// content.
+	Large string
 }
 
 // excluded reports paths the loop and close-out own: the loop's inputs and
@@ -87,9 +99,10 @@ func excluded(issue int, p string) bool {
 
 // Check decides one step. changes is every changed path of the step
 // (including the excluded ones, which Check skips), prLines the changed lines
-// of the whole PR and branchExists whether the branch is already on the remote.
+// of the whole PR, branchExists whether the branch is already on the remote
+// and lim the role's line thresholds.
 // Hold priority: rejects, then the line limit, then no code on a new branch.
-func Check(issue int, changes []Change, prLines int, branchExists bool) Verdict {
+func Check(issue int, changes []Change, prLines int, branchExists bool, lim Lines) Verdict {
 	v := Verdict{Lines: prLines}
 	n := 0
 	for _, c := range changes {
@@ -110,10 +123,13 @@ func Check(issue int, changes []Change, prLines int, branchExists bool) Verdict 
 	switch {
 	case len(v.Rejects) > 0:
 		v.Hold = holdReason(v.Rejects)
-	case prLines > MaxLines:
-		v.Hold = fmt.Sprintf("diff guard: %d changed lines, limit %d", prLines, MaxLines)
+	case prLines > lim.Max:
+		v.Hold = fmt.Sprintf("diff guard: %d changed lines, limit %d", prLines, lim.Max)
 	case v.NoCode && !branchExists:
 		v.Hold = "diff guard: no code changes"
+	}
+	if v.Hold == "" && prLines > lim.Warn {
+		v.Large = fmt.Sprintf("Large change: %d changed lines (warn at %d)", prLines, lim.Warn)
 	}
 	return v
 }

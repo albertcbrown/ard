@@ -37,6 +37,8 @@ const (
 	defaultWorkerTests           = "make test"
 	defaultWorkerMaxTestFixes    = 2
 	defaultWorkerMaxReviewRounds = 3
+	defaultWorkerDiffWarnLines   = 1000
+	defaultWorkerDiffMaxLines    = 2000
 
 	defaultGitleaksPath     = "gitleaks"
 	defaultStaleInactiveFor = Duration(30 * 24 * time.Hour)

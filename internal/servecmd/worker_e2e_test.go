@@ -113,6 +113,7 @@ func newWorkerE2E(t *testing.T, script string) *workerE2E {
 	}
 	eng := role(config.KindWorker, "engineer", ".ard/workers/engineer")
 	eng.Tests, eng.MaxTestFixes, eng.Reviewers = "sh check.sh", 2, []string{"eng-review"}
+	eng.DiffWarnLines, eng.DiffMaxLines = 1000, 2000
 	e.cfg = &config.Resolved{Repo: rolesRoot, SHA: sha, MaxBudgetUSD: 5, MaxPods: 3, RequireApproval: true, Intake: config.Intake{Mode: config.IntakeLabel},
 		Roles: []config.Role{role(config.KindTriage, "lead", ".ard/triage/lead"), eng,
 			role(config.KindReviewer, "eng-review", ".ard/reviewers/eng-review"),

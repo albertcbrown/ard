@@ -90,6 +90,8 @@ roles:
     max_review_rounds: 3
     reviewers:
       - security-review
+    diff_warn_lines: 800
+    diff_max_lines: 2000
   - name: eng-review
     kind: reviewer
     dir: .ard/reviewers/eng-review

@@ -34,6 +34,10 @@ type WorkerResult struct {
 	// Hold, when set, turns the result into needs-human with this reason (a
 	// diff guard rejection, for example). It never quotes file content.
 	Hold string
+	// Large, when set, is the diff guard's fixed note on a PR over the role's
+	// diff_warn_lines ("Large change: N changed lines (warn at W)"). The PR
+	// still proceeds; the note goes into the PR body and the issue comment.
+	Large string
 }
 
 // buildWorker maps a done worker role file and the loop's result to a plan.
@@ -119,6 +123,9 @@ func workerLines(j Job) []string {
 		out = append(out, line)
 	case TestsNone:
 		out = append(out, "Tests: not configured")
+	}
+	if w.Large != "" {
+		out = append(out, sanitize(w.Large))
 	}
 	return out
 }
