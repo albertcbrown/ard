@@ -235,6 +235,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 			}},
 		},
 		Force: forceOnSecondSignal(ctx),
+		Wake:  wakeSignals(ctx),
 	}, registerLoops(w)...)
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)

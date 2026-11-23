@@ -30,7 +30,6 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 - #89 Optional gitleaks pass in the log secret scan
 - #138 closeout: don't revert newer plan.md sections committed after a job's base
 - #142 Workers: .gitattributes changes can hide diffs from review
-- #161 Wake the loops without restarting ard serve
 - #184 Reviewer close-out fails when its PR is merged mid-review
 
 ## Phase 3: Scale

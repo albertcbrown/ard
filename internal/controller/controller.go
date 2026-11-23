@@ -41,6 +41,9 @@ type Deps struct {
 	Grace time.Duration
 	// Force is closed on a second signal; it abandons the grace wait.
 	Force <-chan struct{}
+	// Wake, when non-nil, makes every loop run one tick now for each receive
+	// (still behind the kill switch and the pool). Pending wakes coalesce.
+	Wake <-chan struct{}
 	// Rand returns a value in [0,1); nil means math/rand/v2.Float64.
 	Rand func() float64
 }
@@ -141,9 +144,11 @@ func (c *Controller) Run(ctx context.Context) error {
 
 	names := make([]string, len(c.loops))
 	var wg sync.WaitGroup
+	var runners []*runner
 	for i, l := range c.loops {
 		names[i] = l.Name()
-		r := &runner{c: c, loop: l, log: log.With("loop", l.Name()), cfg: cfg, cfgBroken: err != nil}
+		r := &runner{c: c, loop: l, log: log.With("loop", l.Name()), cfg: cfg, cfgBroken: err != nil, wake: make(chan struct{}, 1)}
+		runners = append(runners, r)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -151,6 +156,31 @@ func (c *Controller) Run(ctx context.Context) error {
 		}()
 	}
 	log.Info("controller.start", "loops", names)
+	if c.deps.Wake != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stopping:
+					return
+				case <-c.deps.Wake:
+					select { // a wake racing shutdown starts nothing
+					case <-stopping:
+						return
+					default:
+					}
+					log.Info("controller.wake", "loops", names)
+					for _, r := range runners {
+						select {
+						case r.wake <- struct{}{}:
+						default: // one already pending
+						}
+					}
+				}
+			}
+		}()
+	}
 
 	<-ctx.Done()
 	log.Info("controller.stopping")
