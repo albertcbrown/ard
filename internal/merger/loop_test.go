@@ -2,7 +2,6 @@ package merger
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
@@ -26,14 +26,6 @@ func (h *harness) mergeCalls() []github.MergeInput {
 		out = append(out, c.Args[1].(github.MergeInput))
 	}
 	return out
-}
-
-func (h *harness) claim(issue int, head string) {
-	h.t.Helper()
-	data, _ := json.Marshal(map[string]string{"head": head})
-	if err := h.store.AppendEvent(context.Background(), state.Event{Kind: state.EventClaim, Issue: issue, Stage: "review", Role: reviewer, Data: data}); err != nil {
-		h.t.Fatal(err)
-	}
 }
 
 func TestLoopIdentity(t *testing.T) {
@@ -107,6 +99,13 @@ func TestNoMerge(t *testing.T) {
 		{name: "review running", mut: func(s *spec) { s.labels = append(s.labels, labels.Running(labels.StageReview, reviewer)) }},
 		{name: "review pending", mut: func(s *spec) { s.labels = []string{labels.Request(labels.StageReview, reviewer)} }},
 		{name: "no review requested", mut: func(s *spec) { s.labels = nil }},
+		{name: "newest review close-out is changes", post: func(h *harness, p pr) {
+			h.review(p.issue, p.n, p.head, closeout.OutcomeChanges)
+		}},
+		{name: "newest review close-out failed", post: func(h *harness, p pr) {
+			h.review(p.issue, p.n, p.head, closeout.OutcomeFailed)
+		}},
+		{name: "changes label of an unconfigured role", mut: func(s *spec) { s.labels = append(s.labels, labels.Changes("gone-role")) }},
 		{name: "no review claim", mut: func(s *spec) { s.noClaim = true }},
 		{name: "running worker job", post: func(h *harness, p pr) {
 			if _, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "worker", Role: "other", Issue: p.issue, Branch: p.branch}); err != nil {
@@ -197,7 +196,7 @@ func TestGraceRestartsWhenHeadChanges(t *testing.T) {
 	// The head changes (a fix push, reviewed again) just before the merge tick.
 	head := h.commit(p.branch, "more.go", "package x\n")
 	h.gh.SetHeadSHA(p.n, head)
-	h.claim(p.issue, head)
+	h.review(p.issue, p.n, head, closeout.OutcomeDone)
 	h.mustTick()
 	if h.merged(p.n) {
 		t.Fatal("merged a head seen for less than the grace period")
@@ -486,7 +485,7 @@ func TestProtectedRename(t *testing.T) {
 	h.git("push", "-q", "-f", h.bare, p.branch)
 	h.git("checkout", "-q", "main")
 	h.gh.SetHeadSHA(p.n, head)
-	h.claim(p.issue, head)
+	h.review(p.issue, p.n, head, closeout.OutcomeDone)
 	h.settle()
 	h.mustTick()
 	if h.merged(p.n) || !h.has(p.n, labels.NeedsApproval) {
@@ -532,7 +531,7 @@ func TestProtectedApprovalRules(t *testing.T) {
 			h.gh.SeedReview(p.n, github.Review{Author: "alice", State: "APPROVED", CommitSHA: p.head})
 			head := h.commit(p.branch, "later.go", "package x\n")
 			h.gh.SetHeadSHA(p.n, head)
-			h.claim(p.issue, head) // the reviewers re-reviewed the new head
+			h.review(p.issue, p.n, head, closeout.OutcomeDone) // the reviewers re-reviewed the new head
 		}},
 	}
 	for _, tc := range cases {

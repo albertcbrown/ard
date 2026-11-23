@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
@@ -196,10 +197,7 @@ func (h *harness) newPR(mut ...func(*spec)) pr {
 	p.n = h.gh.SeedPR(github.PullRequest{Title: s.title, Body: body, State: github.StateOpen, Draft: s.draft, Author: s.author,
 		Labels: s.labels, HeadRef: p.branch, HeadSHA: p.head, BaseRef: "main", MergeableState: s.mergeSt})
 	if !s.noClaim {
-		data, _ := json.Marshal(map[string]string{"head": p.head})
-		if err := h.store.AppendEvent(context.Background(), state.Event{Kind: state.EventClaim, Issue: issue, Stage: "review", Role: reviewer, Data: data}); err != nil {
-			h.t.Fatal(err)
-		}
+		h.review(issue, p.n, p.head, closeout.OutcomeDone)
 	}
 	if !s.noJob {
 		j, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "worker", Role: "engineer", Issue: issue, Branch: p.branch})
@@ -298,4 +296,24 @@ func (h *harness) issueOpen(n int) bool {
 		h.t.Fatal(err)
 	}
 	return is.State == github.StateOpen
+}
+
+// review records a closed review close-out of the reviewer role at head.
+func (h *harness) review(issue, pr int, head string, outcome closeout.Outcome) {
+	h.t.Helper()
+	ctx := context.Background()
+	j, err := h.store.CreateJob(ctx, state.NewJob{Stage: "review", Role: reviewer, Issue: issue, PR: pr, Branch: "x"})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	rec := closeout.Record{Version: closeout.RecordVersion, Phase: closeout.PhaseClosed,
+		Job:  closeout.Job{ID: j.ID, Stage: closeout.StageReview, Role: reviewer, Issue: issue, PR: pr},
+		Plan: closeout.Plan{Outcome: outcome, Review: &closeout.ReviewPlan{CommitSHA: head, Verdict: "approve"}}}
+	b, _ := json.Marshal(rec)
+	if err := h.store.SetCloseout(ctx, j.ID, "closed", b); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := h.store.Complete(ctx, j.ID, nil); err != nil {
+		h.t.Fatal(err)
+	}
 }

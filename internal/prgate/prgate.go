@@ -96,13 +96,13 @@ type Git interface {
 
 // Covers reports whether a review (or approval) given at commit reviewed still
 // covers head, and the paths that break the cover. base "" is the plain rule:
-// the head is covered when no path outside .ard/<digits>/ changed between the
-// two. With base = merge-base(main, head), a changed path is also tolerated
+// the head is covered when no path outside .ard/<issue>/ (the close-out
+// directory of the PR's own issue) changed between the two. With base = merge-base(main, head), a changed path is also tolerated
 // when head has the base's version of it, because it came from main (an
 // update-branch merge). A path both the PR and main changed since the review
 // is not covered. Any git error fails closed: the error is returned and the
 // head is not covered.
-func Covers(ctx context.Context, g Git, repoDir, reviewed, head, base string) (bool, []string, error) {
+func Covers(ctx context.Context, g Git, repoDir, reviewed, head, base string, issue int) (bool, []string, error) {
 	if reviewed == "" || head == "" {
 		return false, nil, nil
 	}
@@ -113,7 +113,7 @@ func Covers(ctx context.Context, g Git, repoDir, reviewed, head, base string) (b
 	if err != nil {
 		return false, nil, err
 	}
-	since = dropIssuePaths(since)
+	since = dropIssuePaths(since, issue)
 	if len(since) == 0 {
 		return true, nil, nil
 	}
@@ -137,10 +137,10 @@ func Covers(ctx context.Context, g Git, repoDir, reviewed, head, base string) (b
 	return len(broken) == 0, broken, nil
 }
 
-func dropIssuePaths(paths []string) []string {
+func dropIssuePaths(paths []string, issue int) []string {
 	var out []string
 	for _, p := range paths {
-		if !IsIssuePath(p) {
+		if !strings.HasPrefix(p, fmt.Sprintf(".ard/%d/", issue)) {
 			out = append(out, p)
 		}
 	}

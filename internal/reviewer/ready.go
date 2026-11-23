@@ -83,7 +83,7 @@ func (t *tick) maybeReady(ctx context.Context, prNumber int) {
 			}
 			fetched = true
 		}
-		covered, _, err := prgate.Covers(ctx, d.Git, d.RepoDir, head, pr.HeadSHA, "")
+		covered, _, err := prgate.Covers(ctx, d.Git, d.RepoDir, head, pr.HeadSHA, "", issue)
 		if err != nil {
 			t.log.Warn("review.ready_check_failed", "pr", prNumber, "step", "diff", "error", err)
 			return

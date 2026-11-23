@@ -49,6 +49,17 @@ type NumStat struct {
 // LineRange is an inclusive range of 1-based line numbers.
 type LineRange struct{ From, To int }
 
+// MergeBaseAll returns every best common ancestor of a and b (git merge-base
+// --all). More than one means a criss-cross history, where MergeBase picks one
+// arbitrarily.
+func (g *Git) MergeBaseAll(ctx context.Context, repoDir, a, b string) ([]string, error) {
+	out, _, err := g.run(ctx, repoDir, nil, "", nil, "--git-dir="+gitDirOf(repoDir), "merge-base", "--all", a, b)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: merge-base --all %s %s: %w", a, b, err)
+	}
+	return strings.Fields(out), nil
+}
+
 // MergeBase returns the best common ancestor of commits a and b in the
 // repository at repoDir (the controller's own clone; never a job worktree).
 func (g *Git) MergeBase(ctx context.Context, repoDir, a, b string) (string, error) {

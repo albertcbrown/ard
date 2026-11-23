@@ -16,6 +16,7 @@ import (
 
 	gogh "github.com/google/go-github/v88/github"
 
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/effects"
@@ -199,8 +200,17 @@ func (e *env) newScenario(files map[string]string, from string) *scenario {
 	}
 	e.t.Cleanup(func() { st.Close() })
 	s.store = st
-	data, _ := json.Marshal(map[string]string{"head": s.head})
-	if err := st.AppendEvent(ctx, state.Event{Kind: state.EventClaim, Issue: s.issue, Stage: "review", Role: "eng-review", Data: data}); err != nil {
+	rj, err := st.CreateJob(ctx, state.NewJob{Stage: "review", Role: "eng-review", Issue: s.issue, PR: s.pr, Branch: s.branch})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	rec, _ := json.Marshal(closeout.Record{Version: closeout.RecordVersion, Phase: closeout.PhaseClosed,
+		Job:  closeout.Job{ID: rj.ID, Stage: closeout.StageReview, Role: "eng-review", Issue: s.issue, PR: s.pr},
+		Plan: closeout.Plan{Outcome: closeout.OutcomeDone, Review: &closeout.ReviewPlan{CommitSHA: s.head, Verdict: "approve"}}})
+	if err := st.SetCloseout(ctx, rj.ID, "closed", rec); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := st.Complete(ctx, rj.ID, nil); err != nil {
 		e.t.Fatal(err)
 	}
 	j, err := st.CreateJob(ctx, state.NewJob{Stage: "worker", Role: "engineer", Issue: s.issue, Branch: s.branch})

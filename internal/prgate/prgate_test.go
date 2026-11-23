@@ -131,6 +131,8 @@ func TestCovers(t *testing.T) {
 		{name: "same head", reviewed: "x", want: true},
 		{name: "empty reviewed", reviewed: "", want: false},
 		{name: "only issue dir", reviewed: "x", diffs: map[[2]string][]string{{"x", "y"}: {".ard/3/worker-eng.md", ".ard/3/logs/a"}}, want: true},
+		{name: "other issue dir is not tolerated", reviewed: "x", diffs: map[[2]string][]string{{"x", "y"}: {".ard/9/plan.md"}}, want: false, broken: []string{".ard/9/plan.md"}},
+		{name: "other issue dir from main is tolerated", reviewed: "x", base: "b", diffs: map[[2]string][]string{{"x", "y"}: {".ard/9/plan.md"}}, want: true},
 		{name: "code, no base", reviewed: "x", diffs: map[[2]string][]string{{"x", "y"}: {"a.go"}}, want: false, broken: []string{"a.go"}},
 		{name: "config is code", reviewed: "x", diffs: map[[2]string][]string{{"x", "y"}: {".ard/config.yaml"}}, want: false, broken: []string{".ard/config.yaml"}},
 		{name: "main-sourced path tolerated", reviewed: "x", base: "b",
@@ -143,7 +145,7 @@ func TestCovers(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, broken, err := Covers(context.Background(), fakeGit{tc.diffs, tc.err}, "/r", tc.reviewed, "y", tc.base)
+			ok, broken, err := Covers(context.Background(), fakeGit{tc.diffs, tc.err}, "/r", tc.reviewed, "y", tc.base, 3)
 			if (err != nil) != tc.wantErr || ok != tc.want || !reflect.DeepEqual(broken, tc.broken) {
 				t.Fatalf("Covers = %v, %v, %v; want %v, %v (err %v)", ok, broken, err, tc.want, tc.broken, tc.wantErr)
 			}
@@ -189,17 +191,17 @@ func TestCoversRealRepo(t *testing.T) {
 	base := run("merge-base", mainTip, merged)
 	ctx := context.Background()
 
-	if ok, broken, err := Covers(ctx, g, dir, reviewed, merged, ""); err != nil || ok || len(broken) == 0 {
+	if ok, broken, err := Covers(ctx, g, dir, reviewed, merged, "", 1); err != nil || ok || len(broken) == 0 {
 		t.Fatalf("no base: %v %v %v, want not covered", ok, broken, err)
 	}
-	if ok, broken, err := Covers(ctx, g, dir, reviewed, merged, base); err != nil || !ok {
+	if ok, broken, err := Covers(ctx, g, dir, reviewed, merged, base, 1); err != nil || !ok {
 		t.Fatalf("update-branch merge: %v %v %v, want covered", ok, broken, err)
 	}
 	// A code push after the review.
 	put("pr.go", "3")
 	run("commit", "-q", "-m", "more code")
 	pushed := run("rev-parse", "HEAD")
-	if ok, broken, err := Covers(ctx, g, dir, reviewed, pushed, base); err != nil || ok || !reflect.DeepEqual(broken, []string{"pr.go"}) {
+	if ok, broken, err := Covers(ctx, g, dir, reviewed, pushed, base, 1); err != nil || ok || !reflect.DeepEqual(broken, []string{"pr.go"}) {
 		t.Fatalf("code push: %v %v %v, want pr.go broken", ok, broken, err)
 	}
 	// A path both the PR and main changed since the review.
@@ -213,7 +215,7 @@ func TestCoversRealRepo(t *testing.T) {
 	run("merge", "-q", "--no-edit", "-X", "ours", "main")
 	both := run("rev-parse", "HEAD")
 	base = run("merge-base", mainTip, both)
-	if ok, _, err := Covers(ctx, g, dir, reviewed, both, base); err != nil || ok {
+	if ok, _, err := Covers(ctx, g, dir, reviewed, both, base, 1); err != nil || ok {
 		t.Fatalf("both changed: %v %v, want not covered", ok, err)
 	}
 }

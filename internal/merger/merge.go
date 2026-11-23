@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/agentjob"
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
@@ -35,6 +36,15 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		return false
 	}
 
+	// Review labels of roles that are not configured (a stale or hand-made
+	// :changes or :running) still block.
+	for _, l := range pr.Labels {
+		if p, ok := labels.Parse(l); ok && p.Stage == labels.StageReview && (p.State == labels.StateChanges || p.State == labels.StateRunning) {
+			t.skip(n, prgate.ReasonChanges)
+			return false
+		}
+	}
+
 	// d. Pin the head: the branch tip must be the SHA the API reported.
 	if err := d.Git.FetchRef(ctx, d.RepoDir, d.RemoteURL, "+refs/heads/"+pr.HeadRef+":"+mergeRef(n), d.Token); err != nil {
 		t.fail(n, "fetch", err)
@@ -50,26 +60,39 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		return false
 	}
 	graceOver := t.sawHead(n, head)
-	base, err := d.Git.MergeBase(ctx, d.RepoDir, t.mainTip, head)
+	bases, err := d.Git.MergeBaseAll(ctx, d.RepoDir, t.mainTip, head)
 	if err != nil {
 		t.fail(n, "merge_base", err)
 		return false
 	}
-
-	// e. Every requested review covers this head.
-	reviewed, err := prgate.ReviewedHeads(ctx, d.Store, issue, v.Roles)
-	if err != nil {
-		t.fail(n, "review_heads", err)
+	if len(bases) != 1 {
+		// A criss-cross history has several bases and the choice changes what
+		// counts as the PR's own change: a human decides.
+		t.log.Warn("merge.ambiguous_base", "pr", n, "bases", len(bases))
 		return false
 	}
+	base := bases[0]
+
+	// e. Every requested review passed (by its close-out record, not the label)
+	// at a head that still covers this one.
 	for _, role := range v.Roles {
-		ok, broken, err := prgate.Covers(ctx, d.Git, d.RepoDir, reviewed[role], head, base)
+		reviewed, passed, err := closeout.ReviewPassed(ctx, d.Store, issue, n, role)
+		if err != nil {
+			t.fail(n, "review_record", err)
+			return false
+		}
+		if !passed {
+			t.log.Info("merge.reviews_stale", "pr", n, "issue", issue, "role", role, "reason", "no passing close-out record",
+				"hint", "re-request the review; fix rounds (#41) will do this")
+			return false
+		}
+		ok, broken, err := prgate.Covers(ctx, d.Git, d.RepoDir, reviewed, head, base, issue)
 		if err != nil {
 			t.fail(n, "review_cover", err)
 			return false
 		}
 		if !ok {
-			t.log.Info("merge.reviews_stale", "pr", n, "issue", issue, "role", role, "reviewed", reviewed[role], "head", head, "paths", len(broken),
+			t.log.Info("merge.reviews_stale", "pr", n, "issue", issue, "role", role, "reviewed", reviewed, "head", head, "paths", len(broken),
 				"hint", "re-request the review; fix rounds (#41) will do this")
 			return false
 		}
@@ -129,7 +152,7 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		return false
 	}
 	if patterns := t.protected(files); len(patterns) > 0 {
-		ok, err := t.hasApproval(ctx, pr, head, base)
+		ok, err := t.hasApproval(ctx, pr, head, base, issue)
 		if err != nil {
 			t.fail(n, "approval", err)
 			return false
@@ -180,7 +203,7 @@ func (t *tick) protected(files []string) []string {
 	return out
 }
 
-func (t *tick) hasApproval(ctx context.Context, pr github.PullRequest, head, base string) (bool, error) {
+func (t *tick) hasApproval(ctx context.Context, pr github.PullRequest, head, base string, issue int) (bool, error) {
 	d := t.l.d
 	reviews, err := d.Reader.ListReviews(ctx, pr.Number)
 	if err != nil {
@@ -192,7 +215,7 @@ func (t *tick) hasApproval(ctx context.Context, pr github.PullRequest, head, bas
 		covers: func(ctx context.Context, at string) (bool, error) {
 			// An approval given at a commit the clone does not have (a
 			// force-pushed tip) cannot be compared: it is not covered.
-			ok, _, err := prgate.Covers(ctx, d.Git, d.RepoDir, at, head, base)
+			ok, _, err := prgate.Covers(ctx, d.Git, d.RepoDir, at, head, base, issue)
 			if err != nil {
 				t.log.Debug("merge.approval_not_comparable", "pr", pr.Number, "at", at, "error", err)
 				return false, nil

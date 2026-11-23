@@ -51,7 +51,7 @@ func TestNormaliseProtectedPath(t *testing.T) {
 func TestProtected(t *testing.T) {
 	r := &Resolved{ProtectedPaths: []string{
 		".github/", ".ard/config.yaml", ".ard/scanners/", ".ard/triage/", ".ard/workers/", ".ard/reviewers/",
-		"CODEOWNERS", "infra/", "**/*.tf", "docs/*.md",
+		"CODEOWNERS", "infra/", "**/*.tf", "docs/*.md", "**/CLAUDE.md", ".claude/",
 	}}
 	tests := []struct {
 		name, path, pattern string
@@ -74,8 +74,10 @@ func TestProtected(t *testing.T) {
 		{"doublestar root", "main.tf", "**/*.tf", true},
 		{"star one segment", "docs/a.md", "docs/*.md", true},
 		{"star not deeper", "docs/sub/a.md", "", false},
-		{"case dir", ".GitHub/workflows/ci.yml", "", false},
-		{"case file", "codeowners", "", false},
+		{"case dir", ".GitHub/workflows/ci.yml", ".github/", true},
+		{"case file", "codeowners", "CODEOWNERS", true},
+		{"case claude file", "Claude.md", "**/CLAUDE.md", true},
+		{"case claude dir", ".CLAUDE/x", ".claude/", true},
 		{"dot prefix fails closed", "./.github/x", "", true},
 		{"dotdot fails closed", "a/../.github/x", "", true},
 		{"dotdot into protected", ".github/../src/x", "", true},
