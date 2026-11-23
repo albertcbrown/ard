@@ -20,7 +20,9 @@ type Store interface {
 	Apply(ctx context.Context, b scannerdb.Batch) error
 	Replace(ctx context.Context, f []scannerdb.Finding, s []scannerdb.Suppression) error
 	RecordRun(ctx context.Context, r scannerdb.Run) (int64, error)
-	LastRun(ctx context.Context) (scannerdb.Run, error) // scannerdb.ErrNotFound when none
+	LastRun(ctx context.Context) (scannerdb.Run, error)   // scannerdb.ErrNotFound when none
+	Meta(ctx context.Context, key string) (string, error) // scannerdb.ErrNotFound when unset
+	SetMeta(ctx context.Context, key, value string) error
 }
 
 // Stores opens a scanner's Store by name.
