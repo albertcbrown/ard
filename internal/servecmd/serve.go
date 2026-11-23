@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent/claude"
+	"github.com/albertcbrown/ard/internal/budget"
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
@@ -83,8 +84,9 @@ func loopNames(loops []controller.Loop) []string {
 }
 
 // knownLoops are the names registerLoops' loops report (Loop.Name), in the
-// order they register.
-var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", janitor.Name, "reaper"}
+// order they register. "budget" is the claim gate: it is built into the pool
+// whatever --loops says, so naming it selects no loop of its own.
+var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", janitor.Name, "reaper", "budget"}
 
 // selectLoops keeps the loops named in want, in registration order; an empty
 // want keeps every loop. A name that is not a known loop is a usage error
@@ -269,7 +271,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 				if _, err := w.limitsBook(ctx); err != nil {
 					return err
 				}
-				p, err := adoptPool(ctx, store, w.MaxPods, log, w.limitedFor)
+				p, err := adoptPool(ctx, store, w.MaxPods, log, w.limitedFor, w.budgetGate().Denied)
 				if err != nil {
 					return err
 				}
@@ -348,6 +350,9 @@ type wiring struct {
 	fin    *reaper.Finisher
 	rp     *reaper.Reaper
 	lim    *limits.Book
+	bgt    *budget.Gate
+	// budgetNow is the budget gate's clock; nil means time.Now (tests set it).
+	budgetNow func() time.Time
 
 	mu      sync.Mutex
 	closers []func(context.Context)

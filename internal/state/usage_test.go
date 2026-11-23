@@ -108,3 +108,59 @@ func TestUsageSurvivesReopen(t *testing.T) {
 		t.Errorf("after reopen = %+v, %v", u, err)
 	}
 }
+
+func TestSpendSince(t *testing.T) {
+	ctx := tctx(t)
+	s, c := newStoreClock(t, t.TempDir())
+	day := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
+	eng, _ := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "engineer", Issue: 7})
+	tri, _ := s.CreateJob(ctx, NewJob{Stage: "triage", Role: "engineer", Issue: 7})
+	rec := func(at time.Time, id, step string, cost *float64) {
+		t.Helper()
+		c.t = at
+		if _, err := s.RecordStepUsage(ctx, id, step, StepUsage{CostUSD: cost}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec(day.Add(-time.Second), eng.ID, "a", fp(9)) // yesterday
+	rec(day, eng.ID, "b", fp(1.5))                 // exactly midnight counts
+	rec(day.Add(time.Hour), eng.ID, "c", nil)      // unpriced
+	rec(day.Add(2*time.Hour), tri.ID, "a", fp(2))
+	per, repo, err := s.SpendSince(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := per[RoleKey{"worker", "engineer"}]; got != (Spend{1.5, 1}) {
+		t.Errorf("worker/engineer = %+v", got)
+	}
+	if got := per[RoleKey{"triage", "engineer"}]; got != (Spend{2, 0}) {
+		t.Errorf("triage/engineer = %+v", got)
+	}
+	if repo != (Spend{3.5, 1}) {
+		t.Errorf("repo = %+v", repo)
+	}
+}
+
+func TestSpendSinceSurvivesReopen(t *testing.T) {
+	ctx := tctx(t)
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	s, err := Open(ctx, dir, Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, _ := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "engineer", Issue: 7})
+	if _, err := s.RecordStepUsage(ctx, j.ID, "a", StepUsage{CostUSD: fp(4)}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(ctx, dir, Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, repo, err := s.SpendSince(ctx, t0.Truncate(24*time.Hour))
+	if err != nil || repo.USD != 4 {
+		t.Fatalf("repo = %+v, err = %v", repo, err)
+	}
+}

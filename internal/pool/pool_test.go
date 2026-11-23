@@ -577,3 +577,27 @@ func TestLimitedNilBehavesAsBefore(t *testing.T) {
 		t.Errorf("verdict = %v", ds[0].Verdict)
 	}
 }
+
+func TestBudgetVerdict(t *testing.T) {
+	if DeniedBudget.String() != "budget" {
+		t.Errorf("String = %q", DeniedBudget.String())
+	}
+	ck := &clock{t: t0.Add(1000 * time.Hour)}
+	held := Held{Candidate: cand(ClassWorker, "eng", 5, 0), JobID: "j1"}
+	p := New(Options{Max: 2, Now: ck.now, Held: []Held{held}, Budget: func(c Candidate) (bool, string) {
+		return c.Role == "capped", "cap hit"
+	}})
+	ds := p.Offer("review", time.Minute, []Candidate{cand(ClassReview, "capped", 9, 0)})
+	if ds[0].Verdict != DeniedBudget || ds[0].Slot != nil || ds[0].Reason != "cap hit" {
+		t.Fatalf("decision = %+v", ds[0])
+	}
+	// A refused reviewer reserves nothing: a worker takes the free slot.
+	if ds := p.Offer("w", time.Minute, []Candidate{cand(ClassWorker, "eng", 6, 0)}); ds[0].Verdict != Granted {
+		t.Errorf("worker verdict = %v", ds[0].Verdict)
+	}
+	// A held key stays a duplicate even though its role is capped.
+	p2 := New(Options{Max: 2, Now: ck.now, Held: []Held{held}, Budget: func(Candidate) (bool, string) { return true, "x" }})
+	if ds := p2.Offer("w", time.Minute, []Candidate{cand(ClassWorker, "eng", 5, 0)}); ds[0].Verdict != DeniedDuplicate {
+		t.Errorf("held verdict = %v", ds[0].Verdict)
+	}
+}
