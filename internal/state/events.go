@@ -45,6 +45,8 @@ type Event struct {
 type EventFilter struct {
 	Since, Until time.Time
 	Kind         string
+	Issue        int    // 0 = any
+	Stage, Role  string // "" = any
 	Limit        int
 }
 
@@ -107,6 +109,18 @@ func (s *Store) Events(ctx context.Context, f EventFilter) ([]Event, error) {
 	if f.Kind != "" {
 		q += ` AND kind = ?`
 		args = append(args, f.Kind)
+	}
+	if f.Issue != 0 {
+		q += ` AND issue = ?`
+		args = append(args, f.Issue)
+	}
+	if f.Stage != "" {
+		q += ` AND stage = ?`
+		args = append(args, f.Stage)
+	}
+	if f.Role != "" {
+		q += ` AND role = ?`
+		args = append(args, f.Role)
 	}
 	q += ` ORDER BY id`
 	if f.Limit > 0 {
