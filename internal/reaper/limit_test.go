@@ -385,3 +385,35 @@ func TestUsageLimitIgnoredOnTestStep(t *testing.T) {
 		})
 	}
 }
+
+type fakeReadings struct{ got [][]agent.Window }
+
+func (f *fakeReadings) Observe(_ context.Context, ws []agent.Window) { f.got = append(f.got, ws) }
+
+func TestReadingsIgnoredOnTestStep(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		suffix string
+		want   int
+	}{
+		{"test step", "t1", 0},
+		{"agent step", "", 1},
+		{"fix step", "f1", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			fr := &fakeReadings{}
+			h.readings = fr
+			h.rebuild()
+			sj, hd := h.startJob(208, withStatus(executor.Status{State: executor.Exited, ExitCode: 0}))
+			hd.JobID = sj.ID + tc.suffix
+			res := agent.Result{Windows: []agent.Window{{Type: "five_hour", Utilization: 0.5}}}
+			if _, err := h.fin.Finish(context.Background(), sj.ID, hd, executor.Status{State: executor.Exited}, res, closeout.Cause{}); err != nil {
+				t.Fatal(err)
+			}
+			if len(fr.got) != tc.want {
+				t.Errorf("readings recorded %d times, want %d", len(fr.got), tc.want)
+			}
+		})
+	}
+}

@@ -110,6 +110,9 @@ type Deps struct {
 	Pool     func() Offerer // called at tick time: the pool does not exist when loops are built
 	Agents   *agent.Registry
 	Parse    reaper.ParseFunc
+	// Readings records the usage windows of each agent and fix step, never of
+	// a test step. nil records nothing.
+	Readings reaper.ReadingRecorder
 	Model    modelauth.Credential // zero = none set
 	// Secrets returns the known credential values (never nil in use); the
 	// diff guard refuses a change that contains one.

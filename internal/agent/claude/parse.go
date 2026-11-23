@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,6 +65,8 @@ type rateLimitEvent struct {
 		ResetsAt      *float64 `json:"resetsAt"`
 		RateLimitType string   `json:"rateLimitType"` // undocumented; used when present
 		ErrorCode     string   `json:"errorCode"`
+		// UnifiedWindows stays raw so a malformed value never drops the event.
+		UnifiedWindows json.RawMessage `json:"unifiedWindows"`
 	} `json:"rate_limit_info"`
 }
 
@@ -258,6 +262,7 @@ func (*Adapter) Parse(stdout io.Reader, exitCode int) (agent.Result, error) {
 	res := agent.Result{ExitCode: exitCode}
 	var last *resultEvent
 	var lim limitAcc
+	windows := map[string]agent.Window{}
 	br := bufio.NewReaderSize(stdout, 64<<10)
 	var readErr error
 	for {
@@ -295,6 +300,9 @@ func (*Adapter) Parse(stdout io.Reader, exitCode int) (agent.Result, error) {
 							res.SkippedLines++
 						} else {
 							lim.rateLimitEvent(e)
+							for _, w := range readWindows(e.Info.UnifiedWindows) {
+								windows[w.Type] = w
+							}
 						}
 					case h.Type == "assistant":
 						var e assistantEvent
@@ -355,6 +363,10 @@ func (*Adapter) Parse(stdout io.Reader, exitCode int) (agent.Result, error) {
 		}
 	}
 	res.LimitHit = lim.hit()
+	for _, w := range windows {
+		res.Windows = append(res.Windows, w)
+	}
+	sort.Slice(res.Windows, func(i, j int) bool { return res.Windows[i].Type < res.Windows[j].Type })
 	switch {
 	case readErr != nil:
 		return res, fmt.Errorf("read agent stdout: %w", readErr)
@@ -406,4 +418,75 @@ func readLine(br *bufio.Reader) (line []byte, tooLong bool, err error) {
 		}
 		return line, tooLong, e
 	}
+}
+
+type windowJSON struct {
+	Type        string   `json:"type"`
+	Utilization *float64 `json:"utilization"`
+	Status      string   `json:"status"`
+	ResetsAt    *float64 `json:"resetsAt"`
+}
+
+// Bounds on what one stream may report: windows are persisted.
+const (
+	maxWindows     = 16
+	maxWindowField = 64 // bytes of a window's type or status
+)
+
+// readWindows reads rate_limit_info.unifiedWindows: an object keyed by window
+// name, or an array of objects with a type field. Anything else yields no
+// window; an entry that does not decode, has a missing, negative or
+// non-finite utilization, or a type over 64 bytes is skipped on its own. A
+// status is cut to 64 bytes and at most 16 windows are kept.
+func readWindows(raw json.RawMessage) []agent.Window {
+	if len(raw) == 0 {
+		return nil
+	}
+	var entries []json.RawMessage
+	var names []string
+	byName := map[string]json.RawMessage{}
+	if json.Unmarshal(raw, &byName) == nil {
+		for k := range byName {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, k := range names {
+			entries = append(entries, byName[k])
+		}
+	} else if json.Unmarshal(raw, &entries) != nil {
+		return nil
+	}
+	var arr []windowJSON
+	for i, e := range entries {
+		var w windowJSON
+		if json.Unmarshal(e, &w) != nil {
+			continue
+		}
+		if names != nil {
+			w.Type = names[i]
+		}
+		arr = append(arr, w)
+	}
+	var out []agent.Window
+	for _, w := range arr {
+		if len(out) == maxWindows {
+			break
+		}
+		if w.Type == "" || len(w.Type) > maxWindowField || w.Utilization == nil {
+			continue
+		}
+		if len(w.Status) > maxWindowField {
+			w.Status = w.Status[:maxWindowField]
+		}
+		u := *w.Utilization
+		if math.IsNaN(u) || math.IsInf(u, 0) || u < 0 {
+			continue
+		}
+		win := agent.Window{Type: w.Type, Utilization: u, Status: w.Status}
+		if w.ResetsAt != nil {
+			win.ResetsAt = resetTime(*w.ResetsAt)
+		}
+		out = append(out, win)
+	}
+	return out
 }

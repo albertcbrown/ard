@@ -21,6 +21,7 @@ import (
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 	"github.com/albertcbrown/ard/internal/labels"
+	"github.com/albertcbrown/ard/internal/reaper"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -1221,5 +1222,57 @@ func TestReviewersEmptySelectionLogs(t *testing.T) {
 				t.Errorf("worker.no_reviewers lines = %d, want %d\n%s", got, tt.want, buf.String())
 			}
 		})
+	}
+}
+
+type readingSink struct{ n int }
+
+func (r *readingSink) Observe(_ context.Context, ws []agent.Window) { r.n += len(ws) }
+
+// Readings are recorded for the agent step and each fix step, and never for a
+// test step.
+func TestReadingsRecordedOnlyForAgentSteps(t *testing.T) {
+	h := newHarness(t)
+	h.issue("Crash")
+	sink := &readingSink{}
+	h.loop.d.Readings = sink
+	h.loop.d.Parse = func(_ context.Context, _ *config.Resolved, _ state.Job, hd executor.Handle, _ int) (agent.Result, error) {
+		return agent.Result{Windows: []agent.Window{{Type: "five_hour", Utilization: 0.5}}}, nil
+	}
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, func(int) int { return 1 })
+	h.mustTick()
+	if sink.n != 3 { // the agent step and two fix steps, as in TestStepUsageRecordedForEveryAgentStep
+		t.Errorf("readings recorded %d times, want 3 (no test step)", sink.n)
+	}
+}
+
+// readingFin forwards a step's windows to its sink as reaper.Finisher does.
+type readingFin struct {
+	fakeFin
+	sink *readingSink
+}
+
+func (f *readingFin) FinishWith(ctx context.Context, id string, h executor.Handle, st executor.Status, res agent.Result, o reaper.FinishOptions) (closeout.Outcome, error) {
+	if len(res.Windows) > 0 {
+		f.sink.Observe(ctx, res.Windows)
+	}
+	return f.fakeFin.FinishWith(ctx, id, h, st, res, o)
+}
+
+// The final agent step's reading is recorded once: by agentStep, not again
+// at finish, where it could overwrite a newer reading from another job.
+func TestReadingRecordedOncePerStep(t *testing.T) {
+	h := newHarness(t)
+	h.issue("Crash")
+	sink := &readingSink{}
+	h.loop.d.Readings = sink
+	h.loop.d.Finisher = &readingFin{sink: sink}
+	h.loop.d.Parse = func(_ context.Context, _ *config.Resolved, _ state.Job, hd executor.Handle, _ int) (agent.Result, error) {
+		return agent.Result{Windows: []agent.Window{{Type: "five_hour", Utilization: 0.5}}}, nil
+	}
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, func(int) int { return 0 })
+	h.mustTick()
+	if sink.n != 1 {
+		t.Errorf("reading recorded %d times, want 1", sink.n)
 	}
 }
