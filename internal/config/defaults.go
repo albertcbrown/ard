@@ -38,6 +38,7 @@ const (
 	defaultWorkerMaxTestFixes    = 2
 	defaultWorkerMaxReviewRounds = 3
 
+	defaultGitleaksPath     = "gitleaks"
 	defaultStaleInactiveFor = Duration(30 * 24 * time.Hour)
 	defaultStaleSuppressFor = Duration(90 * 24 * time.Hour)
 
@@ -71,6 +72,7 @@ func newResolved(repoRoot string) *Resolved {
 			InactiveFor: defaultStaleInactiveFor,
 			SuppressFor: defaultStaleSuppressFor,
 		},
+		Redact:   Redact{Gitleaks: Gitleaks{Path: defaultGitleaksPath}},
 		Sidecars: map[string]Sidecar{},
 	}
 }
@@ -167,6 +169,17 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 	}
 	if raw.stale.suppressFor != nil {
 		res.Stale.SuppressFor = *raw.stale.suppressFor
+	}
+
+	if raw.gitleaksEnabled != nil {
+		res.Redact.Gitleaks.Enabled = *raw.gitleaksEnabled
+	}
+	if raw.gitleaksPath != nil {
+		if strings.TrimSpace(*raw.gitleaksPath) == "" {
+			errs = append(errs, &Error{File: cfgPath, Key: "redact.gitleaks.path", Msg: "must not be empty"})
+		} else {
+			res.Redact.Gitleaks.Path = *raw.gitleaksPath
+		}
 	}
 
 	for name, sc := range raw.sidecars {

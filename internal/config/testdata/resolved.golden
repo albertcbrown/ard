@@ -20,6 +20,10 @@ protected_paths:
 stale:
   inactive_for: 30d
   suppress_for: 90d
+redact:
+  gitleaks:
+    enabled: false
+    path: gitleaks
 sidecars:
   vpe-specs:
     repo: acme/specs
