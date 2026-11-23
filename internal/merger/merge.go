@@ -83,7 +83,7 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		}
 		if !passed {
 			t.log.Info("merge.reviews_stale", "pr", n, "issue", issue, "role", role, "reason", "no passing close-out record",
-				"hint", "re-request the review; fix rounds (#41) will do this")
+				"hint", "the review has not passed on this PR; it re-runs when the role label is requested")
 			return false
 		}
 		ok, broken, err := prgate.Covers(ctx, d.Git, d.RepoDir, reviewed, head, base, issue)
@@ -93,7 +93,8 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		}
 		if !ok {
 			t.log.Info("merge.reviews_stale", "pr", n, "issue", issue, "role", role, "reviewed", reviewed, "head", head, "paths", len(broken),
-				"hint", "re-request the review; fix rounds (#41) will do this")
+				"hint", "the merger re-requests this review once per head")
+			t.rerequestReview(ctx, pr, issue, role, reviewed, head)
 			return false
 		}
 	}
@@ -359,6 +360,45 @@ func (t *tick) merge(ctx context.Context, pr github.PullRequest, issue int, head
 		t.log.Warn("merge.delete_branch_failed", "pr", n, "branch", pr.HeadRef, "error", err)
 	}
 	return !t.dry
+}
+
+// rerequestReview removes role's :done label so the reviewer claims the role
+// again at the current head. It acts once per head: a review_rerequest event
+// records it. In dry-run only the ledger is written, so the event is not.
+func (t *tick) rerequestReview(ctx context.Context, pr github.PullRequest, issue int, role, reviewed, head string) {
+	d := t.l.d
+	n := pr.Number
+	done := labels.Done(labels.StageReview, role)
+	if !prgate.HasLabel(pr.Labels, done) {
+		return
+	}
+	evs, err := d.Store.Events(ctx, state.EventFilter{Kind: state.EventReviewRerequest, Issue: issue, Stage: "review", Role: role})
+	if err != nil {
+		t.fail(n, "rerequest_events", err)
+		return
+	}
+	for _, e := range evs {
+		var data struct {
+			PR   int    `json:"pr"`
+			Head string `json:"head"`
+		}
+		if json.Unmarshal(e.Data, &data) == nil && data.PR == n && data.Head == head {
+			return
+		}
+	}
+	if err := d.Effects.RemoveLabel(ctx, n, done); err != nil {
+		t.fail(n, "rerequest_label", err)
+		return
+	}
+	if t.dry {
+		t.log.Info("merge.would_rerequest", "pr", n, "issue", issue, "role", role, "reviewed", reviewed, "head", head)
+		return
+	}
+	t.log.Info("merge.review_rerequested", "pr", n, "issue", issue, "role", role, "reviewed", reviewed, "head", head)
+	data, _ := json.Marshal(map[string]any{"pr": n, "head": head, "reviewed": reviewed})
+	if err := d.Store.AppendEvent(ctx, state.Event{Kind: state.EventReviewRerequest, Issue: issue, Stage: "review", Role: role, Data: data}); err != nil {
+		t.log.Warn("merge.event_failed", "pr", n, "error", err)
+	}
 }
 
 // resolveApps fills AppID on the statuses a pinned required rule could use: a
