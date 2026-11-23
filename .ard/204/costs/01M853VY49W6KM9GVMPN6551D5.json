@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "job": "01M853VY49W6KM9GVMPN6551D5",
+  "issue": 204,
+  "stage": "worker",
+  "role": "engineer",
+  "attempt": 1,
+  "outcome": "retry",
+  "cause": "controller_restart",
+  "models": [],
+  "tokens": null,
+  "cost_usd": null,
+  "steps": 0,
+  "started_at": "2026-11-23T21:09:23Z",
+  "ended_at": "2026-11-23T21:09:51Z"
+}

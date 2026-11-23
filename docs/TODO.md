@@ -13,7 +13,6 @@ None.
 ## Phase 2: All roles
 
 - #40 Roles: triage/product-manager, architect, designer, documentation-planner
-- #43 Role: reviewers/security-review
 - #45 Role: reviewers/product-manager-review
 - #47 Scanner: lts
 - #48 Scanner: lint
@@ -22,17 +21,15 @@ None.
 - #53 Gate 3: half of scanner issues merge untouched
 - #203 Scanner: trufflehog (leaked secrets, human-routed)
 - #204 LLM scanner engine: run prompt.txt scanners as agent jobs
-- #212 Scanner: missing-tests, part 1: the Go helper
 - #213 Scanner: missing-tests, part 2: scan, Dockerfile and starter wiring
 - #216 Scanner: trufflehog role (#203 part 2)
 - #217 Scanner: trufflehog starter wiring and image pin (#203 part 3)
 - #221 Scanner failure streaks are visible on the status issue
-- #223 Triage approval gate posts 'ready for approval' for an issue with no plan.md
-- #227 Neutralise markup and mentions in scanner titles and bodies
 - #231 Scanner decode errors must not echo scanner output into logs
-- #252 Re-request reviews when a reviewed PR's head moves with code changes
 - #254 Log secret scan: generic-assignment flags token counts and Token fields
 - #255 Conflict rounds: the worker resolves merge conflicts with main
+- #267 PR watch: check ard's open PRs for status changes every 5 minutes (configurable)
+- #268 Committer: TestBranchesStress flakes on a git worktree admin-dir race
 
 ## Phase 3: Scale
 
