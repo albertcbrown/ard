@@ -266,6 +266,10 @@ func (jb *job) agentStep(ctx context.Context, id, ref string, extra []executor.F
 		jb.finishWithPR(ctx, s, "", *cause)
 		return step{}, false
 	}
+	// s is an agent or fix step here, never a test step.
+	if jb.l.d.Readings != nil && len(s.res.Windows) > 0 && s.h.JobID != "" {
+		jb.l.d.Readings.Observe(ctx, s.res.Windows)
+	}
 	if u, ok := reaper.StepUsageOf(s.res); ok && s.h.JobID != "" {
 		jb.usage = append(jb.usage, stepUsage{s.h.JobID, u})
 		jb.recordUsage(ctx, jb.usage[len(jb.usage)-1])

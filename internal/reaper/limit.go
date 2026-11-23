@@ -75,3 +75,9 @@ func recordedLimit(plan json.RawMessage) (family string, resetsAt time.Time, ok 
 	}
 	return rec.Job.Cause.Family, rec.Job.Cause.ResetsAt, true
 }
+
+// ReadingRecorder records subscription usage-window readings. Implementations
+// log and swallow their own errors: a reading never fails a job.
+type ReadingRecorder interface {
+	Observe(ctx context.Context, ws []agent.Window)
+}

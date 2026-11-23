@@ -137,6 +137,20 @@ type Result struct {
 	// present (the docs prefer it for accounting), otherwise result.usage,
 	// which covers the main loop only. nil when the result had neither.
 	Usage *Usage
+	// Windows are the subscription usage readings the stream carried, one per
+	// window type, the last reading winning, sorted by Type. It is set whenever
+	// the stream held readings, also with ErrNoResult. Readings are not
+	// trusted text: only CLI-emitted events feed them.
+	Windows []Window
+}
+
+// Window is one subscription usage-window reading (for example the 5-hour or
+// the weekly window).
+type Window struct {
+	Type        string    // raw window name, e.g. "five_hour", "seven_day"
+	Utilization float64   // exactly as the stream reports it (a 0-1 fraction or a percent); not normalised
+	Status      string    // raw status, e.g. "allowed", "allowed_warning", "rejected"
+	ResetsAt    time.Time // UTC; zero when absent
 }
 
 // Transient reports whether a failed run looks worth one automatic retry.

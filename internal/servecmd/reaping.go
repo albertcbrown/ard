@@ -108,7 +108,7 @@ func (w *wiring) reaperParts() (*reaper.Finisher, *reaper.Reaper, error) {
 	// With no credential Auth is "": only the rate_limit_event and limit-message
 	// signals count as a usage limit.
 	w.fin = &reaper.Finisher{Closer: cl, Cleaner: ex, Store: w.Store, Start: started, Log: w.Log,
-		Classify: reaper.UsageLimitClassifier(w.Model.Auth), Limits: lazyLimits{w}}
+		Classify: reaper.UsageLimitClassifier(w.Model.Auth), Limits: lazyLimits{w}, Readings: readingObserver{w}}
 	w.rp = reaper.New(reaper.Deps{
 		Store: w.Store, Executor: ex, Finisher: w.fin, Closer: cl,
 		Pool:   func() reaper.Lookup { return w.Pool() },

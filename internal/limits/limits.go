@@ -49,11 +49,12 @@ type entry struct {
 
 // Book records which families are exhausted and until when.
 type Book struct {
-	mu      sync.Mutex
-	entries map[string]entry
-	meta    Meta
-	now     func() time.Time
-	log     *slog.Logger
+	mu       sync.Mutex
+	entries  map[string]entry
+	readings map[string]Reading
+	meta     Meta
+	now      func() time.Time
+	log      *slog.Logger
 }
 
 // Open loads the book. A missing key gives an empty book; a malformed value
@@ -66,21 +67,22 @@ func Open(ctx context.Context, m Meta, now func() time.Time, log *slog.Logger) (
 	if log == nil {
 		log = slog.Default()
 	}
-	b := &Book{entries: map[string]entry{}, meta: m, now: now, log: log}
+	b := &Book{entries: map[string]entry{}, readings: map[string]Reading{}, meta: m, now: now, log: log}
 	v, err := m.Meta(ctx, metaKey)
 	switch {
 	case errors.Is(err, state.ErrNotFound):
-		return b, nil
 	case err != nil:
 		return nil, fmt.Errorf("open limits book: %w", err)
+	default:
+		var got map[string]entry
+		if err := json.Unmarshal([]byte(v), &got); err != nil {
+			log.Warn("limits.corrupt", "error", err)
+		} else if got != nil {
+			b.entries = got
+		}
 	}
-	var got map[string]entry
-	if err := json.Unmarshal([]byte(v), &got); err != nil {
-		log.Warn("limits.corrupt", "error", err)
-		return b, nil
-	}
-	if got != nil {
-		b.entries = got
+	if err := b.loadReadings(ctx); err != nil {
+		return nil, err
 	}
 	return b, nil
 }

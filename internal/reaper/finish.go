@@ -55,7 +55,10 @@ type Finisher struct {
 	// Limits records a usage-limit stop so the pool starts no job into the
 	// limit. nil records nothing.
 	Limits LimitRecorder
-	Log    *slog.Logger
+	// Readings records the usage windows of an agent step (never a test
+	// step). nil records nothing. The recorder decides which credentials count.
+	Readings ReadingRecorder
+	Log      *slog.Logger
 }
 
 func (f *Finisher) log() *slog.Logger {
@@ -186,6 +189,11 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	// the account. Only the job's own agent step and its fix steps count.
 	if h.JobID != "" && !agentStep(jobID, h.JobID) {
 		res.LimitHit = nil
+	}
+	// Readings come only from the job's own agent steps, for the same reason,
+	// and are kept even when the run has no result (a killed step).
+	if f.Readings != nil && len(res.Windows) > 0 && agentStep(jobID, h.JobID) {
+		f.Readings.Observe(ctx, res.Windows)
 	}
 	cause := override
 	if cause.Kind == "" && f.Classify != nil {

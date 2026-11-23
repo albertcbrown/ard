@@ -1223,3 +1223,24 @@ func TestReviewersEmptySelectionLogs(t *testing.T) {
 		})
 	}
 }
+
+type readingSink struct{ n int }
+
+func (r *readingSink) Observe(_ context.Context, ws []agent.Window) { r.n += len(ws) }
+
+// Readings are recorded for the agent step and each fix step, and never for a
+// test step.
+func TestReadingsRecordedOnlyForAgentSteps(t *testing.T) {
+	h := newHarness(t)
+	h.issue("Crash")
+	sink := &readingSink{}
+	h.loop.d.Readings = sink
+	h.loop.d.Parse = func(_ context.Context, _ *config.Resolved, _ state.Job, hd executor.Handle, _ int) (agent.Result, error) {
+		return agent.Result{Windows: []agent.Window{{Type: "five_hour", Utilization: 0.5}}}, nil
+	}
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, func(int) int { return 1 })
+	h.mustTick()
+	if sink.n != 3 { // the agent step and two fix steps, as in TestStepUsageRecordedForEveryAgentStep
+		t.Errorf("readings recorded %d times, want 3 (no test step)", sink.n)
+	}
+}
