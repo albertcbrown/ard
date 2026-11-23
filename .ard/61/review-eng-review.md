@@ -9,14 +9,17 @@ findings:
     severity: low
     blocking: false
     message: |
-      The tree closure (fetch into refs/ard/janitor/main, rev-parse, list) has no test of its own.
+      The tree closure (fetch into refs/ard/janitor/main, rev-parse, list) still has no test of its own.
       Only registerLoops and the knownLoops lists cover it. A small test against a gittest remote would
       catch a wrong refspec or ref name.
 ---
-The change follows plan.md: ListTree, the janitor loop with the 90-day cutoff, re-fetch, hold/keep skips, chunking and a 30-day gate, plus the wiring and docs. Every planned test exists and passes, so I approve it. Only a low finding on the untested servecmd tree closure.
+The change follows plan.md: ListTree, the janitor loop with the 90-day cutoff, re-fetch, hold/keep skips, 256-file chunking and a 30-day gate, plus the wiring and docs. I found nothing blocking. Approved.
 
 ## Checks
 - Build: `go build ./...` OK.
-- Tests: `go test -cover ./internal/janitor ./internal/gitx ./internal/servecmd` pass (janitor 87.0%, gitx 82.4%, servecmd 80.5%).
-- Lint: `make lint` started (`go vet` passed, then tool downloads); I did not see its full output, so I report no lint problems only from vet.
-- Diff coverage: janitor tests exercise all planned cases; only the servecmd tree closure is not run by a test.
+- Tests: `go test ./internal/janitor ./internal/gitx` pass.
+- Lint: not run this round. The previous round's `make lint` was cut off after `go vet` passed, so I have no full lint result.
+- Diff coverage: not re-measured. The janitor tests cover the planned cases. The servecmd tree closure is the only added code no test runs.
+
+## Previous findings
+- internal/servecmd/janitor.go: still present (low, non-blocking).
