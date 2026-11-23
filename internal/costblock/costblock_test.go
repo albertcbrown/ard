@@ -1,6 +1,7 @@
 package costblock
 
 import (
+	"math"
 	"math/rand"
 	"strings"
 	"testing"
@@ -91,10 +92,16 @@ func TestRoundTripRandom(t *testing.T) {
 		for j := rnd.Intn(30); j >= 0; j-- {
 			r := Row{Stage: pick(), Role: pick(), Run: rnd.Intn(5), Outcome: pick(), Link: pick(), PR: rnd.Intn(3) - 1, Models: []string{pick(), pick()}}
 			if rnd.Intn(2) == 0 {
-				r.Tokens = &Tokens{rnd.Int63n(3e9) - 5, rnd.Int63n(1000), rnd.Int63n(1e6), rnd.Int63n(1e12)}
+				r.Tokens = &Tokens{rnd.Int63n(3e9) - 5, rnd.Int63n(1000), rnd.Int63n(1e15), rnd.Int63n(1e12)}
 			}
 			if rnd.Intn(2) == 0 {
 				r.CostUSD = f(rnd.Float64()*20 - 1)
+				switch rnd.Intn(4) {
+				case 0:
+					r.CostUSD = f(9.9e8 + rnd.Float64()*1e8)
+				case 1:
+					r.CostUSD = f(math.Copysign(0, -1))
+				}
 			}
 			rows = append(rows, r)
 		}
@@ -238,4 +245,27 @@ func TestLocks(t *testing.T) {
 	}
 	l.Lock(1)()
 	l.Lock(2)()
+}
+
+func TestRenderExtremesStayValid(t *testing.T) {
+	big := int64(9_999_949_999_999)
+	neg0 := math.Copysign(0, -1)
+	rows := []Row{
+		{Stage: "worker", Role: "a", Tokens: &Tokens{big, big, big, big}, CostUSD: f(9.99e8), Outcome: "done"},
+		{Stage: "worker", Role: "a", Tokens: &Tokens{big, big, big, big}, CostUSD: f(9.99e8), Outcome: "done"},
+		{Stage: "worker", Role: "b", Tokens: &Tokens{1e15 + 1, 0, 0, 0}, CostUSD: &neg0, Outcome: "done"},
+	}
+	for n := 1; n <= 3; n++ {
+		b, _, ok := Render(rows[:n], MaxBlockBytes)
+		if !ok || !Valid(inner(b)) || strings.Contains(b, "$-") {
+			t.Fatalf("n=%d ok=%v:\n%s", n, ok, b)
+		}
+	}
+	many := make([]Row, 30)
+	for i := range many {
+		many[i] = Row{Stage: "worker", Role: "a", Tokens: &Tokens{big, 0, 0, 0}, CostUSD: f(9.99e8), Outcome: "done"}
+	}
+	if b, _, ok := Render(many, MaxBlockBytes); !ok || !Valid(inner(b)) || !strings.Contains(b, "| **Total** | **—** | **—** |") {
+		t.Errorf("overflowing totals must render dashes:\n%s", b)
+	}
 }

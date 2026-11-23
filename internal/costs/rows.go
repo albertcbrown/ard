@@ -62,7 +62,7 @@ func outcomeText(f closeout.CostFacts) string {
 		switch {
 		case f.Cause != "":
 			return "failed: " + string(f.Cause)
-		case f.ExitCode != 0:
+		case f.ExitCode >= 1 && f.ExitCode <= 999:
 			return fmt.Sprintf("failed: exit %d", f.ExitCode)
 		}
 		return "failed: result"

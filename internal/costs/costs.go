@@ -37,7 +37,7 @@ const (
 // Store is the part of state.Store the loop uses.
 type Store interface {
 	DirtyCostTables(ctx context.Context, limit int) ([]state.CostTable, error)
-	CostTableDone(ctx context.Context, issue int, markedAt time.Time) error
+	CostTableDone(ctx context.Context, issue int, gen int64) error
 	CostTableFailed(ctx context.Context, issue int) (int, error)
 	ClosedJobsOf(ctx context.Context, issue int) ([]state.Job, error)
 	IssueUsage(ctx context.Context, issue int) (map[string]state.JobUsage, error)
@@ -102,14 +102,16 @@ func (l *Loop) Tick(ctx context.Context, _ controller.Env) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		l.write(ctx, c)
+		if err := l.write(ctx, c); err != nil {
+			return fmt.Errorf("costs: %w", err) // transient: back off
+		}
 	}
 	return nil
 }
 
 // write brings issue c.Issue's table up to date. Every outcome is logged and
 // ends in done, failed or "left dirty"; none returns an error.
-func (l *Loop) write(ctx context.Context, c state.CostTable) {
+func (l *Loop) write(ctx context.Context, c state.CostTable) error {
 	n := c.Issue
 	log := l.log().With("issue", n)
 	unlock := l.d.Locks.Lock(n)
@@ -118,30 +120,33 @@ func (l *Loop) write(ctx context.Context, c state.CostTable) {
 	// Render first: this is local and needs no GitHub.
 	rows, err := l.rows(ctx, n, log)
 	if err != nil {
-		l.failed(ctx, log, c, err)
-		return
+		return l.failed(ctx, log, c, err)
 	}
 	block, folded, ok := costblock.Render(rows, costblock.MaxBlockBytes)
 	if !ok {
 		log.Warn("costs.nothing_to_render", "rows", len(rows))
 		l.done(ctx, log, c)
-		return
+		return nil
+	}
+	if costblock.Region(block) != block { // Render must never emit a block Valid rejects
+		log.Error("costs.render_invalid", "bytes", len(block))
+		l.done(ctx, log, c)
+		return nil
 	}
 	if n < 0 { // a dry-run synthetic issue: there is no body to read
 		log.Info("costs.table_dry", "rows", len(rows), "folded", folded, "bytes", len(block))
 		l.done(ctx, log, c)
-		return
+		return nil
 	}
 
 	body, err := l.d.Reader.GetIssue(ctx, n)
 	if errors.Is(err, github.ErrNotFound) {
 		log.Info("costs.issue_gone")
 		l.done(ctx, log, c)
-		return
+		return nil
 	}
 	if err != nil {
-		l.failed(ctx, log, c, fmt.Errorf("read issue: %w", err))
-		return
+		return l.failed(ctx, log, c, fmt.Errorf("read issue: %w", err))
 	}
 	cur := body.Body
 	for attempt := 0; ; attempt++ {
@@ -149,39 +154,36 @@ func (l *Loop) write(ctx context.Context, c state.CostTable) {
 		if !fit {
 			log.Warn("costs.body_full", "body_runes", utf8.RuneCountInString(cur))
 			l.done(ctx, log, c)
-			return
+			return nil
 		}
 		if next == cur {
 			log.Info("costs.table_unchanged", "rows", len(rows))
 			l.done(ctx, log, c)
-			return
+			return nil
 		}
 		if err := l.d.Effects.UpdateIssueBody(ctx, n, next); err != nil {
-			l.failed(ctx, log, c, fmt.Errorf("write body: %w", err))
-			return
+			return l.failed(ctx, log, c, fmt.Errorf("write body: %w", err))
 		}
 		dry := l.d.Effects.DryRun()
 		if dry { // the write only reached the ledger: nothing to verify
 			log.Info("costs.table_written", "rows", len(rows), "folded", folded, "bytes", len(blk), "dry_run", true)
 			l.done(ctx, log, c)
-			return
+			return nil
 		}
 		back, err := l.d.Reader.GetIssue(ctx, n)
 		if err != nil {
-			l.failed(ctx, log, c, fmt.Errorf("verify: %w", err))
-			return
+			return l.failed(ctx, log, c, fmt.Errorf("verify: %w", err))
 		}
 		if norm(costblock.Region(back.Body)) == norm(blk) {
 			log.Info("costs.table_written", "rows", len(rows), "folded", folded, "bytes", len(blk), "dry_run", false)
 			l.done(ctx, log, c)
-			return
+			return nil
 		}
 		// Another writer replaced the body after ours. Splice onto what is
 		// there now (never onto older text) and write once more.
 		log.Warn("costs.body_raced", "attempt", attempt+1)
 		if attempt == 1 {
-			l.failed(ctx, log, c, errors.New("body changed under the write twice"))
-			return
+			return l.failed(ctx, log, c, errors.New("body changed under the write twice"))
 		}
 		cur = back.Body
 	}
@@ -205,26 +207,33 @@ func fitBody(body string, rows []costblock.Row, block string) (next, blk string,
 }
 
 func (l *Loop) done(ctx context.Context, log *slog.Logger, c state.CostTable) {
-	if err := l.d.Store.CostTableDone(ctx, c.Issue, c.MarkedAt); err != nil {
+	if err := l.d.Store.CostTableDone(ctx, c.Issue, c.Gen); err != nil {
 		log.Error("costs.mark_done_failed", "error", err)
 	}
 }
 
-func (l *Loop) failed(ctx context.Context, log *slog.Logger, c state.CostTable, err error) {
+func (l *Loop) failed(ctx context.Context, log *slog.Logger, c state.CostTable, err error) error {
 	n := c.Issue
+	if github.IsTransient(err) {
+		// A rate limit or outage is not this issue's fault: do not count it
+		// toward giving up. Stop the tick so the loop backs off.
+		log.Warn("costs.write_deferred", "error", err)
+		return err
+	}
 	log.Warn("costs.write_failed", "error", err)
 	failures, ferr := l.d.Store.CostTableFailed(ctx, n)
 	if ferr != nil {
 		log.Error("costs.mark_failed_failed", "error", ferr)
-		return
+		return nil
 	}
 	if failures >= maxFailures {
 		log.Error("costs.gave_up", "failures", failures)
 		// The next close-out on the issue marks it dirty again.
-		if derr := l.d.Store.CostTableDone(ctx, n, c.MarkedAt); derr != nil {
+		if derr := l.d.Store.CostTableDone(ctx, n, c.Gen); derr != nil {
 			log.Error("costs.mark_done_failed", "error", derr)
 		}
 	}
+	return nil
 }
 
 func norm(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }

@@ -200,7 +200,7 @@ func TestFailedWriteStaysDirtyThenCatchesUp(t *testing.T) {
 	e := newEnv(t, nil)
 	n := e.gh.SeedIssue(github.Issue{Title: "t", Body: human})
 	j := e.closeJob(jobOpt{stage: "triage", role: "lead", issue: n, rec: doneRec(1)})
-	e.gh.FailNext("UpdateIssue", &github.HTTPError{Status: 502})
+	e.gh.FailNext("UpdateIssue", &github.HTTPError{Status: 422})
 	e.tick()
 	if e.dirty() != 1 || e.body(n) != human {
 		t.Fatalf("dirty=%d body=%q", e.dirty(), e.body(n))
@@ -224,7 +224,7 @@ func TestGivesUpAfterRepeatedFailures(t *testing.T) {
 	n := e.gh.SeedIssue(github.Issue{Title: "t", Body: human})
 	e.closeJob(jobOpt{stage: "triage", role: "lead", issue: n, rec: doneRec(1)})
 	for i := 0; i < maxFailures; i++ {
-		e.gh.FailNext("UpdateIssue", &github.HTTPError{Status: 500})
+		e.gh.FailNext("UpdateIssue", &github.HTTPError{Status: 422})
 		e.tick()
 	}
 	if e.dirty() != 0 || !strings.Contains(e.logs.String(), "costs.gave_up") {
@@ -405,5 +405,33 @@ func TestStoreErrorIsReturned(t *testing.T) {
 	e.st.Close()
 	if err := e.loop.Tick(e.ctx, controller.Env{}); err == nil || errors.Is(err, nil) {
 		t.Fatal("a store failure must be returned")
+	}
+}
+
+func TestTransientErrorBacksOffWithoutCounting(t *testing.T) {
+	e := newEnv(t, nil)
+	n := e.gh.SeedIssue(github.Issue{Title: "t", Body: human})
+	e.closeJob(jobOpt{stage: "triage", role: "lead", issue: n, rec: doneRec(1)})
+	for i := 0; i < maxFailures+2; i++ {
+		e.gh.FailNext("UpdateIssue", &github.HTTPError{Status: 503})
+		if err := e.loop.Tick(e.ctx, controller.Env{}); err == nil {
+			t.Fatal("a transient error must stop the tick")
+		}
+	}
+	d, _ := e.st.DirtyCostTables(e.ctx, 10)
+	if len(d) != 1 || d[0].Failures != 0 || strings.Contains(e.logs.String(), "costs.gave_up") {
+		t.Fatalf("dirty=%v", d)
+	}
+	e.tick()
+	if e.dirty() != 0 || rowCount(e.body(n)) != 1 {
+		t.Fatal("did not catch up after the outage")
+	}
+}
+
+func TestExitCodeOutOfRangeFallsBack(t *testing.T) {
+	for code, want := range map[int]string{-1: "failed: result", 0: "failed: result", 1000: "failed: result", 7: "failed: exit 7"} {
+		if got := outcomeText(closeout.CostFacts{Outcome: closeout.OutcomeFailed, ExitCode: code}); got != want {
+			t.Errorf("exit %d = %q, want %q", code, got, want)
+		}
 	}
 }

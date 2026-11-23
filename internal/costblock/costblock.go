@@ -44,10 +44,10 @@ type Row struct {
 
 const (
 	dash       = "—"
-	headerLine = "**Agent cost** · written by ard from its own records; edits inside this block are replaced. Cost is the agent CLI's list-price estimate, not a bill."
+	headerLine = "**Agent cost** · written by ard from its own records; do not edit: an edited block is kept as text, shown to agents and re-gates the issue. Cost is the agent CLI's list-price estimate, not a bill."
 	tableHead  = "| agent | tokens | cost | model | comments |"
 	tableSep   = "| --- | --- | --- | --- | --- |"
-	maxNum     = int64(1e15)
+	maxNum     = int64(9_999_949_999_999) // largest count num() renders as "9999.9B" or less
 	maxCost    = 1e9
 	maxModels  = 8
 )
@@ -119,7 +119,8 @@ func validCost(c *float64) bool {
 	return c != nil && !math.IsNaN(*c) && *c >= 0 && *c < maxCost
 }
 
-func costText(c float64) string { return fmt.Sprintf("$%.2f", c) }
+// costText formats a cost; c+0 turns -0 into 0.
+func costText(c float64) string { return fmt.Sprintf("$%.2f", c+0) }
 
 // sums accumulates the reported tokens and costs of rows.
 type sums struct {
@@ -145,10 +146,10 @@ func (s *sums) add(r Row) {
 
 func (s sums) cells() (tok, cost string) {
 	tok, cost = dash, dash
-	if s.hasT {
+	if s.hasT && validTokens(&s.tok) {
 		tok = tokText(s.tok)
 	}
-	if s.hasC {
+	if s.hasC && s.cost < 9_999_999_999 {
 		cost = costText(s.cost)
 	}
 	return

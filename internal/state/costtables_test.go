@@ -2,7 +2,6 @@ package state
 
 import (
 	"testing"
-	"time"
 )
 
 func TestCostTableMarking(t *testing.T) {
@@ -39,7 +38,7 @@ func TestCostTableMarking(t *testing.T) {
 	}
 
 	// A stale marked_at leaves it dirty; the current one clears it.
-	if err := s.CostTableDone(ctx, 7, d[0].MarkedAt.Add(-time.Second)); err != nil {
+	if err := s.CostTableDone(ctx, 7, d[0].Gen-1); err != nil {
 		t.Fatal(err)
 	}
 	if d2, _ := s.DirtyCostTables(ctx, 10); len(d2) != 1 {
@@ -48,12 +47,28 @@ func TestCostTableMarking(t *testing.T) {
 	if n, err := s.CostTableFailed(ctx, 7); err != nil || n != 1 {
 		t.Fatalf("failed = %d, %v", n, err)
 	}
-	if err := s.CostTableDone(ctx, 7, d[0].MarkedAt); err != nil {
+	if err := s.CostTableDone(ctx, 7, d[0].Gen); err != nil {
 		t.Fatal(err)
 	}
 	if d2, _ := s.DirtyCostTables(ctx, 10); len(d2) != 0 {
 		t.Fatalf("done left dirty: %v", d2)
 	}
+	// A second mark in the same second is not lost by a done for the first.
+	if err := s.SetCloseout(ctx, w.ID, "closed", nil); err != nil {
+		t.Fatal(err)
+	}
+	g1, _ := s.DirtyCostTables(ctx, 10)
+	if err := s.SetCloseout(ctx, w.ID, "closed", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CostTableDone(ctx, 7, g1[0].Gen); err != nil {
+		t.Fatal(err)
+	}
+	if d2, _ := s.DirtyCostTables(ctx, 10); len(d2) != 1 {
+		t.Fatalf("same-second mark lost: %v", d2)
+	}
+	g2, _ := s.DirtyCostTables(ctx, 10)
+	_ = s.CostTableDone(ctx, 7, g2[0].Gen)
 	// A replay re-marks and resets failures.
 	if err := s.SetCloseout(ctx, w.ID, "closed", nil); err != nil {
 		t.Fatal(err)

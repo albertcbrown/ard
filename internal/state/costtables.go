@@ -10,19 +10,22 @@ import (
 type CostTable struct {
 	Issue    int
 	MarkedAt time.Time
+	// Gen counts marks; CostTableDone clears only the generation it wrote, so a
+	// second close-out in the same second is never lost.
+	Gen      int64
 	Failures int
 }
 
 // markCostTable runs inside the SetCloseout transaction: a close-out that
 // reaches "closed" leaves its issue dirty, and a replay re-marks harmlessly.
-const markCostTable = `INSERT INTO cost_tables(issue, dirty, marked_at)
-	SELECT issue, 1, ? FROM jobs WHERE id = ? AND stage IN ('triage','worker','review')
-	ON CONFLICT(issue) DO UPDATE SET dirty = 1, marked_at = excluded.marked_at, failures = 0`
+const markCostTable = `INSERT INTO cost_tables(issue, dirty, gen, marked_at)
+	SELECT issue, 1, 1, ? FROM jobs WHERE id = ? AND stage IN ('triage','worker','review')
+	ON CONFLICT(issue) DO UPDATE SET dirty = 1, gen = gen + 1, marked_at = excluded.marked_at, failures = 0`
 
 // DirtyCostTables returns up to limit issues whose table needs a write, oldest
 // mark first.
 func (s *Store) DirtyCostTables(ctx context.Context, limit int) ([]CostTable, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT issue, marked_at, failures FROM cost_tables
+	rows, err := s.db.QueryContext(ctx, `SELECT issue, marked_at, failures, gen FROM cost_tables
 		WHERE dirty = 1 ORDER BY marked_at, issue LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("dirty cost tables: %w", err)
@@ -32,7 +35,7 @@ func (s *Store) DirtyCostTables(ctx context.Context, limit int) ([]CostTable, er
 	for rows.Next() {
 		var c CostTable
 		var at int64
-		if err := rows.Scan(&c.Issue, &at, &c.Failures); err != nil {
+		if err := rows.Scan(&c.Issue, &at, &c.Failures, &c.Gen); err != nil {
 			return nil, fmt.Errorf("dirty cost tables: %w", err)
 		}
 		c.MarkedAt = time.Unix(at, 0).UTC()
@@ -41,11 +44,11 @@ func (s *Store) DirtyCostTables(ctx context.Context, limit int) ([]CostTable, er
 	return out, rows.Err()
 }
 
-// CostTableDone clears the flag only when it is still the mark the writer saw,
+// CostTableDone clears the flag only when it is still the generation the writer saw,
 // so a close-out that marks during a write is not lost.
-func (s *Store) CostTableDone(ctx context.Context, issue int, markedAt time.Time) error {
+func (s *Store) CostTableDone(ctx context.Context, issue int, gen int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE cost_tables SET dirty = 0, written_at = ?, failures = 0
-		WHERE issue = ? AND marked_at = ?`, s.now().Unix(), issue, markedAt.Unix())
+		WHERE issue = ? AND gen = ?`, s.now().Unix(), issue, gen)
 	if err != nil {
 		return fmt.Errorf("cost table done %d: %w", issue, err)
 	}
