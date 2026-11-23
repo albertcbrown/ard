@@ -507,3 +507,51 @@ func TestRunWriteDenied(t *testing.T) {
 		t.Errorf("comment not sanitised: %s", b)
 	}
 }
+
+// The plan.md of a triage job carries a merge func that keeps the sections
+// other roles committed to main after the job's base.
+func TestCommitMergesPlanSectionOntoMain(t *testing.T) {
+	e := newEnv(t)
+	e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+	e.write(".ard/7/plan.md", "## Implementation\nsteps\n")
+	j := e.claim(StageTriage, "engineer")
+	if oc, err := New(e.d).Run(context.Background(), j); err != nil || oc != OutcomeDone {
+		t.Fatalf("outcome %q, err %v", oc, err)
+	}
+	var merge func([]byte, bool, []byte) ([]byte, error)
+	for _, r := range e.cm.reqs {
+		for _, f := range r.Files {
+			if f.Path == ".ard/7/plan.md" {
+				merge = f.Merge
+			}
+		}
+	}
+	if merge == nil {
+		t.Fatal("plan.md has no Merge func")
+	}
+	got, err := merge([]byte("## Requirements\nv2\n"), true, []byte("## Implementation\nsteps\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "v2") || !strings.Contains(string(got), "steps") {
+		t.Errorf("merged = %q", got)
+	}
+}
+
+func TestCommitPlanConflictNeedsHuman(t *testing.T) {
+	e := newEnv(t)
+	e.cm.err = fmt.Errorf("%w: .ard/7/plan.md: section twice", committer.ErrMerge)
+	e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+	e.write(".ard/7/plan.md", "## Implementation\nsteps\n")
+	j := e.claim(StageTriage, "engineer")
+	rec, err := Prepare(context.Background(), j, e.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := New(e.d).commit(context.Background(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Plan.Outcome != OutcomeNeedsHuman || !strings.Contains(rec.Plan.Reason, "plan.md conflict") {
+		t.Errorf("plan = %s: %s", rec.Plan.Outcome, rec.Plan.Reason)
+	}
+}

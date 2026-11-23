@@ -499,10 +499,15 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 	}
 	req := committer.Request{Issue: rec.Job.Issue, Stage: rec.Job.Stage, Role: rec.Job.Role,
 		Summary: commitSummary(*p), JobID: rec.Job.ID}
+	sec := sectionOf(c.d.Roles, rec.Job.Stage, rec.Job.Role)
+	planPath := fmt.Sprintf(".ard/%d/plan.md", rec.Job.Issue)
 	for _, f := range p.Files {
 		cf := committer.File{Path: f.Path, Delete: f.Delete}
 		if !f.Delete {
 			cf.Src = f.Staged
+			if sec != "" && f.Path == planPath && rec.Job.Branch == "" {
+				cf.Merge = mergeOwnSection(sec)
+			}
 		}
 		req.Files = append(req.Files, cf)
 	}
@@ -524,7 +529,11 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 		return nil
 	}
 	tail, tailWithheld, keep := p.Tail, p.TailWithheld, p.KeepUntil
-	*p = failedPlan(rec.Job, "commit failed: "+err.Error(), p.LogWithheld)
+	if errors.Is(err, committer.ErrMerge) {
+		*p = needsHumanPlan(rec.Job, p.Status, "plan.md conflict: "+err.Error())
+	} else {
+		*p = failedPlan(rec.Job, "commit failed: "+err.Error(), p.LogWithheld)
+	}
 	p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
 	return nil
 }

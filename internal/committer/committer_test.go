@@ -590,3 +590,38 @@ func TestWorktreeAdminSharedWithExecutor(t *testing.T) {
 	}
 	onlyClone(t, e.clone)
 }
+
+func TestCommitMergeSeesLatestHead(t *testing.T) {
+	e := newEnv(t)
+	c := e.main(t, e.live())
+	if _, err := c.Commit(context.Background(), req(12, "plan.md", "head")); err != nil {
+		t.Fatal(err)
+	}
+	r := req(12, "plan.md", "mine")
+	r.Files[0].Merge = func(cur []byte, exists bool, mine []byte) ([]byte, error) {
+		if !exists || string(cur) != "head" {
+			t.Errorf("cur = %q exists %v", cur, exists)
+		}
+		return append(append([]byte{}, cur...), mine...), nil
+	}
+	if _, err := c.Commit(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	if out := gittest.Run(t, e.bare, "show", "main:.ard/12/plan.md"); out != "headmine" {
+		t.Fatalf("content %q", out)
+	}
+}
+
+func TestCommitMergeError(t *testing.T) {
+	e := newEnv(t)
+	c := e.main(t, e.live())
+	before := e.head(t, "main")
+	r := req(12, "plan.md", "mine")
+	r.Files[0].Merge = func([]byte, bool, []byte) ([]byte, error) { return nil, errors.New("no") }
+	if _, err := c.Commit(context.Background(), r); !errors.Is(err, ErrMerge) {
+		t.Fatalf("err = %v", err)
+	}
+	if e.head(t, "main") != before {
+		t.Fatal("main moved")
+	}
+}
