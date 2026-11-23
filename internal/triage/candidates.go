@@ -151,6 +151,8 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 	c.rec = rec
 	if rec != nil {
 		c.reason = intake.Reason(rec.Reason)
+	} else {
+		c.reason = intake.ReasonAdmitted // passed on the stored admission: the body hash still matches
 	}
 	return c, true, nil
 }

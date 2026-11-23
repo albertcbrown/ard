@@ -148,6 +148,19 @@ func TestCandidates(t *testing.T) {
 			t.Errorf("candidate %+v ok=%v err=%v", c, ok, err)
 		}
 	})
+	t.Run("a lead re-claim on an admitted human issue claims with reason admitted", func(t *testing.T) {
+		h := newHarness(t)
+		n := h.human("t", "body", lead)
+		h.labelledBy(n, lead, "maint", "triage", t0.Add(time.Minute))
+		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: agentjob.BodyHash(h.issue(n)), LabeledAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		tk := &tick{l: h.loop, cfg: h.cfg, log: quiet, self: self}
+		c, ok, err := tk.consider(context.Background(), config.Role{Kind: config.KindTriage, Name: "lead"}, n)
+		if err != nil || !ok || c.reason != intake.ReasonAdmitted {
+			t.Errorf("candidate %+v ok=%v err=%v", c, ok, err)
+		}
+	})
 	t.Run("an App-authored issue claims with reason app-authored", func(t *testing.T) {
 		h := newHarness(t)
 		n := h.gh.SeedIssue(github.Issue{Title: "t", Author: self, Labels: []string{labels.Request(labels.StageTriage, "architect")}, CreatedAt: t0})
