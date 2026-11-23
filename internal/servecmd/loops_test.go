@@ -62,7 +62,7 @@ func TestSelectLoopsUnknownName(t *testing.T) {
 	if !errors.As(err, &ee) || ee.Code != 2 {
 		t.Fatalf("err = %v, want ExitError code 2", err)
 	}
-	for _, s := range []string{`"scaners"`, "scanners, stale, triage, workers, reviewers, reviewfix, merger, reaper"} {
+	for _, s := range []string{`"scaners"`, "scanners, stale, triage, workers, reviewers, reviewfix, merger, janitor, reaper"} {
 		if !strings.Contains(err.Error(), s) {
 			t.Errorf("error %q does not name %s", err, s)
 		}
@@ -81,7 +81,7 @@ func TestServeUnknownLoopFailsFirst(t *testing.T) {
 
 // The loop names registerLoops' constructors report are the known names.
 func TestKnownLoopsMatchLoopNames(t *testing.T) {
-	want := []string{"scanners", "stale", "triage", "workers", "reviewers", "reviewfix", "merger", "reaper"}
+	want := []string{"scanners", "stale", "triage", "workers", "reviewers", "reviewfix", "merger", "janitor", "reaper"}
 	if !reflect.DeepEqual(knownLoops, want) {
 		t.Errorf("knownLoops = %v, want %v", knownLoops, want)
 	}

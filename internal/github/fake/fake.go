@@ -1114,6 +1114,10 @@ func parseSearch(q string) (searchTerms, error) {
 				return nil, fmt.Errorf("unsupported qualifier in:%s", v)
 			}
 		case "label":
+		case "closed":
+			if _, err := time.Parse("2006-01-02", strings.TrimPrefix(v, "<")); err != nil || !strings.HasPrefix(v, "<") {
+				return nil, fmt.Errorf("unsupported qualifier closed:%s (want closed:<YYYY-MM-DD)", v)
+			}
 		default:
 			return nil, fmt.Errorf("unsupported qualifier %q", k)
 		}
@@ -1152,6 +1156,9 @@ func (ts searchTerms) match(it *item) bool {
 			}
 		case "label":
 			ok = hasLabel(it.issue.Labels, t.value)
+		case "closed":
+			day, _ := time.Parse("2006-01-02", strings.TrimPrefix(t.value, "<"))
+			ok = it.issue.ClosedAt != nil && it.issue.ClosedAt.UTC().Before(day)
 		}
 		if ok == t.neg {
 			return false
