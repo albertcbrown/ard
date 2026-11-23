@@ -14,7 +14,8 @@ var ErrBadPathRule = errors.New("redact: bad path rule")
 
 // PathRule replaces an absolute host path with a fixed placeholder. A match
 // must end at a path boundary: end of input or a byte outside [A-Za-z0-9_-]
-// (non-ASCII bytes count as name bytes).
+// (non-ASCII bytes are boundaries, so `/Users/alé` becomes `~é`: over-redaction
+// is the safe direction, and prose is full of Unicode punctuation).
 type PathRule struct {
 	Name string // [A-Za-z0-9_.-]{1,64}; the LogResult.Replaced key, e.g. "path.home"
 	From string // absolute; trailing "/" trimmed; not "/" after trimming
@@ -67,9 +68,10 @@ func pathVariantsOf(p string) []string {
 	return append(out, strings.ReplaceAll(p, "/", `\/`))
 }
 
-// isNameByte reports whether c continues a path component name.
+// isNameByte reports whether c continues a path component name. Non-ASCII
+// bytes do not: an em-dash or curly quote after a path must not hide it.
 func isNameByte(c byte) bool {
-	return c >= 0x80 || c == '_' || c == '-' ||
+	return c == '_' || c == '-' ||
 		(c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 

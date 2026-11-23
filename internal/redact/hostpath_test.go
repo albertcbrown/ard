@@ -74,7 +74,11 @@ func TestPathBoundary(t *testing.T) {
 		"/Users/alice/x":      "/Users/alice/x",
 		"/Users/al_x":         "/Users/al_x",
 		"/Users/al-x":         "/Users/al-x",
-		"/Users/alé":          "/Users/alé",
+		"/Users/alé":          "~é",
+		"/Users/al—see":       "~—see",
+		"/Users/al’s":         "~’s",
+		"/Users/al\u00a0x":    "~\u00a0x",
+		"/Users/al。":          "~。",
 		"x/Users/al/y":        "x~/y",
 		"/Users/al /Users/al": "~ ~",
 	} {

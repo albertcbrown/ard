@@ -150,7 +150,11 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		StateDir: stateDir, Started: time.Now(),
 	}
 	defer w.closeAll()
-	loader := &cfgLoader{src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
+	paths, perr := newPathRedactor(w.hostPaths())
+	if perr != nil {
+		log.Error("serve.config_error_paths", "error", perr)
+	}
+	loader := &cfgLoader{paths: paths, src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
 
 	// An origin/main whose config cannot be loaded does not abort startup:
 	// serve starts paused, tells the status issue, and retries every tick.

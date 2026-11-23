@@ -460,6 +460,7 @@ func (jb *job) setSummary(ctx context.Context, h executor.Handle, raw string) {
 	d := jb.l.d
 	sec, err := d.Secrets().WithPaths(closeout.PathRules(h.Worktree, h.Home, d.HostPaths)...)
 	if err != nil {
+		jb.log.Error("worker.summary_withheld", "cause", "path rules", "error", err)
 		jb.summary, jb.withheld = "", true
 		return
 	}
