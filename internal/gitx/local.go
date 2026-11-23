@@ -348,6 +348,25 @@ func (g *Git) FileAt(ctx context.Context, dir, rev, path string, maxBytes int64)
 	return []byte(blob), true, nil
 }
 
+// ListTree returns the repo-relative paths of every file under prefix (a
+// directory or a file path) at commit rev in the repository at dir, in git's
+// order. A prefix that does not exist at rev gives an empty result. Like
+// FileAt, dir must be the controller's own repository.
+func (g *Git) ListTree(ctx context.Context, dir, rev, prefix string) ([]string, error) {
+	if prefix == "" || strings.HasPrefix(prefix, "/") || slices.Contains(strings.Split(prefix, "/"), "..") {
+		return nil, fmt.Errorf("gitx: list %q at %.12s: bad path", prefix, rev)
+	}
+	out, _, err := g.run(ctx, dir, nil, "", nil, "--git-dir="+gitDirOf(dir), "--literal-pathspecs", "ls-tree", "-r", "-z", "--name-only", "--full-tree", rev, "--", prefix)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: list %s at %.12s: %w", prefix, rev, err)
+	}
+	out = strings.TrimSuffix(out, "\x00")
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\x00"), nil
+}
+
 // maxExportBytes caps the total size ExportPaths will write.
 var maxExportBytes int64 = 64 << 20
 

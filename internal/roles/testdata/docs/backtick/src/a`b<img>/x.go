@@ -1,0 +1,3 @@
+package ab
+
+func Bad() {}

@@ -29,7 +29,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "workers/engineer/prompt.txt"}
+	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "workers/engineer/prompt.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
@@ -43,7 +43,7 @@ func TestFSContents(t *testing.T) {
 // embed.FS reports 0444 for everything, so the exec bit must be checked on disk
 // to catch a mode lost in git.
 func TestScanIsExecutableOnDisk(t *testing.T) {
-	for _, p := range []string{"scanners/cve/scan", "scanners/error-codes/scan"} {
+	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan"} {
 		fi, err := os.Stat(p)
 		if err != nil {
 			t.Fatal(err)
@@ -116,6 +116,32 @@ func TestEmbeddedErrorCodesRoleLoadsAsScanner(t *testing.T) {
 		return
 	}
 	t.Fatal("no scanner role error-codes")
+}
+
+func TestEmbeddedDocsRoleLoadsAsScanner(t *testing.T) {
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
+	if err != nil {
+		t.Fatalf("LoadFS: %v", err)
+	}
+	r, ok := res.Role(config.KindScanner, "docs")
+	if !ok {
+		t.Fatalf("no scanner role docs in %+v", res.Roles)
+	}
+	if r.ScanPath != ".ard/scanners/docs/scan" || r.PromptPath != "" || !r.Autoclose {
+		t.Errorf("unexpected role: %+v", r)
+	}
+	if r.Every != 72*time.Hour || r.MaxOpen != 3 || r.GroupSize != 10 {
+		t.Errorf("docs overrides: every=%v max_open=%d group_size=%d, want 72h, 3, 10", r.Every, r.MaxOpen, r.GroupSize)
+	}
+	if r.Dockerfile != ".ard/scanners/docs/Dockerfile" {
+		t.Errorf("Dockerfile = %q", r.Dockerfile)
+	}
+	if !slices.Equal(r.Extra, []string{"docscan.go"}) {
+		t.Errorf("Extra = %v, want [docscan.go]", r.Extra)
+	}
+	if r.ReadsUntrusted() {
+		t.Error("docs scanner must not read untrusted input")
+	}
 }
 
 // starterFS lays the embedded starter out as a repo's .ard/ directory.

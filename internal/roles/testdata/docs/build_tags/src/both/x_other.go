@@ -1,0 +1,3 @@
+package both
+
+func Run() {}

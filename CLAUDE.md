@@ -51,7 +51,7 @@ internal/agentjob/  helpers the agent loops share: untrusted-input snapshot, adm
 internal/worker/    the worker loop: claim, agent/test/fix steps, diff guard, code-lane push, draft PR, FinishWith
 internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
 internal/redact/    log redaction (secrets and host paths), secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
-internal/roles/     starter role directories embedded for ard init (scanners/cve, scanners/error-codes, triage/lead, triage/engineer, workers/engineer, reviewers/eng-review, reviewers/license-review)
+internal/roles/     starter role directories embedded for ard init (scanners/cve, scanners/docs, scanners/error-codes, triage/lead, triage/engineer, workers/engineer, reviewers/eng-review, reviewers/license-review)
 internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
 internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths, FileAt); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
@@ -63,6 +63,7 @@ internal/reaper/    the Reaper loop (failed-job detection, retention, :running w
 internal/limits/    the book of exhausted usage limits the pool consults (the reactive half; #63 adds readings and thresholds)
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/prgate/    reviews-passed-at-head decision shared by the reviewer's mark-ready and the merger: label rule, head Covers, reviewed heads, ParseWorkerBranch
+internal/janitor/   the janitor loop: prunes .ard/<issue#>/ of issues closed over 90 days ago through the main committer; no slot
 internal/merger/    the merger loop: gates (reviews, checks from check runs and the rules API, protected-path approval), one update and one squash merge per tick; no slot
 internal/reviewfix/  review fix rounds: the review_round event, Rounds/RequestRound, and the loop that sends :changes PRs back to the worker and reruns reviewers
 internal/reviewer/  the reviewer loop: claims `ard:review:<role>` on ard's own PRs, pins the head, runs the agent on the diff, closes out through the shared Finisher (one PR review)

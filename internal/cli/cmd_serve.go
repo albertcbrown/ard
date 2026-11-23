@@ -22,6 +22,6 @@ func newServe(app *App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVar(&opts.Loops, "loops", nil,
-		"run only these controller loops (comma-separated: scanners, stale, triage, workers, reviewers, reaper); default every loop")
+		"run only these controller loops (comma-separated: scanners, stale, triage, workers, reviewers, reviewfix, merger, janitor, reaper); default every loop")
 	return cmd
 }

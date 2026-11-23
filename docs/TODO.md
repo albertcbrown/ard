@@ -19,7 +19,6 @@ None.
 - #47 Scanner: lts
 - #48 Scanner: lint
 - #50 Scanner: missing-tests
-- #51 Scanner: docs
 - #52 Scanner: architecture (LLM)
 - #53 Gate 3: half of scanner issues merge untouched
 - #203 Scanner: trufflehog (leaked secrets, human-routed)
@@ -32,6 +31,8 @@ None.
 - #221 Scanner failure streaks are visible on the status issue
 - #222 Build the three URI test literals at run time
 - #223 Triage approval gate posts 'ready for approval' for an issue with no plan.md
+- #227 Neutralise markup and mentions in scanner titles and bodies
+- #231 Scanner decode errors must not echo scanner output into logs
 
 ## Phase 3: Scale
 
@@ -48,6 +49,19 @@ None.
 - #183 Version every PR merge to main as vX.Y.Z
 - #205 Reviewer aid step: run pinned deterministic tools before a reviewer agent
 - #224 Scanner: trufflehog history scan
+- #236 Budgets: daily dollar caps per role and repo, part A: enforcement
+- #237 Budgets: daily dollar caps per role and repo, part B: status-issue notice
+- #238 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part A: readings
+- #239 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part B: thresholds and the one-job rule
+- #240 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part C: notices
+- #241 Token caps per role, alongside #57's dollar caps, part A: token ledger
+- #242 Token caps per role, alongside #57's dollar caps, part B: token check in the claim gate
+- #243 Default ard-agent image and role image builds, part 55a: local ard-agent image
+- #244 Default ard-agent image and role image builds, part 55b: default image under the local executor
+- #245 Default ard-agent image and role image builds, part 55c: role image builds for k8s
+- #246 Version every PR merge to main as vX.Y.Z, part B: version workflow (human PR)
+- #247 Version every PR merge to main as vX.Y.Z, part C: versioncheck tests, ldflags and docs
+- #248 Version every PR merge to main as vX.Y.Z, part D: owner settings checklist (human task)
 
 ## Phase 4: Docs and site
 
