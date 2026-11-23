@@ -188,6 +188,46 @@ func TestGateStartsWorker(t *testing.T) {
 	}
 }
 
+func TestGateNoPlan(t *testing.T) {
+	for _, approval := range []bool{true, false} {
+		h := gateHarness(t, approval)
+		n := h.ready()
+		h.noPlan = map[int]bool{n: true}
+		h.mustTick()
+		h.mustTick()
+		if !h.has(n, labels.NeedsHuman) || h.has(n, "ard:worker:engineer") || commentsWith(h, n, "ready for approval") != 0 {
+			t.Errorf("approval=%v labels %v", approval, h.issue(n).Labels)
+		}
+		if commentsWith(h, n, "plan.md` does not exist") != 1 {
+			t.Errorf("comments = %+v", h.comments(n))
+		}
+		if es := h.events(state.EventGate); len(es) != 1 || !strings.Contains(string(es[0].Data), `"reason":"no-plan"`) {
+			t.Errorf("events = %+v", es)
+		}
+	}
+	t.Run("check error writes nothing", func(t *testing.T) {
+		h := gateHarness(t, true)
+		h.ready()
+		h.planErr = errors.New("boom")
+		if err := h.tick(); err == nil {
+			t.Error("want a tick error")
+		}
+		if h.writes() != 0 {
+			t.Errorf("wrote %v", h.gh.Writes())
+		}
+	})
+	t.Run("waiting role skips the check", func(t *testing.T) {
+		h := gateHarness(t, true)
+		n := h.ready("ard:triage:engineer")
+		h.noPlan = map[int]bool{n: true}
+		h.planErr = errors.New("must not be called")
+		h.mustTick()
+		if h.has(n, labels.NeedsHuman) || len(h.comments(n)) != 0 {
+			t.Errorf("gate acted: %v", h.gh.Writes())
+		}
+	})
+}
+
 func TestGateWaits(t *testing.T) {
 	tests := []struct {
 		name  string
