@@ -7,7 +7,7 @@ package roles
 import "embed"
 
 // FS is the starter .ard/ tree `ard init` proposes: config.yaml plus the role
-// directories (scanners/cve, triage/lead, triage/engineer, workers/engineer and reviewers/eng-review); paths are relative to .ard/.
+// directories (scanners/cve, scanners/error-codes, triage/lead, triage/engineer, workers/engineer and reviewers/eng-review); paths are relative to .ard/.
 //
 //go:embed config.yaml reviewers scanners triage workers
 var FS embed.FS

@@ -1,0 +1,111 @@
+#!/bin/sh
+# error-codes scanner: error codes that are duplicated, undocumented or missing
+# from the registry, as ard findings.
+#
+# Contract (see docs/proposal.md, Scanners):
+#   - cwd is a read-only worktree of origin/main. This script finds its siblings
+#     (codes.json, errcodes.jq) from its own path, never from cwd or /role.
+#   - Prints findings as JSON lines on stdout, and only as its very last action:
+#     any failure exits non-zero with nothing on stdout, and the controller
+#     discards the run. It never prints partial results.
+#   - Writes nothing outside a mktemp dir that is removed on exit. It holds no
+#     GitHub token and needs none.
+#   - stderr is the job log: jq version, file counts, skip counts, finding counts.
+#
+# codes.json (human-owned, optional, next to this script) says what a code looks
+# like and where the registry and docs are; see docs/proposal.md. Without it
+# the scan logs "not configured" and succeeds with no output.
+#
+# The scan is autoclose: anything that could make it see less than it should
+# fails the run instead of returning a shorter list.
+#
+# Tools (pinned in ./Dockerfile): jq, plus find, awk, grep, xargs, sort.
+# Exit codes: 0 success, 1 failure, 2 a required tool is missing.
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+die() { echo "error-codes: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || { echo "error-codes: $1 not found" >&2; exit 2; }; }
+
+need jq
+need find
+need awk
+need grep
+need xargs
+need sort
+
+if [ ! -e "$dir/codes.json" ]; then
+  echo "error-codes: not configured (no codes.json); nothing to scan" >&2
+  exit 0
+fi
+[ -f "$dir/codes.json" ] || die "codes.json is not a regular file"
+[ -f "$dir/errcodes.jq" ] || die "errcodes.jq is missing"
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ard-errcodes.XXXXXX")
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+prog=$dir/errcodes.jq
+echo "jq: $(jq --version 2>&1 || true)" >&2
+
+jq -n --arg mode settings --slurpfile s "$dir/codes.json" -f "$prog" \
+  > "$tmp/settings.json" 2> "$tmp/err" || { cat "$tmp/err" >&2; die "invalid codes.json"; }
+
+ncntrl=$(find . -name '*[[:cntrl:]]*' -print 2>/dev/null | grep -c '' || true)
+[ "$ncntrl" = 0 ] || echo "error-codes: skipped $ncntrl path(s) with control characters" >&2
+
+# Regular files only: find does not follow symlinks, so a planted link cannot
+# make a host-mode scan read outside the worktree.
+LC_ALL=C find . \( -path ./.git -o -path ./.ard -o -name .git -o -name vendor \
+    -o -name node_modules -o -name testdata -o -name '*[[:cntrl:]]*' \) -prune \
+  -o -type f -size -1025k -print > "$tmp/files.raw" || die "find failed"
+LC_ALL=C sort "$tmp/files.raw" > "$tmp/files.txt" || die "sort failed"
+
+: > "$tmp/matches.jsonl"
+docs_set=$(jq -r '.docs | length' "$tmp/settings.json") || die "cannot read settings"
+
+for c in r d s; do
+  if [ "$c" = d ] && [ "$docs_set" = 0 ]; then continue; fi
+  jq -R -r --arg mode classify --arg class "$c" --slurpfile s "$tmp/settings.json" \
+    -f "$prog" "$tmp/files.txt" > "$tmp/$c.all" 2> "$tmp/err" || { cat "$tmp/err" >&2; die "classify failed"; }
+  # Keep non-empty text files. Any grep complaint (unreadable file) fails.
+  : > "$tmp/$c.list"
+  if [ -s "$tmp/$c.all" ]; then
+    tr '\n' '\0' < "$tmp/$c.all" > "$tmp/$c.nul"
+    rc=0
+    LC_ALL=C xargs -0 grep -I -l -e '' -- < "$tmp/$c.nul" > "$tmp/$c.list" 2> "$tmp/err" || rc=$?
+    case $rc in 0|1|123) ;; *) die "grep failed with exit status $rc" ;; esac
+    if [ -s "$tmp/err" ]; then cat "$tmp/err" >&2; die "grep could not read every file"; fi
+  fi
+  if [ ! -s "$tmp/$c.list" ]; then
+    case $c in
+      r) die "registry matches no file (renamed or moved?)" ;;
+      d) die "docs matches no file (renamed or moved?)" ;;
+    esac
+  fi
+  n=$(grep -c '' "$tmp/$c.list" || true)
+  echo "error-codes: class $c: $n file(s)" >&2
+  [ "$n" != 0 ] || continue
+  tr '\n' '\0' < "$tmp/$c.list" > "$tmp/$c.nul"
+  rc=0
+  LC_ALL=C xargs -0 env LC_ALL=C awk \
+    'length($0)<=16384{print FILENAME "\t" FNR "\t" $0; next}{n++} END{if(n) printf "skipped %d long lines\n", n > "/dev/stderr"}' \
+    < "$tmp/$c.nul" > "$tmp/$c.lines" || rc=$?
+  [ "$rc" = 0 ] || die "reading files failed with exit status $rc"
+  jq -R -c --arg mode match --arg class "$c" --slurpfile s "$tmp/settings.json" \
+    -f "$prog" "$tmp/$c.lines" >> "$tmp/matches.jsonl" 2> "$tmp/err" || { cat "$tmp/err" >&2; die "match failed"; }
+done
+
+jq -n -c --arg mode findings --slurpfile m "$tmp/matches.jsonl" --slurpfile s "$tmp/settings.json" \
+  -f "$prog" > "$tmp/out.jsonl" 2> "$tmp/err" || { cat "$tmp/err" >&2; die "findings failed"; }
+
+nskip=$(grep -c '"skip"' "$tmp/matches.jsonl" || true)
+[ "$nskip" = 0 ] || echo "error-codes: dropped $nskip match(es) outside the allowed code characters" >&2
+for k in duplicated unregistered undocumented; do
+  n=$(grep -c "\"fingerprint\":\"error-codes:$k:" "$tmp/out.jsonl" || true)
+  echo "error-codes: $k: $n finding(s)" >&2
+done
+cat "$tmp/out.jsonl"
