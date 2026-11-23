@@ -734,20 +734,70 @@ func TestGuardIgnoresTheAgentsIndexAndGitdir(t *testing.T) {
 	}
 }
 
-func TestMoreThanOneThousandLinesCannotBeHiddenFromTheCount(t *testing.T) {
+func TestOverMaxLinesCannotBeHiddenFromTheCount(t *testing.T) {
 	h := newHarness(t, noTests)
 	h.issue("t")
 	h.ex.run = func(kind string, j executor.Job, hd executor.Handle) int {
 		writeFile(t, hd.Worktree, "big.txt", "x\n")
 		gittest.Run(t, hd.Worktree, "add", "big.txt")
 		gittest.Run(t, hd.Worktree, "update-index", "--skip-worktree", "big.txt")
-		writeFile(t, hd.Worktree, "big.txt", strings.Repeat("x\n", 1500))
+		writeFile(t, hd.Worktree, "big.txt", strings.Repeat("x\n", 2500))
 		writeFile(t, hd.Worktree, fmt.Sprintf(".ard/%d/worker-engineer.md", j.Issue), roleDone)
 		return 0
 	}
 	h.mustTick()
 	if w := h.only().Opts.Worker; w == nil || !strings.Contains(w.Hold, "changed lines") {
 		t.Errorf("worker = %+v", w)
+	}
+}
+
+func TestDiffLineThresholds(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		warn, max int
+		lines     int
+		hold      string // "" = a PR opens
+		note      string // "" = no large-change note
+	}{
+		{"defaults, under warn", 1000, 2000, 900, "", ""},
+		{"defaults, 1200 lines warn", 1000, 2000, 1200, "", "Large change: 1200 changed lines (warn at 1000)"},
+		{"defaults, 2100 lines hold", 1000, 2000, 2100, "diff guard: 2100 changed lines, limit 2000", ""},
+		{"role override raises the limit", 1500, 3000, 2100, "", "Large change: 2100 changed lines (warn at 1500)"},
+		{"role override lowers the limit", 100, 200, 300, "diff guard: 300 changed lines, limit 200", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, noTests)
+			h.cfg.Roles[0].DiffWarnLines, h.cfg.Roles[0].DiffMaxLines = tc.warn, tc.max
+			h.issue("t")
+			h.agentWrites(map[string]string{"big.txt": strings.Repeat("x\n", tc.lines)}, roleDone, nil)
+			h.mustTick()
+			w := h.only().Opts.Worker
+			if w == nil {
+				t.Fatal("no worker result")
+			}
+			if w.Hold != tc.hold {
+				t.Errorf("hold = %q, want %q", w.Hold, tc.hold)
+			}
+			if tc.hold != "" {
+				if len(h.prs()) != 0 {
+					t.Error("a held job opened a PR")
+				}
+				return
+			}
+			if len(h.prs()) != 1 {
+				t.Fatalf("PRs = %d, want 1", len(h.prs()))
+			}
+			if w.Large != tc.note {
+				t.Errorf("large = %q, want %q", w.Large, tc.note)
+			}
+			body := h.prs()[0].Body
+			if tc.note != "" && !strings.Contains(body, "**"+tc.note+"**") {
+				t.Errorf("body lacks the note:\n%s", body)
+			}
+			if tc.note == "" && strings.Contains(body, "Large change") {
+				t.Errorf("body has a note under the warn threshold:\n%s", body)
+			}
+		})
 	}
 }
 

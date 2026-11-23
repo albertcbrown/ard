@@ -114,8 +114,8 @@ func TestCheck(t *testing.T) {
 		{"a deletion only needs the path rule", []Change{del}, 1, false, "", 1, false},
 		{"deleting a protected path is refused", []Change{{Path: ".github/CODEOWNERS", Deleted: true}}, 1, false, ".github/CODEOWNERS", 0, true},
 		{"257 files", many, 10, false, "257 changed files, limit 256", 0, false},
-		{"1000 lines pass", []Change{rc("a")}, 1000, false, "", 1, false},
-		{"1001 lines hold", []Change{rc("a")}, 1001, false, "1001 changed lines, limit 1000", 1, false},
+		{"2000 lines pass", []Change{rc("a")}, 2000, false, "", 1, false},
+		{"2001 lines hold", []Change{rc("a")}, 2001, false, "2001 changed lines, limit 2000", 1, false},
 		{"no code on a new branch", nil, 0, false, "no code changes", 0, true},
 		{"no code on an existing branch goes on", nil, 0, true, "", 0, true},
 		{"rejects beat the line limit", []Change{rc(".env")}, 5000, false, ".env", 0, true},
@@ -123,7 +123,7 @@ func TestCheck(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v := Check(7, tc.changes, tc.lines, tc.exists)
+			v := Check(7, tc.changes, tc.lines, tc.exists, defaultLines)
 			if (tc.hold == "") != (v.Hold == "") || !strings.Contains(v.Hold, tc.hold) {
 				t.Errorf("hold = %q, want it to contain %q", v.Hold, tc.hold)
 			}
@@ -140,10 +140,52 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// defaultLines are the config defaults for diff_warn_lines and diff_max_lines.
+var defaultLines = Lines{Warn: 1000, Max: 2000}
+
+func TestCheckLineThresholds(t *testing.T) {
+	tests := []struct {
+		name  string
+		lim   Lines
+		lines int
+		hold  string // "" = no hold
+		large string // "" = no note
+	}{
+		{"under warn", defaultLines, 999, "", ""},
+		{"at warn", defaultLines, 1000, "", ""},
+		{"just over warn", defaultLines, 1001, "", "Large change: 1001 changed lines (warn at 1000)"},
+		{"between", defaultLines, 1200, "", "Large change: 1200 changed lines (warn at 1000)"},
+		{"at max", defaultLines, 2000, "", "Large change: 2000 changed lines (warn at 1000)"},
+		{"just over max", defaultLines, 2001, "diff guard: 2001 changed lines, limit 2000", ""},
+		{"well over max", defaultLines, 2100, "diff guard: 2100 changed lines, limit 2000", ""},
+		{"custom warn", Lines{Warn: 300, Max: 500}, 301, "", "Large change: 301 changed lines (warn at 300)"},
+		{"custom max", Lines{Warn: 300, Max: 500}, 501, "diff guard: 501 changed lines, limit 500", ""},
+		{"custom at max", Lines{Warn: 300, Max: 500}, 500, "", "Large change: 500 changed lines (warn at 300)"},
+		{"warn equals max", Lines{Warn: 400, Max: 400}, 400, "", ""},
+		{"warn equals max, over", Lines{Warn: 400, Max: 400}, 401, "diff guard: 401 changed lines, limit 400", ""},
+		{"raised max", Lines{Warn: 1000, Max: 5000}, 4000, "", "Large change: 4000 changed lines (warn at 1000)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v := Check(7, []Change{rc("a.go")}, tc.lines, false, tc.lim)
+			if v.Hold != tc.hold {
+				t.Errorf("hold = %q, want %q", v.Hold, tc.hold)
+			}
+			if v.Large != tc.large {
+				t.Errorf("large = %q, want %q", v.Large, tc.large)
+			}
+		})
+	}
+	// Another hold takes precedence and carries no note.
+	if v := Check(7, []Change{rc(".env")}, 1500, false, defaultLines); v.Hold == "" || v.Large != "" {
+		t.Errorf("reject over warn: hold %q large %q", v.Hold, v.Large)
+	}
+}
+
 func TestHoldNeverQuotesContent(t *testing.T) {
 	c := rc("src/very/" + strings.Repeat("long/", 30) + "file.go")
 	c.Known = []string{"TOKEN"}
-	v := Check(7, []Change{c}, 1, false)
+	v := Check(7, []Change{c}, 1, false, defaultLines)
 	if strings.Contains(v.Hold, "…") == false {
 		t.Errorf("a long path must be clipped: %q", v.Hold)
 	}

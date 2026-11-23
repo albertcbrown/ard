@@ -302,6 +302,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 	}
 	eng := role(config.KindWorker, "engineer", ".ard/workers/engineer")
 	eng.Tests, eng.MaxTestFixes, eng.Reviewers = "sh check.sh", 2, []string{"eng-review"}
+	eng.DiffWarnLines, eng.DiffMaxLines = 1000, 2000
 	h.cfg = &config.Resolved{Repo: t.TempDir(), SHA: sha, MaxBudgetUSD: 5, MaxPods: 3, RequireApproval: true,
 		Intake: config.Intake{Mode: config.IntakeLabel},
 		Roles: []config.Role{eng,

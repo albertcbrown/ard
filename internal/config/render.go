@@ -99,6 +99,8 @@ type roleYAML struct {
 	MaxTestFixes    int      `yaml:"max_test_fixes,omitempty"`
 	MaxReviewRounds int      `yaml:"max_review_rounds,omitempty"`
 	Reviewers       []string `yaml:"reviewers,omitempty"`
+	DiffWarnLines   int      `yaml:"diff_warn_lines,omitempty"`
+	DiffMaxLines    int      `yaml:"diff_max_lines,omitempty"`
 
 	When *whenYAML `yaml:"when,omitempty"`
 
@@ -166,6 +168,8 @@ func (r *Resolved) render() resolvedYAML {
 			MaxTestFixes:    role.MaxTestFixes,
 			MaxReviewRounds: role.MaxReviewRounds,
 			Reviewers:       role.Reviewers,
+			DiffWarnLines:   role.DiffWarnLines,
+			DiffMaxLines:    role.DiffMaxLines,
 			MaxBudgetUSD:    role.MaxBudgetUSD,
 			BudgetUSDPerDay: role.BudgetUSDPerDay,
 		}

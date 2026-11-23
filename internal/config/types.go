@@ -142,6 +142,11 @@ type Role struct {
 	MaxTestFixes    int      // default 2; 0 is never valid
 	MaxReviewRounds int      // default 3
 	Reviewers       []string // reviewer role names
+	// Diff guard thresholds on the PR's changed lines: above DiffWarnLines the
+	// PR proceeds with a "large change" note; above DiffMaxLines it is held
+	// for a human. Both at least 1, DiffWarnLines <= DiffMaxLines.
+	DiffWarnLines int // default 1000
+	DiffMaxLines  int // default 2000
 
 	// Reviewer only; nil = always.
 	When *When
