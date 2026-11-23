@@ -10,7 +10,8 @@ import (
 // the one copy of the rule: the worker's diff guard (#33) and CommitCode both
 // call it. Paths must already be canonical; they are rejected, not normalised.
 //
-// Refused: a .git segment, .gitmodules, everything under .ard/ (role, config
+// Refused: a .git segment, .gitmodules, .gitattributes (it can collapse files
+// out of the PR diff), everything under .ard/ (role, config
 // and issue files; the issue's own go through close-out, not through worker
 // code), everything under .ard-input/ (loop inputs), everything under the
 // root .github/ (not only workflows), and secret-shaped file names. Only the
@@ -63,6 +64,9 @@ func CheckCodePath(issue int, p string) error {
 	}
 	if strings.EqualFold(segs[len(segs)-1], ".gitmodules") {
 		return reason("submodule configuration")
+	}
+	if strings.EqualFold(segs[len(segs)-1], ".gitattributes") {
+		return reason("attributes file (can hide changes from review)")
 	}
 	if SecretShaped(p) {
 		return reason("secret-shaped file name")

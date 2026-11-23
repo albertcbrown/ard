@@ -84,7 +84,7 @@ func TestCheck(t *testing.T) {
 	for i := range many {
 		many[i] = rc("f" + strings.Repeat("x", i%5) + string(rune('a'+i%26)) + strings.Repeat("y", i/26))
 	}
-	rejects := []Change{rc("a"), rc(".github/CODEOWNERS"), rc(".github/workflows/x.yml"), rc(".ard/config.yaml"), rc(".ard/workers/x/prompt.txt"), rc(".ard/8/plan.md"), rc(".env"), rc("x/.git/config"), rc(".gitmodules")}
+	rejects := []Change{rc("a"), rc(".github/CODEOWNERS"), rc(".github/workflows/x.yml"), rc(".ard/config.yaml"), rc(".ard/workers/x/prompt.txt"), rc(".ard/8/plan.md"), rc(".env"), rc("x/.git/config"), rc(".gitmodules"), rc(".gitattributes")}
 
 	tests := []struct {
 		name    string
@@ -119,7 +119,7 @@ func TestCheck(t *testing.T) {
 		{"no code on a new branch", nil, 0, false, "no code changes", 0, true},
 		{"no code on an existing branch goes on", nil, 0, true, "", 0, true},
 		{"rejects beat the line limit", []Change{rc(".env")}, 5000, false, ".env", 0, true},
-		{"and N more", rejects, 1, false, "and 5 more", 0, false},
+		{"and N more", rejects, 1, false, "and 6 more", 0, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
