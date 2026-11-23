@@ -56,7 +56,7 @@ The controller checks your whole diff before anything leaves the host. Any
 of these holds the change for a human, and nothing is pushed:
 
 - any change under .github/, under .ard/ (except your report) or under
-  .ard-input/, any path with a .git segment, and .gitmodules;
+  .ard-input/, any path with a .git segment, .gitmodules and .gitattributes;
 - secret-shaped file names: .env (.env.example, .env.sample and
   .env.template are fine), .netrc, .npmrc, .pypirc, credentials files,
   id_rsa and other SSH keys, and names ending in .pem, .key, .p12, .pfx,
