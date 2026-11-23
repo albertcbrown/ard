@@ -42,12 +42,19 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
+// alive reports whether pid is a running process. A zombie (exited, not yet
+// reaped by its parent) is not running: kill(pid, 0) still succeeds for it,
+// which happens wherever PID 1 does not reap orphans, such as a container
+// whose PID 1 is `sleep infinity` (#154).
 func alive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	if err != nil && !errors.Is(err, syscall.EPERM) {
+		return false
+	}
+	return !zombie(pid)
 }
 
 func procStart(pid int) string {
