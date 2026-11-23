@@ -2,30 +2,28 @@
 role: eng-review
 status: done
 attempt: 1
-verdict: approve
+verdict: changes
 findings:
+  - file: "internal/servecmd/scanners.go"
+    line: 32
+    severity: high
+    blocking: true
+    message: |
+      The servecmd wiring test that plan.md's test plan names was never written.
+      Nothing fails if `StatusIssue` is dropped from the Pipeline literal, and streak notices would then silently stop. Add a test in `internal/servecmd/scanners_test.go`, or extract the pipeline construction so a test can assert `StatusIssue` is set and returns `w.statusIssue`. The previous round rated this low, but a test plan case from plan.md that was not written is high.
   - file: "internal/scanner/streak.go"
     line: 70
     severity: low
     message: |
       noteRun returns silently when p.Log is nil, so no notice is posted at all.
-      Whether a notice is posted should not depend on a logger being set. Use the Pipeline's nil-safe
-      logger accessor or a discard logger. Serve wiring always sets Log, so production is unaffected.
-  - file: "internal/servecmd/scanners.go"
-    line: 32
-    severity: low
-    message: |
-      plan.md named a servecmd test that StatusIssue is wired; none was written. If the field were
-      dropped, nothing would fail and streak notices would silently stop. Add a small test or extract
-      the pipeline construction.
+      Whether a notice is posted should not depend on a logger being set. Fall back to a discard logger instead. Serve wiring always sets Log, so production is unaffected.
 ---
-The change matches plan.md and the issue: one notice per streak and one on recovery, a sanitised class, state written only after a successful post, and dry-run honoured. No blocking problems; the two low findings from the previous round remain.
+The diff is unchanged from the previous round, and the servecmd wiring test that plan.md named is still missing. Under the severity rules a missing planned test is high, so this needs changes. Everything else matches plan.md.
 
 ## Checks
-- Lint: not re-run this round. The previous round's `make lint` showed nothing on the changed files.
-- Tests: `go test ./internal/scanner/ ./internal/servecmd/` passes.
-- Diff coverage: not re-measured. Last round streak.go was at 100% except `noteRun` (87.1%), whose uncovered lines are the log-only error branches.
+- Lint and tests: not re-run. The diff is unchanged since the last round, which was clean (`make lint`, `go test ./internal/scanner/ ./internal/servecmd/`).
+- Diff coverage: not re-measured. Last round's only gap was the log-only error branches in `noteRun`.
 
 ## Previous findings
 - internal/scanner/streak.go (nil Log skips posting): still present
-- internal/servecmd/scanners.go (no StatusIssue wiring test): still present
+- internal/servecmd/scanners.go (no StatusIssue wiring test): still present, now rated high because plan.md named the test
