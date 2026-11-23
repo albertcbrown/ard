@@ -28,6 +28,9 @@ func TestNoLabelLiteralsElsewhere(t *testing.T) {
 				// Skip this package's own files but still walk subpackages.
 				return nil
 			}
+			if d.IsDir() && d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
 			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
