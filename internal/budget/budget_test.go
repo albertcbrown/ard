@@ -105,3 +105,33 @@ func TestCappedLoggedOncePerDay(t *testing.T) {
 		t.Fatalf("logged %d times after rollover, want 2", n)
 	}
 }
+
+func TestCapped(t *testing.T) {
+	r := &fakeReader{
+		per: map[state.RoleKey]state.Spend{
+			{Stage: "worker", Role: "eng"}:    {USD: 10},
+			{Stage: "review", Role: "rev"}:    {USD: 4.99},
+			{Stage: "scanner", Role: "det"}:   {USD: 99},
+			{Stage: "worker", Role: "absent"}: {USD: 99},
+		},
+		repo: state.Spend{USD: 50, Unpriced: 1},
+	}
+	g, buf, _ := setup(r)
+	caps, day, err := g.Capped(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(caps) != 2 || caps[0].Scope != "repo" || caps[1].Stage != "worker" || caps[1].Role != "eng" || caps[0].Spent.Unpriced != 1 {
+		t.Fatalf("caps %+v", caps)
+	}
+	if !day.Equal(time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("day %v", day)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("Capped logged: %s", buf)
+	}
+	r.err = errors.New("db")
+	if _, _, err := g.Capped(context.Background()); err == nil {
+		t.Error("read error must surface")
+	}
+}
