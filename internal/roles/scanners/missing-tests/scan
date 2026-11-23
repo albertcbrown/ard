@@ -1,0 +1,98 @@
+#!/bin/sh
+# missing-tests scanner: exported Go functions and methods that no test calls
+# or runs, as ard findings.
+#
+# Contract (see docs/proposal.md, Scanners):
+#   - cwd is a read-only worktree of origin/main. This script finds its siblings
+#     (missingtests.go, ignore, no-coverage) from its own path, never from cwd
+#     or /role.
+#   - Prints findings as JSON lines on stdout, and only as its very last action:
+#     any failure exits non-zero with nothing on stdout, and the controller
+#     discards the run. It never prints partial results.
+#   - Writes nothing outside a mktemp dir that is removed on exit. HOME may be
+#     unwritable. It holds no GitHub token and needs none.
+#   - stderr is the job log: the Go version, one line per module and the final
+#     count.
+#
+# This scan RUNS THE REPOSITORY'S OWN TESTS (go test with coverage), so it must
+# only run in the executor's container. A module whose tests fail to build or
+# fail has no trustworthy coverage, so the scan fails rather than report
+# partial data (autoclose would close issues on it).
+# Exit codes: 0 success, 1 failure, 2 go is missing.
+#
+# Opt-outs, both human-owned files next to this script:
+#   ignore       symbols or packages to skip (see missingtests.go)
+#   no-coverage  skip running tests; report only the static rule
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+die() { echo "missing-tests: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || { echo "missing-tests: $1 not found" >&2; exit 2; }; }
+
+need go
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ard-missing-tests.XXXXXX")
+# Go's module cache is read-only on disk; make it removable first.
+cleanup() { chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Keep Go's caches off an unwritable HOME and out of the worktree.
+for v in GOCACHE GOMODCACHE GOPATH; do
+  eval "cur=\${$v:-}"
+  if [ -z "$cur" ] || [ ! -w "$cur" ]; then
+    eval "$v=\$tmp/$v; export $v"
+  fi
+done
+GOWORK=off GOTOOLCHAIN=local GOFLAGS=-mod=readonly CGO_ENABLED=0
+export GOWORK GOTOOLCHAIN GOFLAGS CGO_ENABLED
+
+# Build from the temp dir so the target repo's go.mod is never consulted.
+gover=$(cd -- "$tmp" && go env GOVERSION) || die "go env failed"
+echo "missing-tests: $gover" >&2
+(cd -- "$tmp" && go build -o "$tmp/missingtests" "$dir/missingtests.go") || die "cannot build missingtests"
+
+root=$(pwd)
+find . \( -name .git -o -name vendor -o -name node_modules -o -name testdata \) -prune \
+  -o -name go.mod -type f -print > "$tmp/mods.raw" || die "find failed"
+LC_ALL=C sort "$tmp/mods.raw" > "$tmp/mods.txt"
+
+[ -s "$tmp/mods.txt" ] || echo "missing-tests: no Go modules" >&2
+
+n=0
+while IFS= read -r manifest; do
+  n=$((n + 1))
+  mdir=$(dirname -- "$manifest")
+  case $mdir in
+    .) prefix=. ;;
+    ./*) prefix=${mdir#./} ;;
+    *) prefix=$mdir ;;
+  esac
+  module=$(cd -- "$root/$mdir" && go list -m 2>"$tmp/err.txt") || die "go list -m failed in $prefix: $(cat "$tmp/err.txt")"
+  echo "missing-tests: module $module ($prefix)" >&2
+  (cd -- "$root/$mdir" && go list -json ./... > "$tmp/pkgs-$n.json" 2>"$tmp/err.txt") || die "go list failed in $prefix: $(cat "$tmp/err.txt")"
+  if [ -e "$dir/no-coverage" ]; then
+    set -- -no-coverage
+  else
+    (cd -- "$root/$mdir" && go test -count=1 -covermode=set -coverpkg=./... "-coverprofile=$tmp/cover-$n.out" ./... >&2) \
+      || die "go test failed in $prefix"
+    set -- -profile "$tmp/cover-$n.out"
+  fi
+  if [ -e "$dir/ignore" ]; then
+    set -- "$@" -ignore "$dir/ignore"
+  fi
+  "$tmp/missingtests" -module "$module" -prefix "$prefix" -packages "$tmp/pkgs-$n.json" -go "$gover" "$@" > "$tmp/out-$n.jsonl" \
+    || die "missingtests failed in $prefix"
+done < "$tmp/mods.txt"
+
+: > "$tmp/all.jsonl"
+i=1
+while [ "$i" -le "$n" ]; do
+  cat "$tmp/out-$i.jsonl" >> "$tmp/all.jsonl"
+  i=$((i + 1))
+done
+
+echo "missing-tests: $(wc -l < "$tmp/all.jsonl" | tr -d ' ') finding(s)" >&2
+cat "$tmp/all.jsonl"
