@@ -51,9 +51,12 @@ func TestEmbeddedEngReviewLoadsAsReviewer(t *testing.T) {
 	}
 	// The starter worker requests every reviewer role, so eng-review runs on
 	// every green PR.
-	rs := res.RolesOf(config.KindReviewer)
-	if len(rs) != 1 || rs[0].Name != "eng-review" {
-		t.Errorf("reviewer roles = %+v", rs)
+	hasEng := false
+	for _, x := range res.RolesOf(config.KindReviewer) {
+		hasEng = hasEng || x.Name == "eng-review"
+	}
+	if !hasEng {
+		t.Errorf("reviewer roles = %+v, want eng-review among them", res.RolesOf(config.KindReviewer))
 	}
 	w, ok := res.Role(config.KindWorker, "engineer")
 	if !ok || len(w.Reviewers) != 0 {

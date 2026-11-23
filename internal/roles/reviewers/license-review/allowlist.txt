@@ -1,0 +1,17 @@
+# License allowlist for the license-review reviewer.
+# One SPDX license identifier per line; blank lines and # comments are ignored.
+# A compound expression with WITH is listed verbatim, for example
+# "GPL-2.0-only WITH Classpath-exception-2.0". There are no per-package exceptions.
+# The repository owners edit this file (it is under a protected path). When the
+# role has a sidecar, the sidecar's licenses/allowlist.txt replaces it.
+0BSD
+Apache-2.0
+BSD-2-Clause
+BSD-3-Clause
+BSL-1.0
+CC0-1.0
+ISC
+MIT
+MIT-0
+Unlicense
+Zlib
