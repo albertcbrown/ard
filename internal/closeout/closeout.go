@@ -430,19 +430,17 @@ func (c *Closer) Resume(ctx context.Context) error {
 	}
 	var errs []error
 	for _, sj := range jobs {
-		rec, err := decode(sj)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		if !c.acquire(rec.Job.ID) {
-			c.d.log().Info("closeout.resume skipped: in flight", "job", rec.Job.ID)
-			continue
-		}
-		c.d.log().Info("closeout.resume", "job", rec.Job.ID, "issue", rec.Job.Issue, "phase", rec.Phase)
-		_, err = c.advance(ctx, rec)
-		c.release(rec.Job.ID)
-		if err != nil {
+		// ResumeJob re-reads the record after taking the job's lock. Advancing
+		// the copy listed above could replay phases a concurrent Run has
+		// already finished, and overwrite its closed record with a stale one.
+		_, err := c.ResumeJob(ctx, sj.ID)
+		switch {
+		case err == nil:
+		case errors.Is(err, ErrBusy):
+			c.d.log().Info("closeout.resume skipped: in flight", "job", sj.ID)
+		case errors.Is(err, state.ErrNotFound):
+			// Closed by a concurrent Run since the list was read.
+		default:
 			errs = append(errs, err)
 		}
 	}
