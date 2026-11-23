@@ -208,3 +208,53 @@ func TestMarkReadyFailureIsRetried(t *testing.T) {
 		t.Fatal("not retried")
 	}
 }
+
+// finishDone scripts the fake close-out to end the review done: the running
+// label goes, the done label comes.
+func finishDone(h *harness, pr int) {
+	h.fin.after = func() {
+		ctx := context.Background()
+		_ = h.gh.RemoveLabel(ctx, pr, labels.Running(labels.StageReview, reviewer))
+		_ = h.gh.AddLabels(ctx, pr, labels.Done(labels.StageReview, reviewer))
+	}
+}
+
+func TestPostCloseoutMarksReady(t *testing.T) {
+	h := newHarness(t)
+	pr, _ := h.scenario()
+	finishDone(h, pr)
+	h.mustTick()
+	if len(h.fin.got()) != 1 {
+		t.Fatalf("finish calls = %d", len(h.fin.got()))
+	}
+	// The run itself marked it: no sweep has had a chance to.
+	if h.draft(pr) || h.marks() != 1 {
+		t.Fatalf("draft=%v marks=%d", h.draft(pr), h.marks())
+	}
+}
+
+func TestMarkReadyFailureDoesNotFailCloseout(t *testing.T) {
+	h := newHarness(t)
+	pr, _ := h.scenario()
+	finishDone(h, pr)
+	h.gh.FailNext("MarkReady", errBoom)
+	out, err := h.readyTick()
+	if err != nil {
+		t.Fatalf("tick failed: %v", err)
+	}
+	calls := h.fin.got()
+	if len(calls) != 1 || calls[0].Opts.Cause.Kind != "" {
+		t.Fatalf("close-out changed: %+v", calls)
+	}
+	if !strings.Contains(out, "review.mark_ready_failed") || !h.draft(pr) {
+		t.Fatalf("draft=%v log: %s", h.draft(pr), out)
+	}
+	// The next tick's sweep retries and succeeds once.
+	h.mustTick()
+	if h.draft(pr) {
+		t.Fatal("not retried")
+	}
+	if len(h.fin.got()) != 1 {
+		t.Errorf("review re-ran: %d finish calls", len(h.fin.got()))
+	}
+}

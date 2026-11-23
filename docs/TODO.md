@@ -8,8 +8,7 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 
 ## Phase 1: First loop
 
-- #39 Gate 2: first loop proven
-- #187 serve: --loops to choose which controller loops run (soak runs scanners only)
+None.
 
 ## Phase 2: All roles
 
@@ -27,10 +26,6 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 - #51 Scanner: docs
 - #52 Scanner: architecture (LLM)
 - #53 Gate 3: half of scanner issues merge untouched
-- #89 Optional gitleaks pass in the log secret scan
-- #138 closeout: don't revert newer plan.md sections committed after a job's base
-- #142 Workers: .gitattributes changes can hide diffs from review
-- #184 Reviewer close-out fails when its PR is merged mid-review
 
 ## Phase 3: Scale
 

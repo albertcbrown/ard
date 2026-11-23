@@ -166,7 +166,7 @@ type Store interface {
 // ReviewedHeads returns, per role, the head SHA recorded by that role's newest
 // review claim of the issue. A role without a record is absent.
 func ReviewedHeads(ctx context.Context, s Store, issue int, roles []string) (map[string]string, error) {
-	evs, err := s.Events(ctx, state.EventFilter{Kind: state.EventClaim})
+	evs, err := s.Events(ctx, state.EventFilter{Kind: state.EventClaim, Issue: issue, Stage: "review"})
 	if err != nil {
 		return nil, fmt.Errorf("read review claims: %w", err)
 	}
