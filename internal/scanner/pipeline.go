@@ -34,6 +34,9 @@ type Pipeline struct {
 	// Paused reports whether the controller is paused. It is re-checked after
 	// a scan, which can outlast a pause: a paused run files and closes nothing.
 	Paused func(ctx context.Context) bool
+	// StatusIssue returns the pinned status issue number, 0 when not yet known.
+	// Scanner failure-streak notices are posted there. nil = none posted.
+	StatusIssue func() int
 	// BodyLocks, shared with the costs loop, serialises body read-modify-writes
 	// per issue: editIssue and join hold the issue from their fetch until the
 	// body write is done. nil is a no-op.
@@ -175,6 +178,7 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 		if rerr != nil {
 			log.Error("scanner.record_run_failed", "error", rerr)
 		}
+		p.noteRun(ctx, store, role, res)
 		log.Info("scanner.run", "sha", res.SHA, "outcome", outcome, "found", res.Found, "new", res.New,
 			"regressions", res.Regress, "suppressed", res.Suppressed, "joined", res.Joined, "created", res.Created,
 			"closed", res.Closed, "edited", res.Edited, "deferred", res.Deferred, "over_budget", res.OverBudget, "near_duplicates", res.NearDup,
