@@ -3,6 +3,7 @@ package reviewfix
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
@@ -33,6 +34,7 @@ func TestHandle(t *testing.T) {
 		changed     []string
 		max         int
 		dry         bool
+		fixedClock  bool // every event and job gets the same second
 		closedIssue bool
 
 		wantPhases   string
@@ -53,6 +55,10 @@ func TestHandle(t *testing.T) {
 		{name: "claim without done label", rounds: []string{PhaseRequested}, claim: "done", issueLbl: []string{lblWorkerReq}, wantPhases: "requested"},
 		{name: "fix landed with code", rounds: []string{PhaseRequested}, claim: "done", changed: []string{"hello.go"},
 			wantPhases: "requested,applied", prGone: cat(reqChanges(engRev)[1:], reqDone(secRev)[1:]), prHas: []string{labels.Request(labels.StageReview, engRev), labels.Request(labels.StageReview, secRev)}},
+		{name: "same-second round and worker claim", fixedClock: true, rounds: []string{PhaseRequested}, claim: "done", changed: []string{"hello.go"}, wantPhases: "requested,applied"},
+		{name: "dry run apply", dry: true, rounds: []string{PhaseRequested}, claim: "done", changed: []string{"hello.go"}, wantPhases: "requested", issueHas: []string{lblWorkerDone}, prHas: []string{labels.Changes(engRev)}},
+		{name: "dry run no-code cap", dry: true, rounds: []string{PhaseRequested}, claim: "done", wantPhases: "requested", prHas: []string{labels.Changes(engRev)}},
+		{name: "dry run replay", dry: true, rounds: []string{PhaseRequested}, wantPhases: "requested", issueHas: []string{lblWorkerDone}},
 		{name: "fix landed without code", rounds: []string{PhaseRequested}, claim: "done", wantPhases: "requested,capped", wantComments: 1,
 			issueHas: []string{labels.NeedsHuman}, prHas: []string{labels.Changes(engRev), labels.Done(labels.StageReview, secRev)}},
 		{name: "cap reached", max: 2, rounds: []string{PhaseRequested, PhaseApplied, PhaseRequested, PhaseApplied}, wantPhases: "requested,applied,requested,applied,capped",
@@ -74,7 +80,12 @@ func TestHandle(t *testing.T) {
 			if maxR == 0 {
 				maxR = 3
 			}
-			h := newHarness(t, maxR, tc.dry)
+			var now func() time.Time
+			if tc.fixedClock {
+				fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+				now = func() time.Time { return fixed }
+			}
+			h := newHarnessAt(t, maxR, tc.dry, now)
 			issueLbl := tc.issueLbl
 			if issueLbl == nil {
 				issueLbl = issueDefault
@@ -123,7 +134,7 @@ func TestHandle(t *testing.T) {
 			if got := h.phases(s.issue); got != tc.wantPhases {
 				t.Errorf("phases = %q, want %q", got, tc.wantPhases)
 			}
-			if tc.wantPhases == "" && len(h.gh.Writes()) != before {
+			if (tc.wantPhases == "" || tc.dry) && len(h.gh.Writes()) != before {
 				t.Errorf("unexpected writes: %v", h.gh.Writes()[before:])
 			}
 			if got := h.comments(s.issue); got != tc.wantComments {

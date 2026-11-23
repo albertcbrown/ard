@@ -367,10 +367,10 @@ func (t *tick) landing(ctx context.Context, pr github.PullRequest, is github.Iss
 func (l *Loop) capPath(ctx context.Context, issue, pr int, head, worker string, count int, roles []string, why string) error {
 	d := l.d
 	marker := "<!-- ard:review-rounds head=" + head + " -->"
-	text := fmt.Sprintf("Review fix rounds stopped on pull request #%d: %s. Reviewers still asking for changes: %s. A person needs to look at it; remove the needs-human label to let ard continue on a new head.",
+	text := fmt.Sprintf("Review fix rounds stopped on pull request #%d: %s. Reviewers still asking for changes: %s. A person needs to look at it: raise max_review_rounds, or fix the PR and remove the ard:review:<role>:changes labels so reviewers rerun.",
 		pr, why, strings.Join(roles, ", "))
 	if len(roles) == 0 {
-		text = fmt.Sprintf("Review fix rounds stopped on pull request #%d: %s. A person needs to look at it; remove the needs-human label to let ard continue on a new head.", pr, why)
+		text = fmt.Sprintf("Review fix rounds stopped on pull request #%d: %s. A person needs to look at it: raise max_review_rounds, or fix the PR and remove the ard:review:<role>:changes labels so reviewers rerun.", pr, why)
 	}
 	if err := agentjob.PostOnce(ctx, d.Reader, d.Effects, issue, marker, text); err != nil {
 		return err

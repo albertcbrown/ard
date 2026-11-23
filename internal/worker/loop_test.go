@@ -1011,3 +1011,36 @@ func TestReviewFeedbackInput(t *testing.T) {
 		t.Errorf("the App's own comments are included:\n%s", body)
 	}
 }
+
+func TestReviewFeedbackOversizeRoleFile(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	n := h.issue("Say hello")
+	branch := BranchName("engineer", n, "Say hello")
+	// A committed role file may be up to closeout.MaxRoleFileBytes.
+	gittest.Run(t, h.clone, "checkout", "-q", "-b", "tmp")
+	dir := filepath.Join(h.clone, ".ard", fmt.Sprint(n))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "review-eng-review.md"), []byte(strings.Repeat("x", 200<<10)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, h.clone, "add", "-A")
+	gittest.Run(t, h.clone, "commit", "-q", "-m", "review")
+	gittest.Run(t, h.clone, "update-ref", localRef(branch), "HEAD")
+	gittest.Run(t, h.clone, "checkout", "-q", "-")
+	pr := h.gh.SeedPR(github.PullRequest{State: github.StateOpen, Author: self, HeadRef: branch, HeadSHA: "x", BaseRef: "main"})
+	data, _ := json.Marshal(map[string]any{"round": 1, "phase": "requested", "reason": "review", "pr": pr, "head": "h", "worker": "engineer", "roles": []string{"eng-review"}})
+	if err := h.store.AppendEvent(ctx, state.Event{Kind: state.EventReviewRound, Issue: n, Role: "engineer", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	eng, _ := h.cfg.Role(config.KindWorker, "engineer")
+	f, ok, err := h.loop.reviewFeedback(ctx, eng, n, branch)
+	if err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v; an oversize role file must not fail the claim", ok, err)
+	}
+	if !strings.HasSuffix(string(f.Data), "\n[truncated]\n") || len(f.Data) > 70<<10 {
+		t.Errorf("feedback len %d, want truncated to about 64 KiB", len(f.Data))
+	}
+}

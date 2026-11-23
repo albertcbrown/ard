@@ -60,12 +60,18 @@ type harness struct {
 
 func newHarness(t *testing.T, max int, dry bool) *harness {
 	t.Helper()
+	return newHarnessAt(t, max, dry, nil)
+}
+
+// newHarnessAt opens the store with now as its clock when now is set.
+func newHarnessAt(t *testing.T, max int, dry bool, now func() time.Time) *harness {
+	t.Helper()
 	h := &harness{t: t, git: &stubGit{head: "h2"},
 		gh: fake.New(fake.WithIdentity(github.Identity{Login: self, ID: 7, Kind: github.AuthApp}))}
 	h.cfg = &config.Resolved{Repo: t.TempDir(), SHA: "abc", Roles: []config.Role{
 		{Kind: config.KindReviewer, Name: engRev}, {Kind: config.KindReviewer, Name: secRev},
 		{Kind: config.KindWorker, Name: wrk, MaxReviewRounds: max}}}
-	st, err := state.Open(context.Background(), t.TempDir(), state.Options{})
+	st, err := state.Open(context.Background(), t.TempDir(), state.Options{Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}

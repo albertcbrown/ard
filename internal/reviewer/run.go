@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
@@ -93,11 +94,15 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 	untrusted := []string{dir + "/diff.patch", dir + "/issue.md", dir + "/comments.md", fmt.Sprintf(".ard/%d", n)}
 	// A later round also gets the role's report from the round before, read at
 	// the pinned head, which holds that review's close-out commit.
-	if b, ok, err := d.Git.FileAt(ctx, d.RepoDir, p.tip, fmt.Sprintf(".ard/%d/review-%s.md", n, role.Name), 64<<10); err != nil {
+	if b, ok, err := d.Git.FileAt(ctx, d.RepoDir, p.tip, fmt.Sprintf(".ard/%d/review-%s.md", n, role.Name), closeout.MaxRoleFileBytes); err != nil {
 		log.Warn("review.previous_review_failed", "error", err)
 	} else if ok {
 		path := dir + "/previous-review.md"
-		body := agentjob.UntrustedHeader + "Your report from the previous review round on this pull request:\n\n" + string(b)
+		prev := string(b)
+		if len(prev) > 64<<10 {
+			prev = strings.ToValidUTF8(prev[:64<<10], "") + "\n[truncated]\n"
+		}
+		body := agentjob.UntrustedHeader + "Your report from the previous review round on this pull request:\n\n" + prev
 		inputs = append(inputs, executor.File{Path: path, Data: []byte(body)})
 		untrusted = append(untrusted, path)
 	}

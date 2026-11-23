@@ -93,9 +93,12 @@ type Request struct {
 func (l *Loop) appendRound(ctx context.Context, issue int, r Round) error {
 	data, err := json.Marshal(r)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode review round: %w", err)
 	}
-	return l.d.Store.AppendEvent(ctx, state.Event{Kind: state.EventReviewRound, Issue: issue, Role: r.Worker, Data: data})
+	if err := l.d.Store.AppendEvent(ctx, state.Event{Kind: state.EventReviewRound, Issue: issue, Role: r.Worker, Data: data}); err != nil {
+		return fmt.Errorf("issue %d: record %s review round: %w", issue, r.Phase, err)
+	}
+	return nil
 }
 
 // RequestRound starts a round: it records a requested event first, then

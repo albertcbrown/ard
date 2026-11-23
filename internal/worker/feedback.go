@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agentjob"
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/github"
@@ -22,7 +23,7 @@ func (l *Loop) reviewFeedback(ctx context.Context, role config.Role, n int, bran
 	d := l.d
 	rs, err := reviewfix.Rounds(ctx, d.Store, n)
 	if err != nil {
-		return executor.File{}, false, err
+		return executor.File{}, false, fmt.Errorf("read review rounds: %w", err)
 	}
 	if len(rs) == 0 || rs[len(rs)-1].Phase != reviewfix.PhaseRequested {
 		return executor.File{}, false, nil
@@ -32,7 +33,7 @@ func (l *Loop) reviewFeedback(ctx context.Context, role config.Role, n int, bran
 	b.WriteString(agentjob.UntrustedHeader)
 	fmt.Fprintf(&b, "Review round %d of %d; reviewers asking for changes: %s.\n", r.N, role.MaxReviewRounds, strings.Join(r.Roles, ", "))
 	for _, rr := range r.Roles {
-		data, ok, err := d.Git.FileAt(ctx, d.RepoDir, localRef(branch), fmt.Sprintf(".ard/%d/review-%s.md", n, rr), feedbackCap)
+		data, ok, err := d.Git.FileAt(ctx, d.RepoDir, localRef(branch), fmt.Sprintf(".ard/%d/review-%s.md", n, rr), closeout.MaxRoleFileBytes)
 		if err != nil {
 			return executor.File{}, false, fmt.Errorf("read review-%s.md: %w", rr, err)
 		}
@@ -42,22 +43,22 @@ func (l *Loop) reviewFeedback(ctx context.Context, role config.Role, n int, bran
 	}
 	id, err := d.Reader.Identity(ctx)
 	if err != nil {
-		return executor.File{}, false, err
+		return executor.File{}, false, fmt.Errorf("identity: %w", err)
 	}
 	prs, err := d.Reader.ListPRs(ctx, github.ListPRsOpts{State: github.StateOpen, Head: branch})
 	if err != nil {
-		return executor.File{}, false, err
+		return executor.File{}, false, fmt.Errorf("list PRs: %w", err)
 	}
 	b.WriteString("\n### Pull request comments\n")
 	if len(prs) > 0 {
 		pr := prs[0].Number
 		cs, err := d.Reader.ListComments(ctx, pr, time.Time{})
 		if err != nil {
-			return executor.File{}, false, err
+			return executor.File{}, false, fmt.Errorf("list comments: %w", err)
 		}
 		rcs, err := d.Reader.ListReviewComments(ctx, pr)
 		if err != nil {
-			return executor.File{}, false, err
+			return executor.File{}, false, fmt.Errorf("list review comments: %w", err)
 		}
 		for _, c := range cs {
 			if !strings.EqualFold(c.Author, id.Login) {
@@ -72,7 +73,7 @@ func (l *Loop) reviewFeedback(ctx context.Context, role config.Role, n int, bran
 	}
 	out := b.String()
 	if len(out) > feedbackCap {
-		out = out[:feedbackCap] + "\n[truncated]\n"
+		out = strings.ToValidUTF8(out[:feedbackCap], "") + "\n[truncated]\n"
 	}
 	return executor.File{Path: agentjob.InputDir(n) + "/review-feedback.md", Data: []byte(out)}, true, nil
 }

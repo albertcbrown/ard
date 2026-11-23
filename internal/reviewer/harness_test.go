@@ -3,6 +3,7 @@ package reviewer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -189,8 +190,11 @@ func (g *fakeGit) CodeChanged(_ context.Context, _, _, _ string, ex ...string) (
 	return g.changed, g.changedErr
 }
 
-func (g *fakeGit) FileAt(_ context.Context, _, rev, path string, _ int64) ([]byte, bool, error) {
+func (g *fakeGit) FileAt(_ context.Context, _, rev, path string, max int64) ([]byte, bool, error) {
 	v, ok := g.files[rev+":"+path]
+	if ok && int64(len(v)) > max { // the real FileAt errors on an oversize blob
+		return nil, false, fmt.Errorf("%s: %d bytes exceeds %d", path, len(v), max)
+	}
 	return []byte(v), ok, nil
 }
 
