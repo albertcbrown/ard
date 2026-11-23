@@ -5,16 +5,17 @@ attempt: 1
 verdict: approve
 findings:
   - file: "internal/servecmd/wake_unix_test.go"
-    line: 316
+    line: 16
     severity: low
-    blocking: false
     message: |
-      The test does not check that the forwarder stops after ctx is cancelled, which plan.md listed.
-      It only calls cancel() at the end. Consider asserting that a later SIGUSR1 delivers nothing. Be careful that, once signal.Stop has run, SIGUSR1 may kill the test process, so a check like this needs care.
+      TestWakeSignals does not check the "stops after ctx cancel" half of the plan.
+      It only calls cancel() at the end. Optionally assert that signal.Stop ran, for example
+      by sending a second SIGUSR1 after cancel and checking the channel stays empty. Be careful
+      that an unhandled SIGUSR1 terminates the test process, so this may not be worth doing.
 ---
-The change matches plan.md. Wakes are coalesced, go through the normal tick (kill switch and pool), and are ignored once shutdown begins. The new tests cover each planned scenario. Approved.
+The change matches plan.md: a wake reaches every loop through the normal tick path, so the kill switch, pool and non-overlap rules still apply. The four planned scheduler tests and the signal test are present and pass. Approved.
 
 ## Checks
-- Lint: `go vet` on the changed packages is clean. I did not run the repository's lint target.
-- Tests: `go test ./internal/controller ./internal/servecmd -run Wake` passes.
-- Diff coverage: not measured. Every added code path is exercised by the new tests, except the `wake_other.go` stub, which is not built on Unix.
+- Tests: `go test ./internal/controller ./internal/servecmd` passes.
+- Lint: `go vet ./internal/...` printed only dependency download lines and no problems.
+- Diff coverage: not run separately. The new controller and scheduler lines are executed by the new tests, and `wakeSignals` by its test. `wake_other.go` is not built on this platform.
