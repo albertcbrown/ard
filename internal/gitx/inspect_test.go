@@ -419,3 +419,26 @@ func TestSnapshotLimits(t *testing.T) {
 		}
 	})
 }
+
+func TestMergeBaseAllCrissCross(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, dir := gittest.NewRemote(t)
+	root := strings.TrimSpace(gittest.Run(t, dir, "rev-parse", "HEAD"))
+	gittest.Run(t, dir, "checkout", "-q", "-b", "a", root)
+	gittest.Run(t, dir, "commit", "--allow-empty", "-m", "a1")
+	gittest.Run(t, dir, "checkout", "-q", "-b", "b", root)
+	gittest.Run(t, dir, "commit", "--allow-empty", "-m", "b1")
+	gittest.Run(t, dir, "checkout", "-q", "-b", "a2", "a")
+	gittest.Run(t, dir, "merge", "-q", "--no-edit", "b")
+	gittest.Run(t, dir, "checkout", "-q", "-b", "b2", "b")
+	gittest.Run(t, dir, "merge", "-q", "--no-edit", "a")
+	got, err := g.MergeBaseAll(ctx, dir, "a2", "b2")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("merge-base --all = %v, %v; want two bases", got, err)
+	}
+	one, err := g.MergeBaseAll(ctx, dir, "a", "b")
+	if err != nil || len(one) != 1 || one[0] != root {
+		t.Errorf("simple case = %v, %v", one, err)
+	}
+}

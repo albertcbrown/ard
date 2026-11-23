@@ -34,19 +34,20 @@ func WithIdentity(id github.Identity) Option { return func(s *state) { s.identit
 func WithClock(now func() time.Time) Option { return func(s *state) { s.now = now } }
 
 type item struct {
-	issue      github.Issue
-	isPR       bool
-	draft      bool
-	merged     bool
-	headRef    string
-	headSHA    string
-	baseRef    string
-	mergeSt    string
-	comments   []github.Comment
-	timeline   []github.TimelineEvent
-	files      []github.PRFile
-	reviews    []github.ReviewComment
-	reviewList []github.Review
+	issue        github.Issue
+	isPR         bool
+	draft        bool
+	merged       bool
+	headRef      string
+	headSHA      string
+	baseRef      string
+	mergeSt      string
+	comments     []github.Comment
+	timeline     []github.TimelineEvent
+	files        []github.PRFile
+	reviews      []github.ReviewComment
+	reviewList   []github.Review
+	mergeUnknown bool
 }
 
 type state struct {
@@ -182,6 +183,40 @@ func (f *Fake) SetRequiredChecks(branch string, cs ...github.RequiredCheck) {
 	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
 	f.s.required[branch] = github.RequiredChecksResult{Available: true, Checks: append([]github.RequiredCheck(nil), cs...)}
+}
+
+// SetUnevaluatedRules records rule types the fake reports as present but not
+// evaluated on branch (see RequiredChecksResult.Unevaluated).
+func (f *Fake) SetUnevaluatedRules(branch string, kinds ...string) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	r := f.s.required[branch]
+	r.Available = true
+	r.Unevaluated = append([]string(nil), kinds...)
+	f.s.required[branch] = r
+}
+
+// SeedReview adds a submitted review to PR n, as a human's would appear. A zero
+// SubmittedAt takes the fake's clock; a zero ID takes the next id.
+func (f *Fake) SeedReview(n int, r github.Review) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	it := f.s.must(n)
+	if r.ID == 0 {
+		r.ID = f.s.id()
+	}
+	if r.SubmittedAt.IsZero() {
+		r.SubmittedAt = f.s.now()
+	}
+	it.reviewList = append(it.reviewList, r)
+}
+
+// SetMergeableUnknown makes PR n report Mergeable nil, as GitHub does while it
+// computes the result.
+func (f *Fake) SetMergeableUnknown(n int, unknown bool) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.must(n).mergeUnknown = unknown
 }
 
 // SetRulesUnavailable makes RequiredChecks report no rules API for branch, as
@@ -357,9 +392,12 @@ func (it *item) copyPR() github.PullRequest {
 		HeadRef: it.headRef, HeadSHA: it.headSHA, BaseRef: it.baseRef,
 		MergeableState: it.mergeSt, URL: is.URL,
 	}
-	if is.State == github.StateOpen {
+	if is.State == github.StateOpen && !it.mergeUnknown {
 		t := it.mergeSt != "dirty"
 		pr.Mergeable = &t
+	}
+	if it.mergeUnknown {
+		pr.MergeableState = "unknown"
 	}
 	return pr
 }
@@ -953,7 +991,7 @@ func (f *Fake) MergePR(ctx context.Context, n int, in github.MergeInput) (github
 	if in.SHA != it.headSHA {
 		return github.MergeResult{}, fmt.Errorf("github: merge PR %d: head moved: %w", n, github.ErrConflict)
 	}
-	if it.issue.State != github.StateOpen || it.draft || it.mergeSt == "dirty" || it.mergeSt == "blocked" {
+	if it.issue.State != github.StateOpen || it.draft || it.mergeSt == "dirty" || it.mergeSt == "blocked" || it.mergeUnknown {
 		return github.MergeResult{}, fmt.Errorf("github: merge PR %d: %w", n, github.ErrNotMergeable)
 	}
 	now := f.s.now()

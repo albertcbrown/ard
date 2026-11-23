@@ -50,7 +50,7 @@ func (r *Resolved) Protected(p string) bool {
 // path.Clean) is reported as protected with pattern "": the check fails
 // closed.
 //
-// Matching is case-sensitive and anchored at the repo root. An entry ending
+// Matching is case-insensitive (macOS file systems are, so `Claude.md` is `CLAUDE.md`) and anchored at the repo root. An entry ending
 // in "/" matches that directory (and the bare name, in case a file or
 // submodule replaces it) on a directory boundary; any other entry is a
 // doublestar glob where "*" stays within one segment and "**" crosses them.
@@ -75,6 +75,7 @@ func (r *Resolved) ProtectedBy(p string) (pattern string, ok bool) {
 
 // matchProtected matches one canonical entry against a cleaned path.
 func matchProtected(entry, q string) bool {
+	entry, q = strings.ToLower(entry), strings.ToLower(q)
 	if strings.HasSuffix(entry, "/") {
 		return strings.HasPrefix(q, entry) || q == strings.TrimSuffix(entry, "/")
 	}

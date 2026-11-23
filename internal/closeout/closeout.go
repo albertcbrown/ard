@@ -25,6 +25,10 @@ import (
 // zero means the earlier behaviour.
 const recordVersion = 1
 
+// RecordVersion is the version of the stored close-out record, for tests that
+// seed records.
+const RecordVersion = recordVersion
+
 // failedKeep is how long a failed job's resources are kept (proposal: 24 h).
 const failedKeep = 24 * time.Hour
 
@@ -235,6 +239,35 @@ func LeadWorker(ctx context.Context, s interface {
 		worker, jobID, ok = rec.Plan.Worker, rec.Job.ID, true
 	}
 	return worker, jobID, ok, nil
+}
+
+// ReviewPassed returns the commit the newest closed review close-out of role
+// on PR pr approved, ok only when that close-out finished with outcome done,
+// carries a review plan and the head had not moved during the review. The
+// merger trusts this record, not the :done label, which a person with triage
+// access can add.
+func ReviewPassed(ctx context.Context, s interface {
+	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+}, issue, pr int, role string) (sha string, ok bool, err error) {
+	jobs, err := s.CloseoutsOf(ctx, issue, StageReview)
+	if err != nil {
+		return "", false, fmt.Errorf("review of issue %d: %w", issue, err)
+	}
+	for i := len(jobs) - 1; i >= 0; i-- {
+		rec, err := decode(jobs[i])
+		if err != nil {
+			return "", false, fmt.Errorf("review of issue %d: %w", issue, err)
+		}
+		if rec.Job.Role != role || rec.Job.PR != pr {
+			continue
+		}
+		p := rec.Plan
+		if rec.Phase != PhaseClosed || p.Outcome != OutcomeDone || p.Review == nil || p.Review.HeadMoved || p.Review.CommitSHA == "" {
+			return "", false, nil
+		}
+		return p.Review.CommitSHA, true, nil
+	}
+	return "", false, nil
 }
 
 // Deps are the collaborators of a Closer. Prepare needs Roles, NewRedactor,

@@ -856,6 +856,8 @@ func TestRequiredChecks(t *testing.T) {
 	}{
 		{"paginated, deduped, sorted, nil integration id", paged,
 			RequiredChecksResult{Available: true, Checks: []RequiredCheck{{"build", 15368}, {"lint", 0}, {"test", 0}}}, nil},
+		{"unevaluated rule types", respond(200, `[{"type":"workflows","ruleset_id":1,"parameters":{"workflows":[{"path":".github/workflows/ci.yml","repository_id":1}]}},{"type":"code_scanning","ruleset_id":1,"parameters":{"code_scanning_tools":[{"tool":"CodeQL","security_alerts_threshold":"all","alerts_threshold":"all"}]}}]`),
+			RequiredChecksResult{Available: true, Unevaluated: []string{"code_scanning", "workflows"}}, nil},
 		{"empty list", respond(200, `[]`), RequiredChecksResult{Available: true}, nil},
 		{"no checks rule", respond(200, `[{"type":"deletion","ruleset_id":1}]`), RequiredChecksResult{Available: true}, nil},
 		{"403 upgrade is unavailable", respond(403, upgrade), RequiredChecksResult{}, nil},

@@ -13,6 +13,18 @@ merges every PR. See [docs/proposal.md: Rollout](../proposal.md#rollout).
 Two stages: a smoke run on `albertcbrown/ard-scratch` that walks one issue
 through every stage, then the gate itself on `albertcbrown/ard`.
 
+> **After the merger landed (#46).** `ard serve` now runs the merger loop, so it
+> squash-merges worker PRs that pass its gates and humans no longer merge them.
+> To keep human merging for this gate, start `serve` without it:
+> `ard serve --loops scanners,stale,triage,workers,reviewers,reaper`. A repo
+> without rulesets (the private free-plan `ard-scratch`) merges on reviews alone
+> after a two-minute grace period when the head has no check runs; with check
+> runs, all must be green. Run `ard serve --dry-run` first to read the
+> `merge.would_merge` lines. The merger's end-to-end test
+> (`go test -tags integration ./internal/merger`, `ARD_IT_REPO` set) also needs a
+> repo with rulesets plus CI for its red-check case (`ARD_IT_CI=1`): that case is
+> optional and skipped on `ard-scratch`.
+
 ## Prerequisites
 
 | What | Where |

@@ -98,6 +98,24 @@ func TestPermissionAndIdentity(t *testing.T) {
 			t.Errorf("%+v AtLeastTriage = %v", tc.p, got)
 		}
 	}
+	for _, tc := range []struct {
+		p    Permission
+		want bool
+	}{
+		{Permission{"write", "write"}, true},
+		{Permission{"admin", "maintain"}, true},
+		{Permission{"admin", "admin"}, true},
+		{Permission{"read", "triage"}, false},
+		{Permission{"read", "read"}, false},
+		{Permission{"none", ""}, false},
+		{Permission{"admin", ""}, true},
+		{Permission{"write", ""}, true},
+		{Permission{"read", ""}, false},
+	} {
+		if got := tc.p.AtLeastWrite(); got != tc.want {
+			t.Errorf("%+v AtLeastWrite = %v", tc.p, got)
+		}
+	}
 	id := Identity{Login: "ard[bot]", ID: 42}
 	if got := id.NoreplyEmail(); got != "42+ard[bot]@users.noreply.github.com" {
 		t.Errorf("NoreplyEmail = %q", got)

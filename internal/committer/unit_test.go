@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/albertcbrown/ard/internal/gitx"
 )
@@ -174,5 +175,46 @@ func TestSnapshot(t *testing.T) {
 		if tc.npth > 0 && (!errors.As(err, &ge) || len(ge.Paths) != tc.npth) {
 			t.Errorf("%s: guard paths = %v", tc.name, err)
 		}
+	}
+}
+
+func TestSquashMessage(t *testing.T) {
+	const job = "01J0000000000000000000000A"
+	tests := []struct {
+		name, title string
+		pr          int
+		jobs        []string
+		wantTitle   string
+		wantMsg     string
+		bad         bool
+	}{
+		{name: "plain", title: "feat: add x (#7)", pr: 9, jobs: []string{job}, wantTitle: "feat: add x (#7) (#9)", wantMsg: "Ard-Job: " + job},
+		{name: "two jobs", title: "t", pr: 9, jobs: []string{job, "B"}, wantTitle: "t (#9)", wantMsg: "Ard-Job: " + job + "\nArd-Job: B"},
+		{name: "skip ci", title: "fix [skip ci] now", pr: 1, jobs: []string{job}, wantTitle: "fix (skip-ci) now (#1)", wantMsg: "Ard-Job: " + job},
+		{name: "closing ref", title: "Fixes #3", pr: 1, jobs: []string{job}, wantTitle: "Fixes issue 3 (#1)", wantMsg: "Ard-Job: " + job},
+		{name: "control chars", title: "a\nb\x00c\r\n d", pr: 2, jobs: []string{job}, wantTitle: "a b c d (#2)", wantMsg: "Ard-Job: " + job},
+		{name: "empty title", title: " \n\t", pr: 1, jobs: []string{job}, bad: true},
+		{name: "bad pr", title: "t", pr: 0, jobs: []string{job}, bad: true},
+		{name: "no jobs", title: "t", pr: 1, bad: true},
+		{name: "bad job", title: "t", pr: 1, jobs: []string{"a\nb"}, bad: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			title, msg, err := SquashMessage(tc.title, tc.pr, tc.jobs)
+			if tc.bad {
+				if !errors.Is(err, ErrInvalid) {
+					t.Fatalf("err = %v, want ErrInvalid", err)
+				}
+				return
+			}
+			if err != nil || title != tc.wantTitle || msg != tc.wantMsg {
+				t.Fatalf("got %q, %q, %v; want %q, %q", title, msg, err, tc.wantTitle, tc.wantMsg)
+			}
+		})
+	}
+	long := strings.Repeat("é", 100)
+	title, _, err := SquashMessage(long, 123, []string{job})
+	if err != nil || utf8.RuneCountInString(title) > 72 || !strings.HasSuffix(title, "… (#123)") {
+		t.Errorf("long title %q (%d runes) %v", title, utf8.RuneCountInString(title), err)
 	}
 }
