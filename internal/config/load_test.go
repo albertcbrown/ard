@@ -283,9 +283,9 @@ overrides:
 	}
 
 	lint, _ := res.Role(KindScanner, "lint")
-	// every inherits intervals.scanners; timeout, model and budgets come from the override.
-	if lint.Every != 6*time.Hour {
-		t.Errorf("lint every = %s, want 6h inherited from intervals.scanners", lint.Every)
+	// every is raised to the 24h LLM scanner floor; timeout, model and budgets come from the override.
+	if lint.Every != 24*time.Hour {
+		t.Errorf("lint every = %s, want the 24h LLM scanner floor", lint.Every)
 	}
 	if lint.Timeout != time.Hour || lint.Model != "claude-opus-5-5" || lint.MaxBudgetUSD != 2 || lint.BudgetUSDPerDay != 7 {
 		t.Errorf("lint override = timeout %s model %q max_budget %g budget/day %g",
@@ -903,5 +903,43 @@ func TestLoadWhenEmptyRejected(t *testing.T) {
 	res := mustLoad(t, withConfig(t, `overrides: {reviewers/license-review: {when: null}}`))
 	if r, _ := res.Role(KindReviewer, "license-review"); r.When != nil {
 		t.Errorf("when: null = %+v, want nil", r.When)
+	}
+}
+
+func TestLLMScannerRules(t *testing.T) {
+	res := mustLoad(t, baseFS())
+	lint, _ := res.Role(KindScanner, "lint")
+	cve, _ := res.Role(KindScanner, "cve")
+	lead, _ := res.Role(KindTriage, "lead")
+	if !lint.LLMScanner() || cve.LLMScanner() || lead.LLMScanner() {
+		t.Errorf("LLMScanner: lint %v cve %v lead %v", lint.LLMScanner(), cve.LLMScanner(), lead.LLMScanner())
+	}
+	if lint.Autoclose {
+		t.Error("LLM scanner autoclose defaults to true, want false")
+	}
+
+	ok := []string{
+		"overrides: {scanners/lint: {autoclose: false}}\n",
+		"overrides: {scanners/cve: {autoclose: true}}\n",
+		"overrides: {scanners/lint: {max_budget_usd: 2, every: 72h}}\n",
+		"overrides: {scanners/lint: {every: 24h}}\n",
+	}
+	for _, y := range ok {
+		mustLoad(t, withConfig(t, y))
+	}
+	bad := []struct{ name, yaml, key, msg string }{
+		{"autoclose", "overrides: {scanners/lint: {autoclose: true}}\n", `overrides["scanners/lint"].autoclose`, "never closes an issue for absence"},
+		{"every", "overrides: {scanners/lint: {every: 12h}}\n", `overrides["scanners/lint"].every`, "at least 24h"},
+		{"budget", "overrides: {scanners/lint: {max_budget_usd: 0}}\n", `overrides["scanners/lint"].max_budget_usd`, "greater than 0"},
+	}
+	for _, tt := range bad {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, e := range loadErrs(t, withConfig(t, tt.yaml)) {
+				if e.Key == tt.key && strings.Contains(e.Msg, tt.msg) {
+					return
+				}
+			}
+			t.Errorf("no error on %s containing %q", tt.key, tt.msg)
+		})
 	}
 }

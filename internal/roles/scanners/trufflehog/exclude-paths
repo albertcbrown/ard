@@ -1,0 +1,6 @@
+# trufflehog path regexes (Go RE2), one per line, matched against repo-relative
+# paths. Human-owned: change it in a reviewed PR. scan drops # lines and blanks.
+# .ard/<n>/logs/ were secret-scanned at close-out (model signature blobs are noise).
+^\.ard/[0-9]+/logs/
+^vendor/
+^node_modules/
