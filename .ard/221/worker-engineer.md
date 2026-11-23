@@ -3,29 +3,21 @@ role: engineer
 status: done
 attempt: 1
 ---
-Each scanner now posts one comment on the pinned status issue when a failure streak starts and one when it recovers, so a scanner that stops working no longer stops silently. The streak is kept in the scanner's existing `meta` table, so a restart does not repost.
+Scanner failure streaks are now announced on the status issue: one comment when a streak starts (guard rule name, `scan_failed` or `max_open`) and one on recovery. The streak is kept in the scanner's `meta` table, so a restart does not repost, and dry-run logs instead of posting. Comments carry the scanner name and reason class only.
 
 ## Changes
-- `internal/scanner/streak.go` (new): outcome classification (guard rule name, `scan_failed`, `max_open`; `timeout` counts as `scan_failed`; global-cap, error, no-slot, paused and skipped are neutral), class sanitising to `[A-Za-z0-9._:-]` and at most 64 characters, fixed notice and recovery text, and `Pipeline.noteRun`.
-- `internal/scanner/pipeline.go`: `StatusIssue func() int` field; `record` calls `noteRun` after `RecordRun`. Errors are logged and never change the run result.
-- `internal/scanner/store.go`: `Store` gains `Meta` and `SetMeta` (`*scannerdb.DB` already has them).
-- `internal/servecmd/scanners.go`: wires `StatusIssue` to the status issue number.
-- `docs/proposal.md`: Observability bullet describes the notice.
+- `internal/scanner/streak.go`: class mapping, sanitising, comment bodies and `noteRun`.
+- `internal/scanner/store.go`, `pipeline.go`: `Store` gains `Meta`/`SetMeta`, and `Pipeline` gains `StatusIssue`, with `noteRun` called from `record`.
+- `internal/servecmd/scanners.go`: pipeline construction extracted to `scannerPipeline`, wiring `StatusIssue`.
+- Tests: streak and pipeline streak tests, harness fakes, and a servecmd wiring test.
+- `docs/proposal.md` (and `docs/TODO.md` if listed): describe the notice.
 
 ## Testing
-`go test ./...` passes, and `go vet ./...` is clean. New tests are in `streak_test.go` and `pipeline_streak_test.go`:
-- classification table;
-- sanitising;
-- one post per streak and one recovery for scan_failed, timeout, max_open and guard;
-- restart mid-streak;
-- neutral outcomes;
-- planted marker absent from posts;
-- dry-run logs and writes no state;
-- no status issue, then it posts once the issue is known;
-- post failure retries on the next run;
-- old state without the key.
+Ran `go test ./internal/scanner/ ./internal/servecmd/`, `go vet` and gofmt; all pass.
+
+## Review findings
+- `internal/servecmd/scanners.go:32`: fixed. Extracted `scannerPipeline` and added `TestScannerPipelineStatusIssueWired` in `scanners_test.go`, which checks `StatusIssue` is set and tracks `w.statusIssue`.
+- `internal/scanner/streak.go:70`: fixed. A nil `Log` now falls back to a discard logger, so the notice is still posted.
 
 ## Open issues
-- The planned wiring test in `internal/servecmd/scanners_test.go` was not added: `scannerLoop` needs the full executor and pool wiring, so it is a one-line assignment checked by the build only.
-- `gofmt -l` flags `internal/roles/testdata/docs/skips/src/_x.go`, an intentionally broken fixture. It is not part of this change.
-- `docs/TODO.md` lists #221 as an open item with no checkbox, so it is unchanged.
+None.
