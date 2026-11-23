@@ -5,6 +5,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/budget"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/controller"
 )
 
 // budgetGate returns the one daily-budget gate of this process, built on first
@@ -20,4 +21,14 @@ func (w *wiring) budgetGate() *budget.Gate {
 		w.bgt = budget.New(w.Store, func() *config.Resolved { return w.cfg.Load() }, now, w.Log)
 	}
 	return w.bgt
+}
+
+// budgetLoop is the notice loop: one status-issue comment per capped scope and
+// UTC day. It shares the gate, so its caps match what the pool enforces.
+func budgetLoop(w *wiring) controller.Loop {
+	return budget.NewLoop(budget.Deps{
+		Gate: w.budgetGate(), Store: w.Store, Effects: w.Effects,
+		StatusIssue: func() int { return int(w.statusIssue.Load()) },
+		Log:         w.Log, Now: w.budgetNow,
+	})
 }

@@ -1,0 +1,8 @@
+<!-- ard:budget scope=role-review/rev day=2026-03-04 -->
+**ard · daily budget reached**
+
+The daily budget of review role `rev` is reached for 2026-03-04 (UTC): $6.00 of $5.00 spent. 3 steps reported no cost and count as $0.
+
+No new jobs start under this cap; running jobs finish. On a subscription the dollar figure is an estimate.
+
+To raise the cap, change `budget_usd_per_day` of role `rev` (or the repo-wide value) in `.ard/config.yaml` through a reviewed pull request. The cap clears at 00:00 UTC.

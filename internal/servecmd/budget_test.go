@@ -133,3 +133,12 @@ func TestBudgetLoopNameAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBudgetLoopRegistered(t *testing.T) {
+	clk := &budgetClock{t: time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC)}
+	w, _ := budgetWiring(t, t.TempDir(), clk)
+	l := budgetLoop(w)
+	if l.Name() != "budget" || l.Claims() {
+		t.Fatalf("loop %q claims=%v", l.Name(), l.Claims())
+	}
+}
