@@ -44,6 +44,7 @@ type Effects interface {
 	AddLabels(ctx context.Context, n int, labels ...string) error
 	RemoveLabel(ctx context.Context, n int, label string) error
 	CreateComment(ctx context.Context, n int, body string) (github.Comment, error)
+	MarkReady(ctx context.Context, n int) error
 	DryRun() bool
 }
 
@@ -56,6 +57,7 @@ type Store interface {
 	RunningJobs(ctx context.Context) ([]state.Job, error)
 	Admission(ctx context.Context, issue int) (state.Admission, error)
 	SetAdmission(ctx context.Context, a state.Admission) error
+	Events(ctx context.Context, f state.EventFilter) ([]state.Event, error)
 }
 
 // Finisher is *reaper.Finisher: the one way a started job ends.
@@ -162,6 +164,14 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 		return nil
 	}
 	dry := l.d.Effects.DryRun()
+	id, err := l.d.Reader.Identity(ctx)
+	if err != nil {
+		l.offer(cfg, nil)
+		return fmt.Errorf("review: identify github user: %w", err)
+	}
+	t := &tick{l: l, cfg: cfg, log: log, self: id.Login, dry: dry}
+	// The sweep needs no agent, so it runs before the credential check.
+	t.sweepReady(ctx)
 	if _, err := l.d.Model.Require(); err != nil && !dry {
 		l.mu.Lock()
 		first := !l.noCred
@@ -173,12 +183,6 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 		l.offer(cfg, nil)
 		return nil
 	}
-	id, err := l.d.Reader.Identity(ctx)
-	if err != nil {
-		l.offer(cfg, nil)
-		return fmt.Errorf("review: identify github user: %w", err)
-	}
-	t := &tick{l: l, cfg: cfg, log: log, self: id.Login, dry: dry}
 	cands, errs := t.candidates(ctx)
 
 	if dry {

@@ -42,9 +42,20 @@
 // one COMMENT review at the pinned commit (inline comments on lines the PR
 // added, everything else in the body) and swaps the label: :done, :changes, or
 // (an approve on a head that gained code meanwhile) neither, so the request
-// stays and the review runs again. The loop never marks the PR ready and never
-// edits it; #46 does.
+// stays and the review runs again. The loop never edits the PR.
 //
-// In --dry-run the loop logs review.would_claim and stops: no fetch, no job
+// # Marking ready
+//
+// After each close-out, and on every tick (so a restart cannot miss it), the
+// loop marks a draft App PR on a worker/ branch ready for review when every
+// requested review role is :done at the PR's current head (the head recorded
+// by its newest claim, ignoring commits that only touch .ard/<issue>/), and
+// none of :changes, :running, ard:executor:failed, ard:needs-human, ard:hold or
+// ard:tests:failed is set. It logs review.marked_ready; a failed MarkReady is
+// logged and retried next tick, never failing close-out. In --dry-run only the
+// effects ledger gets a line. It never converts a PR back to draft and never
+// merges.
+//
+// In --dry-run the loop logs review.would_claim and stops claiming: no fetch, no job
 // row, no pool slot, no label.
 package reviewer

@@ -711,7 +711,7 @@ func (jb *job) reviewers(ctx context.Context) []string {
 }
 
 // openPR creates or updates the draft PR and records it. The PR stays a draft:
-// marking it ready is the merger's. It reports false after finishing the job.
+// the reviewer loop marks it ready once every requested review passes. It reports false after finishing the job.
 func (jb *job) openPR(ctx context.Context, res *closeout.WorkerResult) bool {
 	d := jb.l.d
 	n := jb.is.Number
