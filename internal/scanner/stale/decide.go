@@ -48,6 +48,28 @@ func scannerOf(is github.Issue, scanners map[string]bool) (string, bool) {
 	return "", false
 }
 
+// staleCandidate reports whether the issue is in a state the closer may
+// consider: it carries ard:pending, or (a scanner with route none) its only
+// ard: label is the ard:scanner:<name> label.
+func staleCandidate(is github.Issue) bool {
+	if hasLabel(is, labels.Pending) {
+		return true
+	}
+	n := 0
+	for _, l := range is.Labels {
+		l = strings.ToLower(l)
+		if !strings.HasPrefix(l, labels.Prefix) {
+			continue
+		}
+		p, ok := labels.Parse(l)
+		if !ok || p.Kind != labels.KindScanner {
+			return false
+		}
+		n++
+	}
+	return n == 1
+}
+
 func running(is github.Issue) bool {
 	for _, l := range is.Labels {
 		l = strings.ToLower(l)
@@ -61,7 +83,7 @@ func running(is github.Issue) bool {
 // precheck applies every rule that needs no timeline, in order; the first
 // match wins.
 func precheck(is github.Issue, in inputs) reason {
-	if _, ok := scannerOf(is, in.scanners); !ok || is.IsPR || is.State != github.StateOpen || !hasLabel(is, labels.Pending) {
+	if _, ok := scannerOf(is, in.scanners); !ok || is.IsPR || is.State != github.StateOpen || !staleCandidate(is) {
 		return reasonNotCand
 	}
 	switch {

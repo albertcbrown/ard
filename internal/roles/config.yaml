@@ -38,7 +38,11 @@ overrides:
   # needs a human-made `baseline` next to `scan`; see its Dockerfile
   scanners/lint: { every: 24h, max_open: 3, group_size: 20, autoclose: true }
   triage/lead:  { model: claude-opus-5-5, timeout: 15m }
-  triage/engineer: { model: claude-sonnet-5-5 }
+  triage/product-manager: { model: claude-opus-5-5 }
+  triage/architect: { model: claude-opus-5-5, after: [product-manager] }
+  triage/designer: { model: claude-haiku-5-5 }
+  triage/documentation-planner: { model: claude-haiku-5-5, after: [designer] }
+  triage/engineer: { model: claude-sonnet-5-5, after: [architect, documentation-planner] }
   # timeout covers the whole worker job (agent, tests, fix rounds). tests is your
   # repo's test command; "" turns the test step off. Over diff_warn_lines changed
   # lines the PR goes ahead with a "Large change" note; over diff_max_lines it is

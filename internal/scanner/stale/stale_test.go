@@ -244,3 +244,19 @@ func TestRunDryRunWritesNothing(t *testing.T) {
 		t.Errorf("dry run wrote: %v", f.Writes())
 	}
 }
+
+func TestRunClosesScannerOnlyIssues(t *testing.T) {
+	f, c := newEnv(t)
+	only := f.SeedIssue(github.Issue{Title: "x", State: github.StateOpen, Author: bot, CreatedAt: t0.Add(-40 * day), Labels: []string{labels.Scanner("cve")}})
+	both := f.SeedIssue(old())
+	extra := f.SeedIssue(github.Issue{Title: "x", State: github.StateOpen, Author: bot, CreatedAt: t0.Add(-40 * day), Labels: []string{labels.Scanner("cve"), labels.Prefix + "other"}})
+	plain := f.SeedIssue(github.Issue{Title: "x", State: github.StateOpen, Author: bot, CreatedAt: t0.Add(-40 * day), Labels: []string{"bug"}})
+	if err := run(c); err != nil {
+		t.Fatal(err)
+	}
+	for n, want := range map[int]bool{only: true, both: true, extra: false, plain: false} {
+		if got := closedState(t, f, n).State == github.StateClosed; got != want {
+			t.Errorf("#%d closed = %v, want %v", n, got, want)
+		}
+	}
+}
