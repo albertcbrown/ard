@@ -14,6 +14,8 @@ import (
 	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/gitx/gittest"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -540,7 +542,7 @@ func TestCommitMergesPlanSectionOntoMain(t *testing.T) {
 
 func TestCommitPlanConflictNeedsHuman(t *testing.T) {
 	e := newEnv(t)
-	e.cm.err = fmt.Errorf("%w: .ard/7/plan.md: section twice", committer.ErrMerge)
+	e.cm.mergeErr = fmt.Errorf("%w: .ard/7/plan.md: section twice", committer.ErrMerge)
 	e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
 	e.write(".ard/7/plan.md", "## Implementation\nsteps\n")
 	j := e.claim(StageTriage, "engineer")
@@ -553,5 +555,86 @@ func TestCommitPlanConflictNeedsHuman(t *testing.T) {
 	}
 	if rec.Plan.Outcome != OutcomeNeedsHuman || !strings.Contains(rec.Plan.Reason, "plan.md conflict") {
 		t.Errorf("plan = %s: %s", rec.Plan.Outcome, rec.Plan.Reason)
+	}
+	if len(e.cm.commits) != 1 {
+		t.Fatalf("commits = %d, want 1 (log and usage record)", len(e.cm.commits))
+	}
+	for _, files := range e.cm.commits {
+		var logs, costs int
+		for p := range files {
+			switch {
+			case strings.HasPrefix(p, ".ard/7/logs/"):
+				logs++
+			case p == ".ard/7/costs/"+j.ID+".json":
+				costs++
+			default:
+				t.Errorf("committed %s, want only the log and the usage record", p)
+			}
+		}
+		if logs != 1 || costs != 1 {
+			t.Errorf("committed %v, want the log and the usage record", files)
+		}
+	}
+	if !strings.HasPrefix(rec.Plan.LogPath, ".ard/7/logs/") || len(rec.Plan.Files) != 2 {
+		t.Errorf("plan log = %q, files = %v", rec.Plan.LogPath, rec.Plan.Files)
+	}
+}
+
+// realCommitter adapts the main-branch committer to the close-out interface.
+type realCommitter struct{ c *committer.Committer }
+
+func (r realCommitter) Commit(ctx context.Context, _ string, req committer.Request) (committer.Result, error) {
+	return r.c.Commit(ctx, req)
+}
+
+// End to end with a real committer: a section another role committed to main
+// after the job's base survives the job's close-out commit.
+func TestCommitKeepsNewerSectionOnMain(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	bare := strings.TrimSpace(gittest.Run(t, e.repo, "remote", "get-url", "origin"))
+	v1 := "# Plan for #7\n\n## Requirements\nv1\n"
+	e.write(".ard/7/plan.md", v1)
+	e.commitAll("plan v1")
+	gittest.Run(t, e.repo, "push", "origin", "HEAD:main")
+
+	// Main moves on: another role's section changes after the job's base.
+	other := filepath.Join(t.TempDir(), "other")
+	gittest.Run(t, filepath.Dir(other), "clone", bare, other)
+	if err := os.WriteFile(filepath.Join(other, ".ard", "7", "plan.md"), []byte("# Plan for #7\n\n## Requirements\nv2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, other, "add", "-A")
+	gittest.Run(t, other, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-m", "requirements v2")
+	gittest.Run(t, other, "push", "origin", "HEAD:main")
+
+	e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+	e.write(".ard/7/plan.md", v1+"\n## Implementation\nsteps\n")
+	j := e.claim(StageTriage, "engineer")
+
+	cfg := committer.Config{RepoDir: e.repo, WorkDir: t.TempDir(), RemoteURL: "file://" + bare, Bot: github.Identity{Login: "ard[bot]", ID: 4242, Kind: github.AuthApp},
+		Backoff: func(int) time.Duration { return 0 }, Log: quiet}
+	rc, err := committer.NewMain(ctx, cfg, effects.NewLive(e.gh, gitx.New(""), quiet), gitx.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rc.Close(ctx) })
+	e.d.Committer = realCommitter{rc}
+	// The committer rejects a src path through a symlink (/var on macOS).
+	st, err := filepath.EvalSymlinks(e.staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.d.StagingDir = st
+
+	if oc, err := New(e.d).Run(ctx, j); err != nil || oc != OutcomeDone {
+		t.Fatalf("outcome %q, err %v", oc, err)
+	}
+	got := gittest.Run(t, bare, "show", "main:.ard/7/plan.md")
+	if !strings.Contains(got, "v2") || strings.Contains(got, "v1") {
+		t.Errorf("Requirements reverted on main:\n%s", got)
+	}
+	if !strings.Contains(got, "## Implementation\nsteps") {
+		t.Errorf("job's Implementation section missing:\n%s", got)
 	}
 }

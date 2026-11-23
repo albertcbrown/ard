@@ -89,6 +89,7 @@ type fakeCommitter struct {
 	counter  *int
 	failAt   int
 	err      error // returned by every call when set (permanent errors)
+	mergeErr error // returned by a call that carries a Merge func
 	calls    int
 	commits  map[string]map[string]string // sha -> path -> content ("" + deleted marker)
 	branches []string
@@ -111,6 +112,11 @@ func (c *fakeCommitter) Commit(ctx context.Context, branch string, req committer
 	}
 	if c.err != nil {
 		return committer.Result{}, c.err
+	}
+	for _, f := range req.Files {
+		if c.mergeErr != nil && f.Merge != nil {
+			return committer.Result{}, c.mergeErr
+		}
 	}
 	c.reqs = append(c.reqs, req)
 	c.branches = append(c.branches, branch)
