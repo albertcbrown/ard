@@ -84,8 +84,8 @@ func loopNames(loops []controller.Loop) []string {
 }
 
 // knownLoops are the names registerLoops' loops report (Loop.Name), in the
-// order they register. "budget" is the claim gate: it is built into the pool
-// whatever --loops says, so naming it selects no loop of its own.
+// order they register. "budget" selects the status-issue notice loop; the
+// claim gate itself is built into the pool whatever --loops says.
 var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", janitor.Name, "reaper", "budget"}
 
 // selectLoops keeps the loops named in want, in registration order; an empty
@@ -434,7 +434,7 @@ func (w *wiring) Pool() *pool.Pool {
 
 // registerLoops returns the loops to run: the scanners loop (#23), the stale
 // closer (#25), the triage loop (#29), the worker loop (#33), the reviewer loop
-// (#35) and the Reaper (#37) and the costs loop (#172) so far. Loops that run jobs build their executor
+// (#35) and the Reaper (#37) the costs loop (#172) and the budget notice loop (#237) so far. Loops that run jobs build their executor
 // with w.newExecutor(), end jobs through w.finisher() and share w.closer(). The
 // merger loop adds one constructor call here. It is a variable so tests can observe wiring.
 var registerLoops = func(w *wiring) []controller.Loop {
@@ -458,6 +458,7 @@ var registerLoops = func(w *wiring) []controller.Loop {
 	}
 	loops = append(loops, costs.New(costs.Deps{Store: w.Store, Reader: w.Reader, Effects: w.Effects,
 		Repo: w.Repo, Locks: &w.bodyLocks, Log: w.Log}))
+	loops = append(loops, budgetLoop(w))
 	return loops
 }
 

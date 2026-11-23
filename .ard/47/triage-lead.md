@@ -1,16 +1,19 @@
 ---
 role: lead
-status: needs-human
+status: done
 attempt: 1
+next: [triage:engineer]
+worker: engineer
 ---
-The request is clear and its open questions are settled: add a starter lts scanner role under internal/roles. However, the only worker role here, engineer, cannot finish it, so a maintainer must decide how this work gets done before it is routed.
+Adds a starter lts scanner role under internal/roles (a sh script with jq programs, a products table, a pinned tool Dockerfile, tests and proposal updates). The previous run stopped because the worker had no network to fetch the inputs. A maintainer has since committed the real endoflife.date fixtures and the yq version and checksums under internal/roles/testdata/lts/, so the rest can go to the engineer.
 
 ## Routing
-None.
+- triage:engineer: turn the settled design into implementation steps and a test plan that build on the committed fixtures and pin.
+- worker engineer: the scanner script, jq programs, products table, role Dockerfile, Go tests and docs updates.
 
 ## Open issues
-- The change depends on inputs that only a session with network access and Docker can produce: real endoflife.date API fixtures captured from the live service, and SHA-256 checksums for the pinned yq release taken from its published checksums file. The plan forbids inventing either. ard's engineer worker has no network access, so it would either stall or fabricate them.
-- The change also edits merge-protected paths: the root Dockerfile, files under deploy/, and CLAUDE.md. That is allowed, but the pull request will wait for a human approval.
-- Option 1: a maintainer does the work by hand, which matches how the issue itself describes the flow.
-- Option 2: a maintainer first commits the real API fixtures under internal/roles/testdata/lts/api/ and the yq version and checksums, then relabels the issue for triage. ard can then route the rest (the sh and jq scanner, Go tests, proposal and CLAUDE.md updates) to triage:engineer and the engineer worker.
-- Several sibling scanner issues edit the same starter lists, so whichever pull request lands second needs a small rebase.
+- The committed capture record says the Alpine slug is alpine-linux, not alpine. The starter products table and the tests must use alpine-linux.
+- The worker has no network or Docker. It cannot run the integration-tagged tests or the image test, and it cannot regenerate fixtures. A maintainer must run those by hand before merge. The fixture capture date, not a live fetch, fixes the expected results.
+- The change touches merge-protected paths (the root Dockerfile, files under deploy/, and CLAUDE.md), so the pull request will wait for a human approval.
+- Sibling scanner issues edit the same starter lists, so whichever pull request lands second needs a small rebase.
+- Adding lts to the repository's own .ard/ directory is a separate change that a human must make.

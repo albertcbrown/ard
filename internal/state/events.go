@@ -34,6 +34,11 @@ const (
 	// review re-runs; data has pr, head and reviewed. Stage is review and role
 	// is the reviewer role. One per head: it stops the merger from looping.
 	EventReviewRerequest = "review_rerequest"
+	// EventBudgetCapped: the budget loop posted the status-issue notice for a
+	// reached daily cap; data has scope ("repo" or "role"), stage, role, day
+	// (2006-01-02, UTC), spent_usd, cap_usd and unpriced. It is also the
+	// marker that stops a second notice for the same scope and day.
+	EventBudgetCapped = "budget_capped"
 )
 
 // Event is one row of the append-only event log. Data holds structured fields
