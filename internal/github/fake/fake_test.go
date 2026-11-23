@@ -248,3 +248,73 @@ func TestCreateReviewThenListAndFail(t *testing.T) {
 		t.Errorf("non-PR err = %v", err)
 	}
 }
+
+func TestRequiredChecksAndCheckRuns(t *testing.T) {
+	ctx := context.Background()
+	f := fake.New()
+	got, err := f.RequiredChecks(ctx, "main")
+	if err != nil || !got.Available || len(got.Checks) != 0 {
+		t.Fatalf("default = %+v, %v", got, err)
+	}
+	f.SetRequiredChecks("main", github.RequiredCheck{Context: "build"})
+	if got, _ = f.RequiredChecks(ctx, "main"); !got.Available || len(got.Checks) != 1 || got.Checks[0].Context != "build" {
+		t.Errorf("seeded = %+v", got)
+	}
+	f.SetRulesUnavailable("main")
+	if got, err = f.RequiredChecks(ctx, "main"); err != nil || got.Available {
+		t.Errorf("unavailable = %+v, %v", got, err)
+	}
+	if rs, err := f.ListCheckRuns(ctx, "s1"); err != nil || len(rs) != 0 {
+		t.Errorf("default runs = %+v, %v", rs, err)
+	}
+	f.SetCheckRuns("s1", github.CheckRun{Name: "build", Status: "completed", Conclusion: "success"})
+	if rs, _ := f.ListCheckRuns(ctx, "s1"); len(rs) != 1 || rs[0].Name != "build" {
+		t.Errorf("seeded runs = %+v", rs)
+	}
+}
+
+func TestUpdateBranchDirtyAndClean(t *testing.T) {
+	ctx := context.Background()
+	f := fake.New()
+	n := f.SeedPR(github.PullRequest{Title: "p", HeadRef: "b", HeadSHA: "h1", BaseRef: "main"})
+	f.SetMergeableState(n, "dirty")
+	if err := f.UpdateBranch(ctx, n, "h1"); !errors.Is(err, github.ErrConflict) {
+		t.Fatalf("dirty err = %v", err)
+	}
+	if pr, _ := f.GetPR(ctx, n); pr.HeadSHA != "h1" {
+		t.Errorf("head moved on conflict: %s", pr.HeadSHA)
+	}
+	f.SetMergeableState(n, "behind")
+	if err := f.UpdateBranch(ctx, n, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if pr, _ := f.GetPR(ctx, n); pr.MergeableState != "clean" {
+		t.Errorf("state = %q, want clean", pr.MergeableState)
+	}
+}
+
+func TestMergeClosesLinkedIssues(t *testing.T) {
+	ctx := context.Background()
+	f := fake.New()
+	a := f.SeedIssue(github.Issue{Title: "a", State: github.StateOpen})
+	b := f.SeedIssue(github.Issue{Title: "b", State: github.StateOpen})
+	other := f.SeedPR(github.PullRequest{Title: "o", HeadRef: "o", HeadSHA: "o1", BaseRef: "dev", Body: fmt.Sprintf("Closes #%d", b)})
+	pr := f.SeedPR(github.PullRequest{Title: "p", HeadRef: "p", HeadSHA: "p1", BaseRef: "main", Body: fmt.Sprintf("Closes #%d\n\nmore", a)})
+	if _, err := f.MergePR(ctx, other, github.MergeInput{SHA: "o1"}); err != nil {
+		t.Fatal(err)
+	}
+	if is, _ := f.GetIssue(ctx, b); is.State != github.StateOpen {
+		t.Errorf("non-main merge closed #%d", b)
+	}
+	if _, err := f.MergePR(ctx, pr, github.MergeInput{SHA: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	is, _ := f.GetIssue(ctx, a)
+	if is.State != github.StateClosed || is.StateReason != github.ReasonCompleted {
+		t.Errorf("issue = %+v", is)
+	}
+	tl, _ := f.ListTimeline(ctx, a)
+	if len(tl) == 0 || tl[len(tl)-1].Event != "closed" {
+		t.Errorf("timeline = %+v", tl)
+	}
+}

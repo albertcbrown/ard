@@ -49,7 +49,7 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clienttest.Run(t, func(t *testing.T) github.Client { return c },
+	opts := []clienttest.Option{
 		// Real GitHub's label and state filters lag a write by ~20 s.
 		clienttest.WithEventualConsistency(60*time.Second, 3*time.Second),
 		clienttest.WithPR(func(t *testing.T, c github.Client) (int, string) {
@@ -64,7 +64,17 @@ func TestIntegration(t *testing.T) {
 				t.Logf("cleanup: close pinned issue %d: %v", n, err)
 			}
 		}),
-	)
+	}
+	if rc := os.Getenv("ARD_IT_REQUIRED_CHECK"); rc != "" {
+		opts = append(opts, clienttest.WithRequiredCheck(rc))
+	}
+	// ard-scratch is private on a free plan: its rules API answers 403
+	// "Upgrade to GitHub Pro", which RequiredChecks reports as unavailable.
+	// Set ARD_IT_RULES_UNAVAILABLE=1 for such a repository.
+	if os.Getenv("ARD_IT_RULES_UNAVAILABLE") != "" {
+		opts = append(opts, clienttest.WithRulesUnavailable())
+	}
+	clienttest.Run(t, func(t *testing.T) github.Client { return c }, opts...)
 }
 
 // unpinIssue unpins issue n with the GraphQL unpinIssue mutation, logging any
