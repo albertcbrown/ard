@@ -11,6 +11,7 @@ import (
 // IssueView is an open scanner issue as reconcile and grouping see it.
 type IssueView struct {
 	Number    int
+	Title     string
 	Labels    []string
 	CreatedAt time.Time
 	Body      string

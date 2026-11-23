@@ -82,6 +82,9 @@ var kindOverrideKeys = map[Kind]map[string]bool{
 // applyOverrides merges the global role defaults and each overrides entry
 // into the discovered roles, and cross-references role names and sidecar
 // keys against what actually exists.
+// minLLMScannerEvery is the shortest interval for an LLM scanner.
+const minLLMScannerEvery = 24 * time.Hour
+
 func applyOverrides(res *Resolved, raw rawConfig, discovered []Role, cfgPath string) Errors {
 	var errs Errors
 
@@ -121,6 +124,18 @@ func applyOverrides(res *Resolved, raw rawConfig, discovered []Role, cfgPath str
 			continue
 		}
 		applyOverride(res, &roles[idx], ov, keyRef, cfgPath, triageNames, reviewerNames, &errs)
+	}
+
+	// An LLM scanner spends money on every run, so its budget and interval
+	// must be set explicitly.
+	for i := range roles {
+		if !roles[i].LLMScanner() {
+			continue
+		}
+		keyRef := overrideKeyRef("scanners/" + roles[i].Name)
+		if roles[i].Every < minLLMScannerEvery {
+			errs = append(errs, &Error{File: cfgPath, Key: keyRef + ".every", Msg: "an LLM scanner needs every of at least 24h (each run spends money)"})
+		}
 	}
 
 	// Each plan.md section has one owner.
@@ -178,6 +193,9 @@ func applyRoleDefaults(res *Resolved, role *Role) {
 	switch role.Kind {
 	case KindScanner:
 		role.Every = time.Duration(res.Intervals.Scanners)
+		if role.LLMScanner() && role.Every < minLLMScannerEvery {
+			role.Every = minLLMScannerEvery
+		}
 		role.MaxOpen = defaultScannerMaxOpen
 		role.GroupSize = defaultScannerGroupSize
 		role.Autoclose = role.ScanPath != ""
@@ -374,6 +392,9 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 		role.Timeout = time.Duration(*ov.timeout)
 	}
 	if ov.maxBudgetUSD != nil {
+		if *ov.maxBudgetUSD <= 0 && role.LLMScanner() {
+			*errs = append(*errs, &Error{File: cfgPath, Key: keyRef + ".max_budget_usd", Msg: "an LLM scanner needs max_budget_usd greater than 0"})
+		}
 		role.MaxBudgetUSD = *ov.maxBudgetUSD
 	}
 	if ov.budgetPerDay != nil {
@@ -392,6 +413,9 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 		role.GroupSize = *ov.groupSize
 	}
 	if ov.autoclose != nil {
+		if *ov.autoclose && role.LLMScanner() {
+			*errs = append(*errs, &Error{File: cfgPath, Key: keyRef + ".autoclose", Msg: "an LLM scanner never closes an issue for absence; autoclose is valid only for a scanner with a scan executable"})
+		}
 		role.Autoclose = *ov.autoclose
 	}
 	if ov.route != nil {
