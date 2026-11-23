@@ -717,20 +717,45 @@ func (h *HTTP) ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error
 }
 
 func (h *HTTP) ListCommitStatuses(ctx context.Context, sha string) ([]CommitStatus, error) {
+	// The list endpoint, not the combined status: only it carries each
+	// status's creator, which a rule pinned to an App needs. It returns every
+	// status newest first, so the first per context is the latest.
 	opts := &gogh.ListOptions{PerPage: 100}
 	items, err := paginate(0, func(page int) ([]CommitStatus, int, error) {
 		opts.Page = page
-		res, resp, err := h.gh.Repositories.GetCombinedStatus(ctx, h.o(), h.r(), sha, opts)
+		res, resp, err := h.gh.Repositories.ListStatuses(ctx, h.o(), h.r(), sha, opts)
 		if err != nil {
 			return nil, 0, err
 		}
-		out := make([]CommitStatus, len(res.Statuses))
-		for i, s := range res.Statuses {
+		out := make([]CommitStatus, len(res))
+		for i, s := range res {
 			out[i] = CommitStatus{Context: s.GetContext(), State: s.GetState(), UpdatedAt: s.GetUpdatedAt().Time, Creator: s.GetCreator().GetLogin(), CreatorType: s.GetCreator().GetType()}
 		}
 		return out, nextPage(resp), nil
 	})
-	return items, h.fail(ctx, fmt.Sprintf("list commit statuses of %s", sha), 0, err)
+	if err != nil {
+		return nil, h.fail(ctx, fmt.Sprintf("list commit statuses of %s", sha), 0, err)
+	}
+	return latestPerContext(items), nil
+}
+
+// latestPerContext keeps each context's newest status. Statuses arrive newest
+// first, but UpdatedAt decides, so the order of pages never matters.
+func latestPerContext(all []CommitStatus) []CommitStatus {
+	idx := map[string]int{}
+	var out []CommitStatus
+	for _, s := range all {
+		i, seen := idx[s.Context]
+		if !seen {
+			idx[s.Context] = len(out)
+			out = append(out, s)
+			continue
+		}
+		if s.UpdatedAt.After(out[i].UpdatedAt) {
+			out[i] = s
+		}
+	}
+	return out
 }
 
 func (h *HTTP) AppID(ctx context.Context, slug string) (int64, error) {

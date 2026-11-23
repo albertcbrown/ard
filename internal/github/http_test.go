@@ -941,25 +941,43 @@ func TestListCommitStatusesPaginates(t *testing.T) {
 	var base string
 	s := newStubAPI(t, nil)
 	s.routes = map[string]http.HandlerFunc{
-		"GET /repos/o/r/commits/abc/status": func(w http.ResponseWriter, r *http.Request) {
+		"GET /repos/o/r/commits/abc/statuses": func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("page") == "2" {
-				fmt.Fprint(w, `{"state":"pending","statuses":[{"context":"lint","state":"pending"}]}`)
+				// An older jenkins status and the only lint status.
+				fmt.Fprint(w, `[{"context":"continuous-integration/jenkins/pr-merge","state":"pending","updated_at":"2026-01-02T03:00:00Z","creator":{"login":"jenkins-app[bot]","type":"Bot"}},{"context":"lint","state":"pending","creator":{"login":"someone","type":"User"}}]`)
 				return
 			}
-			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/commits/abc/status?page=2>; rel="next"`, base))
-			fmt.Fprint(w, `{"state":"pending","statuses":[{"context":"continuous-integration/jenkins/pr-merge","state":"success","updated_at":"2026-01-02T03:04:05Z","creator":{"login":"jenkins-app[bot]","type":"Bot"}}]}`)
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/commits/abc/statuses?page=2>; rel="next"`, base))
+			fmt.Fprint(w, `[{"context":"continuous-integration/jenkins/pr-merge","state":"success","updated_at":"2026-01-02T03:04:05Z","creator":{"login":"jenkins-app[bot]","type":"Bot"}}]`)
 		},
 	}
 	base = s.URL
 	got, err := newTestHTTP(t, s, nil).ListCommitStatuses(context.Background(), "abc")
-	want := []CommitStatus{{Context: "continuous-integration/jenkins/pr-merge", State: "success", UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Creator: "jenkins-app[bot]", CreatorType: "Bot"}, {Context: "lint", State: "pending"}}
+	want := []CommitStatus{
+		{Context: "continuous-integration/jenkins/pr-merge", State: "success", UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Creator: "jenkins-app[bot]", CreatorType: "Bot"},
+		{Context: "lint", State: "pending", Creator: "someone", CreatorType: "User"},
+	}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("statuses = %+v, %v", got, err)
 	}
 
-	s2 := newStubAPI(t, map[string]http.HandlerFunc{"GET /repos/o/r/commits/abc/status": respond(403, `{"message":"Resource not accessible by integration"}`)})
+	s2 := newStubAPI(t, map[string]http.HandlerFunc{"GET /repos/o/r/commits/abc/statuses": respond(403, `{"message":"Resource not accessible by integration"}`)})
 	if _, err := newTestHTTP(t, s2, nil).ListCommitStatuses(context.Background(), "abc"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestLatestPerContext(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	got := latestPerContext([]CommitStatus{
+		{Context: "a", State: "pending", UpdatedAt: t0},
+		{Context: "b", State: "success", UpdatedAt: t0},
+		{Context: "a", State: "success", UpdatedAt: t0.Add(time.Minute)},
+		{Context: "a", State: "failure", UpdatedAt: t0.Add(-time.Minute)},
+	})
+	want := []CommitStatus{{Context: "a", State: "success", UpdatedAt: t0.Add(time.Minute)}, {Context: "b", State: "success", UpdatedAt: t0}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
 	}
 }
 
