@@ -63,6 +63,8 @@ type redactYAML struct {
 type gitleaksYAML struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`
+
+	BlockAutocloseWhenMissing bool `yaml:"block_autoclose_when_missing"`
 }
 
 type sidecarYAML struct {
@@ -88,6 +90,7 @@ type roleYAML struct {
 	MaxOpen   int      `yaml:"max_open,omitempty"`
 	GroupSize int      `yaml:"group_size,omitempty"`
 	Autoclose bool     `yaml:"autoclose,omitempty"`
+	Route     string   `yaml:"route,omitempty"`
 
 	After       []string `yaml:"after,omitempty"`
 	PlanSection string   `yaml:"plan_section,omitempty"`
@@ -133,7 +136,7 @@ func (r *Resolved) render() resolvedYAML {
 			InactiveFor: r.Stale.InactiveFor,
 			SuppressFor: r.Stale.SuppressFor,
 		},
-		Redact:   redactYAML{Gitleaks: gitleaksYAML{Enabled: r.Redact.Gitleaks.Enabled, Path: r.Redact.Gitleaks.Path}},
+		Redact:   redactYAML{Gitleaks: gitleaksYAML{Enabled: r.Redact.Gitleaks.Enabled, Path: r.Redact.Gitleaks.Path, BlockAutocloseWhenMissing: r.Redact.Gitleaks.BlockAutocloseWhenMissing}},
 		Sidecars: map[string]sidecarYAML{},
 	}
 	for name, sc := range r.Sidecars {
@@ -156,6 +159,7 @@ func (r *Resolved) render() resolvedYAML {
 			MaxOpen:         role.MaxOpen,
 			GroupSize:       role.GroupSize,
 			Autoclose:       role.Autoclose,
+			Route:           string(role.Route),
 			After:           role.After,
 			PlanSection:     role.PlanSection,
 			Tests:           role.Tests,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
+	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state/scannerdb"
 )
 
@@ -38,6 +40,15 @@ type Pipeline struct {
 	BodyLocks *costblock.Locks
 	Log       *slog.Logger
 	Now       func() time.Time
+	// GuardScanners overrides the pre-filing guard's passes. Tests only. nil
+	// (production) = base redact.Builtin(), optional
+	// redact.Gitleaks(redact.GitleaksOptions{Path: cfg.Redact.Gitleaks.Path})
+	// when cfg.Redact.Gitleaks.Enabled, else no optional pass. There is no way
+	// to turn the guard off.
+	GuardScanners func(cfg *config.Resolved) (base, optional redact.Scanner)
+	// Secrets returns the controller's known values. nil (production) =
+	// redact.FromEnviron(os.Environ()), read every run.
+	Secrets func() *redact.Secrets
 }
 
 // RunResult summarises one run.
@@ -55,6 +66,52 @@ type RunResult struct {
 	Closed     int
 	Deferred   int // closes or edits skipped for a hold or a running job
 	OverBudget int
+
+	// GuardRule and GuardField are the first guard hit's rule and field, or
+	// "scan-error" and "" when a guard pass failed.
+	GuardRule, GuardField string
+}
+
+// routeLabel maps a route to the label its issues are filed with.
+func routeLabel(r config.Route) (label string, ok bool) {
+	switch r {
+	case config.RoutePending:
+		return labels.Pending, true
+	case config.RouteNone:
+		return "", true
+	case config.RouteNeedsHuman:
+		return labels.NeedsHuman, true
+	}
+	return "", false
+}
+
+// guardPasses returns the guard's base and optional scanners.
+func (p *Pipeline) guardPasses(cfg *config.Resolved) (base, optional redact.Scanner) {
+	if p.GuardScanners != nil {
+		return p.GuardScanners(cfg)
+	}
+	if cfg.Redact.Gitleaks.Enabled {
+		optional = redact.Gitleaks(redact.GitleaksOptions{Path: cfg.Redact.Gitleaks.Path})
+	}
+	return redact.Builtin(), optional
+}
+
+func (p *Pipeline) secrets() *redact.Secrets {
+	if p.Secrets != nil {
+		return p.Secrets()
+	}
+	return redact.FromEnviron(os.Environ())
+}
+
+// passFailure logs a failed guard pass. Only redact errors, which carry no
+// scanned text, are logged.
+func passFailure(log *slog.Logger, pass string, err error, extra ...any) {
+	reason := "error"
+	if errors.Is(err, context.DeadlineExceeded) {
+		reason = "timeout"
+	}
+	args := append([]any{"rule", "scan-error", "pass", pass, "reason", reason, "error", err.Error()}, extra...)
+	log.Warn("scanner.guard_failed", args...)
 }
 
 func (p *Pipeline) now() time.Time {
@@ -121,6 +178,13 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 			"regressions", res.Regress, "suppressed", res.Suppressed, "joined", res.Joined, "created", res.Created,
 			"closed", res.Closed, "edited", res.Edited, "deferred", res.Deferred, "over_budget", res.OverBudget,
 			"duration", p.now().Sub(start).String())
+	}
+
+	routeLbl, routeOK := routeLabel(role.Route)
+	if !routeOK {
+		log.Warn("scanner.bad_route", "route", string(role.Route))
+		record(OutcomeError)
+		return res, nil
 	}
 
 	// 1. Backpressure, before the scanner starts.
@@ -240,14 +304,65 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 	}
 	res.Found = len(sr.Findings)
 
+	// The pre-filing guard must stay between Engine.Scan and the first use of sr.Findings, for every engine (#204).
+	base, optional := p.guardPasses(cfg)
+	gr, gerr := CheckFindings(ctx, sr.Findings, base, optional, p.secrets())
+	closeOnly := false
+	switch {
+	case gerr != nil && ctx.Err() != nil:
+		return res, errors.Join(append(errs, fmt.Errorf("scanner %s: guard: %w", role.Name, gerr))...)
+	case gerr != nil:
+		passFailure(log, "builtin", gerr)
+		res.GuardRule = "scan-error"
+		record(OutcomeScanFailed)
+		return res, errors.Join(errs...)
+	case len(gr.Hits) > 0:
+		for i, h := range gr.Hits {
+			if i == 20 {
+				break
+			}
+			log.Warn("scanner.guard_flagged", "finding", h.Index, "field", h.Field, "rule", h.Rule)
+		}
+		log.Warn("scanner.guard_flagged_total", "hits", len(gr.Hits))
+		res.GuardRule, res.GuardField = gr.Hits[0].Rule, gr.Hits[0].Field
+		record(OutcomeScanFailed)
+		return res, errors.Join(errs...)
+	case gr.OptionalErr != nil:
+		blocked := cfg.Redact.Gitleaks.BlockAutocloseWhenMissing || !role.Autoclose
+		allowed := "allowed"
+		if blocked {
+			allowed = "blocked"
+		}
+		passFailure(log, "gitleaks", gr.OptionalErr, "autoclose", allowed)
+		res.GuardRule = "scan-error"
+		if blocked {
+			record(OutcomeScanFailed)
+			return res, errors.Join(errs...)
+		}
+		closeOnly = true
+	}
+
 	// 4. Diff.
 	plan := Diff(snap, sr.Findings, role.Autoclose, start)
 	res.New, res.Regress, res.Suppressed = len(plan.New), len(plan.Regress), len(plan.Suppressed)
 
-	ex := &execution{p: p, ctx: ctx, role: role, sha: sr.SHA, now: start, store: store, snap: &snap, log: log, res: &res, dry: dry}
+	ex := &execution{p: p, ctx: ctx, role: role, sha: sr.SHA, now: start, store: store, snap: &snap, log: log, res: &res, dry: dry, routeLbl: routeLbl, closeOnly: closeOnly}
 	ex.byNumber = map[int]IssueView{}
 	for _, v := range views {
 		ex.byNumber[v.Number] = v
+	}
+
+	if closeOnly {
+		// Gitleaks could not run: only close issues whose lines are all gone.
+		// Nothing from this run's findings is written.
+		ex.edits(plan, views)
+		errs = append(errs, ex.errs...)
+		if len(ex.errs) > 0 {
+			record(OutcomeError)
+		} else {
+			record(OutcomeScanFailed)
+		}
+		return res, errors.Join(errs...)
 	}
 
 	// 6. Execute: edits, joins, creates. (Persist is folded in: each step
@@ -307,7 +422,10 @@ type execution struct {
 	res    *RunResult
 	dry    bool
 	budget int
-	errs   []error
+
+	routeLbl  string // the route's label; "" under route none
+	closeOnly bool   // the guard's optional pass failed: only close, write nothing from findings
+	errs      []error
 
 	byNumber map[int]IssueView
 }
@@ -354,7 +472,7 @@ func (e *execution) fetch(n int) (cur issueNow, ok bool, err error) {
 		for _, r := range rows {
 			p.Lines = append(p.Lines, Line{Checked: r.Status == StatusGone, Title: r.Fingerprint, Fingerprint: r.Fingerprint, Severity: Severity(r.Severity)})
 		}
-		return issueNow{Number: n, Labels: []string{labels.Scanner(e.role.Name), labels.Pending}, Parsed: p}, true, nil
+		return issueNow{Number: n, Labels: e.roleLabels(), Parsed: p}, true, nil
 	}
 	is, err := e.p.Reader.GetIssue(e.ctx, n)
 	switch {
@@ -368,6 +486,15 @@ func (e *execution) fetch(n int) (cur issueNow, ok bool, err error) {
 	return issueNow{Number: n, Labels: is.Labels, Body: is.Body, Parsed: ParseBody(is.Body)}, true, nil
 }
 
+// roleLabels is the label set a new issue of this scanner is filed with.
+func (e *execution) roleLabels() []string {
+	l := []string{labels.Scanner(e.role.Name)}
+	if e.routeLbl != "" {
+		l = append(l, e.routeLbl)
+	}
+	return l
+}
+
 func isRunning(lbls []string) bool {
 	for _, l := range lbls {
 		if p, ok := labels.Parse(l); ok && p.Kind == labels.KindRole && p.State == labels.StateRunning {
@@ -377,25 +504,36 @@ func isRunning(lbls []string) bool {
 	return false
 }
 
-// joinableIssue reports whether an issue is open, unclaimed and in group: it
-// carries the scanner's label and ard:pending and no other ard: label.
-func joinableIssue(lbls []string, scanner string, p Parsed, group string) bool {
-	if !hasLabel(lbls, labels.Scanner(scanner)) || !hasLabel(lbls, labels.Pending) || !p.HasSpan || p.Group != group {
+// joinableIssue reports whether an issue is open, unclaimed and in group: its
+// ard: labels are exactly the scanner's label plus the route's label (none
+// under route none). Any other ard: label (pending under another route, hold,
+// a running label) means a human or a role has claimed it.
+func joinableIssue(lbls []string, scanner, routeLbl string, p Parsed, group string) bool {
+	if !p.HasSpan || p.Group != group {
 		return false
 	}
+	want := map[string]bool{strings.ToLower(labels.Scanner(scanner)): true}
+	if routeLbl != "" {
+		want[strings.ToLower(routeLbl)] = true
+	}
+	have := map[string]bool{}
 	for _, l := range lbls {
 		lower := strings.ToLower(l)
-		if strings.HasPrefix(lower, labels.Prefix) && lower != strings.ToLower(labels.Scanner(scanner)) && lower != labels.Pending {
+		if !strings.HasPrefix(lower, labels.Prefix) {
+			continue
+		}
+		if !want[lower] {
 			return false
 		}
+		have[lower] = true
 	}
-	return true
+	return len(have) == len(want)
 }
 
 func (e *execution) joinable(views []IssueView, synth map[int][]Row) []Joinable {
 	var out []Joinable
 	for _, v := range views {
-		if v.Parsed.Group != "" && joinableIssue(v.Labels, e.role.Name, v.Parsed, v.Parsed.Group) {
+		if v.Parsed.Group != "" && joinableIssue(v.Labels, e.role.Name, e.routeLbl, v.Parsed, v.Parsed.Group) {
 			out = append(out, Joinable{Number: v.Number, Group: v.Parsed.Group, Lines: len(v.Parsed.Lines)})
 		}
 	}
@@ -432,12 +570,18 @@ func (e *execution) edits(plan Plan, views []IssueView) {
 		}
 	}
 	for _, f := range plan.Resurface {
+		if e.closeOnly {
+			break
+		}
 		if r := e.snap.Rows[f.Fingerprint]; r.Issue != 0 {
 			g := get(r.Issue)
 			g.resurface = append(g.resurface, f.Fingerprint)
 		}
 	}
 	for _, f := range plan.Seen {
+		if e.closeOnly {
+			break
+		}
 		if r := e.snap.Rows[f.Fingerprint]; r.Issue != 0 && r.Severity != string(f.Severity) {
 			get(r.Issue).rerate[f.Fingerprint] = f.Severity
 		}
@@ -519,6 +663,9 @@ func (e *execution) editIssue(n int, ed *edit) {
 		touch(fp, func(l *Line, r *Row) { l.Severity = sev; r.Severity = string(sev) })
 	}
 	cur.Parsed.Lines = lines
+	if e.closeOnly && !allChecked(lines) {
+		return // an issue is only ticked when it is about to be closed
+	}
 	if len(puts) > 0 {
 		body := RenderBody(cur.Body, cur.Parsed, nil)
 		if body != cur.Body || n < 0 {
@@ -613,7 +760,7 @@ func (e *execution) join(op GroupOp) bool {
 		e.fail(err)
 		return true
 	}
-	if !ok || !joinableIssue(cur.Labels, e.role.Name, cur.Parsed, op.Group) {
+	if !ok || !joinableIssue(cur.Labels, e.role.Name, e.routeLbl, cur.Parsed, op.Group) {
 		return false
 	}
 	have := map[string]bool{}
@@ -688,7 +835,7 @@ func (e *execution) create(op GroupOp) {
 	parsed := Parsed{Scanner: e.role.Name, Group: op.Group, HasSpan: true, Lines: linesOf(op.Items)}
 	title := IssueTitle(e.role.Name, op.Group, e.p.groupSize(e.role), op.Items)
 	body := RenderBody("", parsed, findingsOf(op.Items))
-	is, err := e.p.Effects.CreateIssue(e.ctx, github.NewIssue{Title: title, Body: body, Labels: []string{labels.Scanner(e.role.Name), labels.Pending}})
+	is, err := e.p.Effects.CreateIssue(e.ctx, github.NewIssue{Title: title, Body: body, Labels: e.roleLabels()})
 	if err != nil {
 		e.fail(fmt.Errorf("create issue %q: %w", title, err))
 		return

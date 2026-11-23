@@ -174,6 +174,9 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 	if raw.gitleaksEnabled != nil {
 		res.Redact.Gitleaks.Enabled = *raw.gitleaksEnabled
 	}
+	if raw.gitleaksBlockAutoclose != nil {
+		res.Redact.Gitleaks.BlockAutocloseWhenMissing = *raw.gitleaksBlockAutoclose
+	}
 	if raw.gitleaksPath != nil {
 		if strings.TrimSpace(*raw.gitleaksPath) == "" {
 			errs = append(errs, &Error{File: cfgPath, Key: "redact.gitleaks.path", Msg: "must not be empty"})
