@@ -112,22 +112,30 @@ designed. Follow-ups: #156 (blocks stage B), #157 to #161.
 
 ## Stage B: the gate on albertcbrown/ard
 
-0. **Blocker.** `albertcbrown/ard` is public, and committed job logs still
-   contain the controller's absolute paths (`/Users/<user>/.ard/...`). Do not
-   start stage B until #156 is merged.
-1. **Starter roles.** `.ard/` on `main` has only `scanners/cve`. Run
-   `./bin/ard init --repo albertcbrown/ard` and merge its PR (Squash and
-   merge). Keep the dogfooding overrides in `.ard/config.yaml`.
-2. **Bot-commit audit.** Set the repository variable `ARD_BOT_LOGIN` to
+0. **Host paths.** Committed output must not carry the controller's absolute
+   paths, because `albertcbrown/ard` is public. #156 (merged) replaces them
+   with placeholders; run a build that includes it.
+1. **Starter roles.** `ard init` refuses without `--force` when `main`'s
+   `.ard/config.yaml` differs from the starter, and `--force` would drop the
+   dogfooding protected paths. For `albertcbrown/ard` the four agent roles and
+   their overrides were added by hand from `internal/roles/` (#167). Then run
+   `./bin/ard labels sync --repo albertcbrown/ard`.
+2. **Ruleset bypass.** If `main` has a ruleset (pull request required, required
+   status checks), add the App to its bypass list with mode **Always**
+   (Settings → Rules → the ruleset → Bypass list). Without it every
+   close-out's push to `main` fails with `GH013: Repository rule violations`
+   and the job ends `failed`. Check it with
+   `gh api repos/albertcbrown/ard/rulesets/<id> -q .bypass_actors`.
+3. **Bot-commit audit.** Set the repository variable `ARD_BOT_LOGIN` to
    `ard-bot-albertcbrown[bot]`; without it `.github/workflows/bot-commits.yml`
    fails closed.
-3. **Run** `serve` as in stage A with `--repo albertcbrown/ard`, in tmux or
+4. **Run** `serve` as in stage A with `--repo albertcbrown/ard`, in tmux or
    under launchd, and keep the log.
-4. **Feed it** one or two small issues at a time (follow-ups and small
+5. **Feed it** one or two small issues at a time (follow-ups and small
    Phase 2 items), each with `ard:pending`. Read each `plan.md` before adding
    `ard:approved`.
-5. **Merge by hand.** Note whether you edited the code before merging.
-6. **Record** one row per issue (below) as each PR merges or is abandoned.
+6. **Merge by hand.** Note whether you edited the code before merging.
+7. **Record** one row per issue (below) as each PR merges or is abandoned.
 
 ## Measuring
 
