@@ -6,6 +6,8 @@
 # stage on $BUILDPLATFORM (Go cross-compiles, per-arch binaries are downloaded
 # with checksums), and the final stage only copies files in.
 #
+# The base is trixie, not bookworm: git 2.39 breaks the committer's fetches (#163).
+#
 # Tool versions and checksums are the cve scanner's
 # (internal/roles/scanners/cve/Dockerfile); keep them in step.
 #
@@ -13,7 +15,7 @@
 #     --build-arg VERSION=$(git describe --tags --always) \
 #     --build-arg REVISION=$(git rev-parse HEAD) .
 
-ARG GO_IMAGE=golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
+ARG GO_IMAGE=golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 ARG TARGETOS
