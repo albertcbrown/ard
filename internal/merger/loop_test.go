@@ -405,9 +405,9 @@ func TestUpdateBranchChangesInvalidateNothingButCodeAfterReviewDoes(t *testing.T
 	// A code push on top of the update after the review needs a new review.
 	head := h.commit(p.branch, "extra.go", "package x\n")
 	h.gh.SetHeadSHA(p.n, head)
-	h.settle()
-	out := h.mustTick()
-	if h.merged(p.n) || !strings.Contains(out, "merge.reviews_stale") {
+	h.settle() // the first tick finds the review stale and re-requests it
+	out := h.logs.String()
+	if h.merged(p.n) || !strings.Contains(out, "merge.reviews_stale") || h.rerequests() != 1 {
 		t.Fatalf("merged = %v\n%s", h.merged(p.n), out)
 	}
 }
@@ -715,4 +715,107 @@ func readLedger(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func (h *harness) rerequests() int {
+	evs, err := h.store.Events(context.Background(), state.EventFilter{Kind: state.EventReviewRerequest})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return len(evs)
+}
+
+func (h *harness) restoreDone(n int) {
+	h.t.Helper()
+	if err := h.gh.AddLabels(context.Background(), n, labels.Done(labels.StageReview, reviewer)); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func TestStaleReviewRerequestedOncePerHead(t *testing.T) {
+	h := newHarness(t)
+	p := h.newPR()
+	h.settle()
+	h.gh.SetHeadSHA(p.n, h.commit(p.branch, "later.go", "package x\n"))
+	out := h.mustTick()
+	if !strings.Contains(out, "merge.review_rerequested") || strings.Contains(out, "fix rounds (#41)") {
+		t.Fatalf("log:\n%s", out)
+	}
+	if len(h.calls("RemoveLabel")) != 1 || h.has(p.n, labels.Done(labels.StageReview, reviewer)) || h.rerequests() != 1 {
+		t.Fatalf("removes = %d events = %d", len(h.calls("RemoveLabel")), h.rerequests())
+	}
+	// Same head, label back: nothing more.
+	h.restoreDone(p.n)
+	out = h.mustTick()
+	if strings.Contains(out, "merge.review_rerequested") || len(h.calls("RemoveLabel")) != 1 || h.rerequests() != 1 {
+		t.Fatalf("second tick re-requested again:\n%s", out)
+	}
+	// A new head with new code is a new request.
+	h.gh.SetHeadSHA(p.n, h.commit(p.branch, "later2.go", "package x\n"))
+	h.mustTick()
+	if len(h.calls("RemoveLabel")) != 2 || h.rerequests() != 2 {
+		t.Fatalf("removes = %d events = %d", len(h.calls("RemoveLabel")), h.rerequests())
+	}
+}
+
+func TestMainOnlyMoveNotRerequested(t *testing.T) {
+	h := newHarness(t)
+	p := h.newPR()
+	h.commit("main", "main_only.go", "package m\n")
+	h.updateBranch(p.n, p.branch)
+	h.settle()
+	h.mustTick()
+	if len(h.calls("RemoveLabel")) != 0 || h.rerequests() != 0 || !h.merged(p.n) {
+		t.Fatalf("removes = %d events = %d merged = %v", len(h.calls("RemoveLabel")), h.rerequests(), h.merged(p.n))
+	}
+}
+
+func TestStaleReviewDryRunWritesOnlyLedger(t *testing.T) {
+	h := newHarness(t, dryRun)
+	p := h.newPR()
+	h.gh.SetHeadSHA(p.n, h.commit(p.branch, "later.go", "package x\n"))
+	out := h.mustTick()
+	if !strings.Contains(out, "merge.would_rerequest") || strings.Contains(out, "merge.review_rerequested") {
+		t.Fatalf("log:\n%s", out)
+	}
+	if len(h.gh.Writes()) != 0 || h.rerequests() != 0 || strings.Count(readLedger(t, h.ledger), "RemoveLabel") != 1 {
+		t.Fatalf("writes = %v events = %d\nledger: %s", h.gh.Writes(), h.rerequests(), readLedger(t, h.ledger))
+	}
+}
+
+func TestRerequestSkippedWithoutDoneLabel(t *testing.T) {
+	h := newHarness(t)
+	p := h.newPR(func(s *spec) { s.labels = []string{labels.Request(labels.StageReview, reviewer)} })
+	h.gh.SetHeadSHA(p.n, h.commit(p.branch, "later.go", "package x\n"))
+	h.mustTick()
+	if len(h.calls("RemoveLabel")) != 0 || h.rerequests() != 0 {
+		t.Fatal("re-requested without a done label")
+	}
+}
+
+func TestRerequestLabelErrorRetries(t *testing.T) {
+	h := newHarness(t)
+	p := h.newPR()
+	h.gh.SetHeadSHA(p.n, h.commit(p.branch, "later.go", "package x\n"))
+	h.gh.FailNext("RemoveLabel", errBoom)
+	if _, err := h.tick(); err == nil {
+		t.Fatal("want the tick to report the failure")
+	}
+	if h.rerequests() != 0 {
+		t.Fatal("event recorded after a failed removal")
+	}
+	h.mustTick()
+	if h.rerequests() != 1 || h.has(p.n, labels.Done(labels.StageReview, reviewer)) {
+		t.Fatalf("events = %d", h.rerequests())
+	}
+}
+
+func TestNoPassingRecordNotRerequested(t *testing.T) {
+	h := newHarness(t)
+	h.newPR(func(s *spec) { s.noClaim = true })
+	out := h.mustTick()
+	if !strings.Contains(out, "no passing close-out record") || strings.Contains(out, "fix rounds (#41)") ||
+		len(h.calls("RemoveLabel")) != 0 || h.rerequests() != 0 {
+		t.Fatalf("log:\n%s", out)
+	}
 }
