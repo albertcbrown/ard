@@ -117,7 +117,7 @@ func (t *tick) maybeReady(ctx context.Context, prNumber int) {
 
 // reviewedHeads returns, per role, the head recorded by its newest claim.
 func (t *tick) reviewedHeads(ctx context.Context, issue int, roles []string) (map[string]string, error) {
-	evs, err := t.l.d.Store.Events(ctx, state.EventFilter{Kind: state.EventClaim})
+	evs, err := t.l.d.Store.Events(ctx, state.EventFilter{Kind: state.EventClaim, Issue: issue, Stage: stageReview})
 	if err != nil {
 		return nil, err
 	}

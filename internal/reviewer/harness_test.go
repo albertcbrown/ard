@@ -113,12 +113,16 @@ type fakeFin struct {
 	mu    sync.Mutex
 	calls []finishCall
 	err   error
+	after func() // runs once the call is recorded, to script the close-out's labels
 }
 
 func (f *fakeFin) FinishWith(_ context.Context, id string, h executor.Handle, _ executor.Status, _ agent.Result, o reaper.FinishOptions) (closeout.Outcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, finishCall{id, h, o})
+	if f.after != nil {
+		f.after()
+	}
 	return closeout.OutcomeChanges, f.err
 }
 

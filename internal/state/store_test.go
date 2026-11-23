@@ -414,3 +414,33 @@ func TestSetBranchAndPR(t *testing.T) {
 		t.Errorf("done job SetPR: %v", err)
 	}
 }
+
+func TestEventsFilterIssueStageRole(t *testing.T) {
+	ctx := tctx(t)
+	s, _ := newStoreClock(t, t.TempDir())
+	for _, e := range []Event{
+		{Kind: EventClaim, Issue: 1, Stage: "review", Role: "a"},
+		{Kind: EventClaim, Issue: 1, Stage: "review", Role: "b"},
+		{Kind: EventClaim, Issue: 1, Stage: "worker", Role: "a"},
+		{Kind: EventClaim, Issue: 2, Stage: "review", Role: "a"},
+	} {
+		if err := s.AppendEvent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		f    EventFilter
+		want int
+	}{
+		"any":         {EventFilter{}, 4},
+		"issue":       {EventFilter{Issue: 1}, 3},
+		"issue+stage": {EventFilter{Issue: 1, Stage: "review"}, 2},
+		"role":        {EventFilter{Issue: 1, Stage: "review", Role: "b"}, 1},
+		"none":        {EventFilter{Issue: 3}, 0},
+	} {
+		evs, err := s.Events(ctx, tc.f)
+		if err != nil || len(evs) != tc.want {
+			t.Errorf("%s: %d events, err %v, want %d", name, len(evs), err, tc.want)
+		}
+	}
+}
