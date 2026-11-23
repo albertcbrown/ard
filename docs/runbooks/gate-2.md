@@ -164,6 +164,9 @@ sqlite3 ~/.ard/state/albertcbrown/ard/_controller.db "
   FROM jobs WHERE stage != 'scanner' AND status != 'running';"
 ```
 
+A review whose PR was merged, closed or branch-deleted before close-out ends
+`stale`, not `failed`, so the query above does not count it.
+
 A usage-limit stop (`limit_stop = 1`) is not an executor failure; list them
 separately with `SELECT id, issue, fail_reason FROM jobs WHERE limit_stop = 1`.
 

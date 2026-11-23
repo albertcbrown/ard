@@ -14,6 +14,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/limits"
 	"github.com/albertcbrown/ard/internal/pool"
@@ -56,6 +57,10 @@ func (w *wiring) closer() *closeout.Closer {
 	if w.StateDir == "" {
 		staging = filepath.Join(w.ardRoot(), "closeout")
 	}
+	var getPR func(context.Context, int) (github.PullRequest, error)
+	if w.Reader != nil {
+		getPR = w.Reader.GetPR
+	}
 	w.cl = closeout.New(closeout.Deps{
 		Effects: w.Effects, Comments: w.Reader, Committer: closeoutCommitter{w}, Store: w.Store,
 		Roles: cfgRoles{w},
@@ -70,6 +75,7 @@ func (w *wiring) closer() *closeout.Closer {
 		BaseFile: func(ctx context.Context, _, rev, path string, maxBytes int64) ([]byte, bool, error) {
 			return gitx.New("").FileAt(ctx, w.Root, rev, path, maxBytes)
 		},
+		PR:         getPR,
 		Repo:       w.Repo,
 		StagingDir: staging,
 		Log:        w.Log,
