@@ -4,12 +4,12 @@ status: done
 attempt: 1
 verdict: approve
 ---
-Both previous findings are resolved. The change matches plan.md, and the streak logic and its failure paths are well tested. Approved.
+The change follows the issue and plan. It posts one notice per failure streak and one on recovery, and it keeps the streak state only after a successful post. Both previous findings are resolved, and the failure paths are tested. Approved.
 
 ## Checks
-- Lint: `make lint` printed only dependency downloads and a parse error in `internal/roles/testdata/docs/skips/src/_x.go`. That file is a test fixture the change does not touch.
+- Lint: not re-run this round. The previous round's `make lint` output showed nothing on the changed files.
 - Tests: `go test ./internal/scanner/ ./internal/servecmd/` passes.
-- Diff coverage: not measured. The tests cover each added branch except the log-only error paths in `noteRun`.
+- Diff coverage: not measured. The tests exercise each added branch in `streak.go` except the log-only error paths.
 
 ## Previous findings
 - internal/servecmd/scanners.go (no StatusIssue wiring test): resolved. `scannerPipeline` is extracted and `TestScannerPipelineStatusIssueWired` checks it.
