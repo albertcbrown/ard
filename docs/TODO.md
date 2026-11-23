@@ -47,3 +47,12 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 - #61 Janitor: prune old .ard/<issue#>/ directories
 - #63 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit
 - #64 Token caps per role, alongside #57's dollar caps
+- #183 Version every PR merge to main as vX.Y.Z
+
+## Phase 4: Docs and site
+
+- #178 User docs and a GitHub Pages site for ard
+
+## Phase 5: Distribution
+
+- #177 Install ard with Homebrew: releases and a cask
