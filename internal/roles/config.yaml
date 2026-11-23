@@ -36,6 +36,7 @@ overrides:
   # repo's test command; "" turns the test step off.
   workers/engineer: { model: claude-sonnet-5-5, timeout: 60m, tests: make test }
   reviewers/eng-review: { model: claude-sonnet-5-5 }
+  reviewers/security-review: { model: claude-opus-5-5 }
   # Runs only when a dependency manifest or lockfile changes. allowlist.txt in
   # its directory (or a sidecar's licenses/allowlist.txt) is the license policy.
   reviewers/license-review: { model: claude-sonnet-5-5, when: { paths: ["**/go.mod", "**/go.sum", "**/package.json", "**/package-lock.json", "**/npm-shrinkwrap.json"] } }
