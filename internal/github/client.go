@@ -26,6 +26,9 @@ type Reader interface {
 	// an error.
 	RequiredChecks(ctx context.Context, branch string) (RequiredChecksResult, error)
 	ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error) // filter=latest, all pages
+	// ListCommitStatuses returns the latest status per context on sha (all
+	// pages). A missing permission is an error (ErrForbidden), never "none".
+	ListCommitStatuses(ctx context.Context, sha string) ([]CommitStatus, error)
 }
 
 // Writer is the write side. Only the effect layer (#13) may hold one.

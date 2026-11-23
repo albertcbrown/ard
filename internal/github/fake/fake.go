@@ -65,6 +65,7 @@ type state struct {
 	fail     map[string][]error
 	required map[string]github.RequiredChecksResult
 	runs     map[string][]github.CheckRun
+	statuses map[string][]github.CommitStatus
 }
 
 // Fake implements github.Client. Methods on the value returned by As attribute
@@ -91,6 +92,7 @@ func New(opts ...Option) *Fake {
 		fail:     map[string][]error{},
 		required: map[string]github.RequiredChecksResult{},
 		runs:     map[string][]github.CheckRun{},
+		statuses: map[string][]github.CommitStatus{},
 	}
 	for _, o := range opts {
 		o(s)
@@ -232,6 +234,13 @@ func (f *Fake) SetCheckRuns(sha string, rs ...github.CheckRun) {
 	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
 	f.s.runs[sha] = append([]github.CheckRun(nil), rs...)
+}
+
+// SetCommitStatuses sets the commit statuses reported on sha.
+func (f *Fake) SetCommitStatuses(sha string, ss ...github.CommitStatus) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.statuses[sha] = append([]github.CommitStatus(nil), ss...)
 }
 
 // SetMergeableState sets PR n's mergeable_state.
@@ -689,6 +698,15 @@ func (f *Fake) ListCheckRuns(ctx context.Context, sha string) ([]github.CheckRun
 		return nil, err
 	}
 	return append([]github.CheckRun(nil), f.s.runs[sha]...), nil
+}
+
+func (f *Fake) ListCommitStatuses(ctx context.Context, sha string) ([]github.CommitStatus, error) {
+	unlock, err := f.beginRead("ListCommitStatuses")
+	defer unlock()
+	if err != nil {
+		return nil, err
+	}
+	return append([]github.CommitStatus(nil), f.s.statuses[sha]...), nil
 }
 
 // ---- Writer ----

@@ -716,6 +716,23 @@ func (h *HTTP) ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error
 	return items, h.fail(ctx, fmt.Sprintf("list check runs of %s", sha), 0, err)
 }
 
+func (h *HTTP) ListCommitStatuses(ctx context.Context, sha string) ([]CommitStatus, error) {
+	opts := &gogh.ListOptions{PerPage: 100}
+	items, err := paginate(0, func(page int) ([]CommitStatus, int, error) {
+		opts.Page = page
+		res, resp, err := h.gh.Repositories.GetCombinedStatus(ctx, h.o(), h.r(), sha, opts)
+		if err != nil {
+			return nil, 0, err
+		}
+		out := make([]CommitStatus, len(res.Statuses))
+		for i, s := range res.Statuses {
+			out[i] = CommitStatus{Context: s.GetContext(), State: s.GetState(), UpdatedAt: s.GetUpdatedAt().Time}
+		}
+		return out, nextPage(resp), nil
+	})
+	return items, h.fail(ctx, fmt.Sprintf("list commit statuses of %s", sha), 0, err)
+}
+
 // ---- Writer ----
 
 func (h *HTTP) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {

@@ -54,56 +54,111 @@ func newer(a, b github.CheckRun) bool {
 	return a.ID > b.ID
 }
 
-// evalChecks judges the check runs of a head. With a required list, each
-// required context is matched by name (and by app when the rule names an
-// integration) and the latest matching run decides; a missing run is pending.
-// With no list, there is nothing to go by: no runs at all is green once
-// graceOver (CI had time to queue) and pending before, otherwise every latest
-// run per name must be green. Red outranks pending. names are the failing (or
+// statusState maps a commit status state: success is green, pending is
+// pending, failure, error (and anything unknown) are red.
+func statusState(s github.CommitStatus) checkState {
+	switch s.State {
+	case "success":
+		return checksGreen
+	case "pending":
+		return checksPending
+	}
+	return checksRed
+}
+
+// newerStatus reports whether a is a later status than b.
+func newerStatus(a, b github.CommitStatus) bool { return a.UpdatedAt.After(b.UpdatedAt) }
+
+// combine decides one context that may have both a check run and a commit
+// status. The newer wins (an unfinished run is the newest); on a tie the worse
+// state wins, so red from either side never counts as green.
+func combine(run *github.CheckRun, st *github.CommitStatus) checkState {
+	switch {
+	case run == nil && st == nil:
+		return checksPending
+	case st == nil:
+		return runState(*run)
+	case run == nil:
+		return statusState(*st)
+	}
+	rs, ss := runState(*run), statusState(*st)
+	switch {
+	case run.Status != "completed":
+		return rs
+	case st.UpdatedAt.After(run.CompletedAt):
+		return ss
+	case run.CompletedAt.After(st.UpdatedAt):
+		return rs
+	}
+	return max(rs, ss)
+}
+
+// evalChecks judges the check runs and commit statuses of a head. With a
+// required list, each required context is matched by name (a check run also by
+// app when the rule names an integration; a status has no app, so it is not
+// matched then) and the latest run and latest status decide, the newer one
+// winning; a context with neither is pending. With no list, there is nothing
+// to go by: no runs and no statuses at all is green once graceOver (CI had
+// time to queue) and pending before, otherwise every latest run and status per
+// name must be green. Red outranks pending. names are the failing (or
 // waiting) contexts, sorted.
-func evalChecks(required []github.RequiredCheck, runs []github.CheckRun, graceOver bool) (checkState, []string) {
-	var red, pending []string
-	if len(required) > 0 {
-		for _, rc := range required {
-			var best *github.CheckRun
-			for i := range runs {
-				r := &runs[i]
-				if r.Name != rc.Context || (rc.IntegrationID != 0 && r.AppID != rc.IntegrationID) {
-					continue
-				}
-				if best == nil || newer(*r, *best) {
-					best = r
-				}
+func evalChecks(required []github.RequiredCheck, runs []github.CheckRun, statuses []github.CommitStatus, graceOver bool) (checkState, []string) {
+	latestRun := func(name string, app int64) *github.CheckRun {
+		var best *github.CheckRun
+		for i := range runs {
+			r := &runs[i]
+			if r.Name != name || (app != 0 && r.AppID != app) {
+				continue
 			}
-			switch {
-			case best == nil:
-				pending = append(pending, rc.Context)
-			case runState(*best) == checksRed:
-				red = append(red, rc.Context)
-			case runState(*best) == checksPending:
-				pending = append(pending, rc.Context)
+			if best == nil || newer(*r, *best) {
+				best = r
 			}
 		}
+		return best
+	}
+	latestStatus := func(name string) *github.CommitStatus {
+		var best *github.CommitStatus
+		for i := range statuses {
+			s := &statuses[i]
+			if s.Context == name && (best == nil || newerStatus(*s, *best)) {
+				best = s
+			}
+		}
+		return best
+	}
+	var red, pending []string
+	judge := func(name string, app int64) {
+		var st *github.CommitStatus
+		if app == 0 {
+			st = latestStatus(name)
+		}
+		switch combine(latestRun(name, app), st) {
+		case checksRed:
+			red = append(red, name)
+		case checksPending:
+			pending = append(pending, name)
+		}
+	}
+	if len(required) > 0 {
+		for _, rc := range required {
+			judge(rc.Context, rc.IntegrationID)
+		}
 	} else {
-		if len(runs) == 0 {
+		if len(runs) == 0 && len(statuses) == 0 {
 			if graceOver {
 				return checksGreen, nil
 			}
 			return checksPending, nil
 		}
-		latest := map[string]github.CheckRun{}
+		names := map[string]bool{}
 		for _, r := range runs {
-			if cur, ok := latest[r.Name]; !ok || newer(r, cur) {
-				latest[r.Name] = r
-			}
+			names[r.Name] = true
 		}
-		for name, r := range latest {
-			switch runState(r) {
-			case checksRed:
-				red = append(red, name)
-			case checksPending:
-				pending = append(pending, name)
-			}
+		for _, s := range statuses {
+			names[s.Context] = true
+		}
+		for name := range names {
+			judge(name, 0)
 		}
 	}
 	sort.Strings(red)

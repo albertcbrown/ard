@@ -521,6 +521,17 @@ func Run(t *testing.T, newClient func(t *testing.T) github.Client, opts ...Optio
 		}
 	})
 
+	t.Run("CommitStatusesRead", func(t *testing.T) {
+		if cfg.newPR == nil {
+			t.Skip("no PR factory")
+		}
+		c := newClient(t)
+		_, sha := cfg.newPR(t, c)
+		if _, err := c.ListCommitStatuses(ctx, sha); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("UpdateBranchSHAGuard", func(t *testing.T) {
 		if cfg.newPR == nil {
 			t.Skip("no PR factory")

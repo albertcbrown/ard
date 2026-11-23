@@ -34,6 +34,7 @@ type Reader interface {
 	GetPermission(ctx context.Context, login string) (github.Permission, error)
 	RequiredChecks(ctx context.Context, branch string) (github.RequiredChecksResult, error)
 	ListCheckRuns(ctx context.Context, sha string) ([]github.CheckRun, error)
+	ListCommitStatuses(ctx context.Context, sha string) ([]github.CommitStatus, error)
 }
 
 // Effects is the part of effects.Effects the loop uses.

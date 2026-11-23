@@ -137,7 +137,12 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		t.fail(n, "check_runs", err)
 		return false
 	}
-	switch st, names := evalChecks(t.required, runs, graceOver); st {
+	statuses, err := d.Reader.ListCommitStatuses(ctx, head)
+	if err != nil {
+		t.fail(n, "commit_statuses", err)
+		return false
+	}
+	switch st, names := evalChecks(t.required, runs, statuses, graceOver); st {
 	case checksPending:
 		t.log.Info("merge.waiting_checks", "pr", n, "head", head, "checks", strings.Join(names, ","), "grace_over", graceOver)
 		return false

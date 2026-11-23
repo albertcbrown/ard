@@ -259,6 +259,14 @@ type RequiredChecksResult struct {
 	Unevaluated []string
 }
 
+// CommitStatus is the latest status of one context on a commit (the Statuses
+// API, which Jenkins and other external CI report through).
+type CommitStatus struct {
+	Context   string
+	State     string // success|pending|failure|error
+	UpdatedAt time.Time
+}
+
 // CheckRun is the latest run of one check on a commit.
 type CheckRun struct {
 	ID          int64     // higher is newer; filter=latest does not merge runs across check suites
