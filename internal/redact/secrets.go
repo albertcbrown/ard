@@ -80,9 +80,14 @@ func (s *Secrets) AddEnv(env map[string]string) error {
 	return nil
 }
 
+// nonSecretEnv lists variables whose names look like credentials but whose
+// values are not. ARD_AGENT_AUTH holds a mode name (auto, oauth, apikey; see
+// modelauth.EnvMode), not a credential.
+var nonSecretEnv = map[string]bool{"ARD_AGENT_AUTH": true}
+
 // FromEnviron adds values from a KEY=VALUE list (os.Environ()) whose key looks
 // like a credential. Keys ending _FILE, _PATH or _DIR are skipped: they are
-// paths, not secrets.
+// paths, not secrets. Names in nonSecretEnv are skipped too.
 func FromEnviron(environ []string) *Secrets {
 	s := NewSecrets()
 	for _, kv := range environ {
@@ -92,6 +97,9 @@ func FromEnviron(environ []string) *Secrets {
 		}
 		u := strings.ToUpper(k)
 		if strings.HasSuffix(u, "_FILE") || strings.HasSuffix(u, "_PATH") || strings.HasSuffix(u, "_DIR") {
+			continue
+		}
+		if nonSecretEnv[u] {
 			continue
 		}
 		_ = s.Add(k, v) // bad names are skipped

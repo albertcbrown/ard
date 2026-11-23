@@ -86,6 +86,26 @@ func TestShortValueSkippedAndLoggedByName(t *testing.T) {
 	}
 }
 
+func TestFromEnvironSkipsAgentAuthMode(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+	oauth := randStr(50, 40)
+	key := randStr(51, 40)
+	s := FromEnviron([]string{"ARD_AGENT_AUTH=auto", "ard_agent_auth=oauth", "CLAUDE_CODE_OAUTH_TOKEN=" + oauth, "ANTHROPIC_API_KEY=" + key})
+	if strings.Contains(buf.String(), "ARD_AGENT_AUTH") || strings.Contains(buf.String(), "too short") {
+		t.Errorf("unexpected warning: %q", buf.String())
+	}
+	if got := s.String("auto oauth " + oauth + " " + key); got != "auto oauth "+marker("CLAUDE_CODE_OAUTH_TOKEN")+" "+marker("ANTHROPIC_API_KEY") {
+		t.Errorf("got %q", got)
+	}
+	FromEnviron([]string{"MY_AUTH=abc"})
+	if !strings.Contains(buf.String(), "MY_AUTH") {
+		t.Errorf("MY_AUTH should still warn: %q", buf.String())
+	}
+}
+
 func TestEmptySetPassesThrough(t *testing.T) {
 	in := []byte("a\x00b\xff\xfe\r\nc")
 	out, counts := NewSecrets().Bytes(in)
