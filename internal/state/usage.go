@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Tokens are token counts by type.
@@ -193,4 +194,43 @@ func (s *Store) IssueUsage(ctx context.Context, issue int) (map[string]JobUsage,
 		out[id] = u
 	}
 	return out, nil
+}
+
+// Spend is money spent over a period: USD sums the priced steps; Unpriced
+// counts steps that reported no cost (they add nothing to USD).
+type Spend struct {
+	USD      float64
+	Unpriced int
+}
+
+// RoleKey names a role in spend totals. The stage is part of the key because
+// a role name can be shared by a triage role and a worker role.
+type RoleKey struct{ Stage, Role string }
+
+// SpendSince sums step usage recorded at or after dayStart, per (stage, role)
+// and for the whole repo.
+func (s *Store) SpendSince(ctx context.Context, dayStart time.Time) (map[RoleKey]Spend, Spend, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT j.stage, j.role, COALESCE(SUM(u.cost_usd), 0), COALESCE(SUM(u.cost_usd IS NULL), 0)
+		FROM step_usage u JOIN jobs j ON j.id = u.job_id
+		WHERE u.recorded_at >= ? GROUP BY j.stage, j.role`, dayStart.Unix())
+	if err != nil {
+		return nil, Spend{}, fmt.Errorf("spend since %s: %w", dayStart.UTC().Format(time.RFC3339), err)
+	}
+	defer rows.Close()
+	per := map[RoleKey]Spend{}
+	var repo Spend
+	for rows.Next() {
+		var k RoleKey
+		var sp Spend
+		if err := rows.Scan(&k.Stage, &k.Role, &sp.USD, &sp.Unpriced); err != nil {
+			return nil, Spend{}, fmt.Errorf("spend since: %w", err)
+		}
+		per[k] = sp
+		repo.USD += sp.USD
+		repo.Unpriced += sp.Unpriced
+	}
+	if err := rows.Err(); err != nil {
+		return nil, Spend{}, fmt.Errorf("spend since: %w", err)
+	}
+	return per, repo, nil
 }

@@ -61,6 +61,7 @@ internal/committer/ the only commit/push path: .ard/<issue#>/ (main lane, per-br
 internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); per-role write allowlist (WritableFor); every job ends through its Closer
 internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
 internal/limits/    the book of exhausted usage limits the pool consults (the reactive half; #63 adds readings and thresholds)
+internal/budget/    the daily dollar-cap gate the pool consults (budget.Gate: role and repo caps from step_usage, UTC day, fails closed)
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/prgate/    reviews-passed-at-head decision shared by the reviewer's mark-ready and the merger: label rule, head Covers, reviewed heads, ParseWorkerBranch
 internal/merger/    the merger loop: gates (reviews, checks from check runs and the rules API, protected-path approval), one update and one squash merge per tick; no slot

@@ -23,9 +23,10 @@ const (
 	DeniedDuplicate         // same key already held, or earlier in this batch
 	DeniedInvalid           // malformed candidate (caller bug)
 	DeniedLimited           // its account or model family is out of quota until a reset time
+	DeniedBudget            // a daily dollar cap (its role's or the repo's) is reached
 )
 
-var verdictNames = [...]string{"granted", "full", "outranked", "issue-busy", "duplicate", "invalid", "limited"}
+var verdictNames = [...]string{"granted", "full", "outranked", "issue-busy", "duplicate", "invalid", "limited", "budget"}
 
 // String returns the verdict's log name.
 func (v Verdict) String() string {
@@ -61,6 +62,10 @@ type Options struct {
 	// now. nil disables the check. A limited candidate takes no slot and
 	// reserves no demand: it does not hold lower classes back.
 	Limited func(c Candidate) time.Time
+	// Budget reports whether a daily dollar cap forbids starting c, with the
+	// reason. nil disables the check. A refused candidate takes no slot and
+	// reserves no demand; a job already held is never affected.
+	Budget func(c Candidate) (denied bool, reason string)
 }
 
 // Pool is the in-memory slot arbiter. One mutex guards all state; there are
@@ -72,6 +77,7 @@ type Pool struct {
 	log         *slog.Logger
 	starveAfter time.Duration
 	limited     func(c Candidate) time.Time
+	budget      func(c Candidate) (bool, string)
 	held        map[string]*Slot
 	demand      map[string]*loopDemand
 	firstDenied map[string]time.Time
@@ -86,6 +92,7 @@ func New(o Options) *Pool {
 		log:         o.Log,
 		starveAfter: o.StarveAfter,
 		limited:     o.Limited,
+		budget:      o.Budget,
 		held:        map[string]*Slot{},
 		demand:      map[string]*loopDemand{},
 		firstDenied: map[string]time.Time{},
@@ -174,6 +181,12 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 			if until := p.limited(c); now.Before(until) {
 				decisions[i].Verdict = DeniedLimited
 				decisions[i].Reason = "usage limit until " + until.UTC().Format("15:04") + " UTC"
+				continue
+			}
+		}
+		if p.budget != nil {
+			if denied, why := p.budget(c); denied {
+				decisions[i].Verdict, decisions[i].Reason = DeniedBudget, why
 				continue
 			}
 		}

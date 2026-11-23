@@ -183,6 +183,16 @@ func (r *Resolved) Role(k Kind, name string) (Role, bool) {
 	return Role{}, false
 }
 
+// RoleBudgetUSDPerDay is the role's own daily cap in USD. set is false when
+// the role has no override (an override of 0 or less counts as unset); then
+// only the repo-wide Resolved.BudgetUSDPerDay applies to it.
+func (r *Resolved) RoleBudgetUSDPerDay(role Role) (cap float64, set bool) {
+	if role.BudgetUSDPerDay > 0 {
+		return role.BudgetUSDPerDay, true
+	}
+	return 0, false
+}
+
 // HostUntrusted returns the roles that read untrusted input and have no
 // Dockerfile, so the local executor runs them as a host subprocess under the
 // controller's uid. Canonical order (kind, then name). It returns nothing

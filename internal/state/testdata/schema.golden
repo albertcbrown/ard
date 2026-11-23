@@ -3,6 +3,7 @@ CREATE INDEX jobs_cleanup ON jobs(status, cleaned_at);
 CREATE INDEX jobs_issue ON jobs(issue);
 CREATE UNIQUE INDEX jobs_one_running ON jobs(stage, role, issue) WHERE status = 'running';
 CREATE INDEX jobs_status ON jobs(status, created_at);
+CREATE INDEX step_usage_recorded ON step_usage(recorded_at);
 CREATE TABLE admissions(
   issue INTEGER PRIMARY KEY,
   mode TEXT NOT NULL,
