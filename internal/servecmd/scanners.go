@@ -29,6 +29,7 @@ func scannerLoop(w *wiring) controller.Loop {
 	return scanner.NewLoop(&scanner.Pipeline{
 		Reader: w.Reader, Effects: w.Effects, Committer: lc, Engine: eng,
 		Stores: scanner.RegistryStores(w.Scanners), Repo: w.Repo.String(), Log: w.Log, Paused: w.Paused, BodyLocks: &w.bodyLocks,
+		StatusIssue: func() int { return int(w.statusIssue.Load()) },
 	})
 }
 
