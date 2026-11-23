@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -60,9 +62,55 @@ type builder func(ctx context.Context, e *cli.Env, repo github.Repo, stateDir st
 var gitBin = ""
 
 // Serve is the handler behind `ard serve`.
-func Serve(ctx context.Context, e *cli.Env) error { return serve(ctx, e, buildDeps) }
+func Serve(ctx context.Context, e *cli.Env, o cli.ServeOpts) error {
+	return serveLoops(ctx, e, buildDeps, o.Loops)
+}
 
 func serve(ctx context.Context, e *cli.Env, build builder) error {
+	return serveLoops(ctx, e, build, nil)
+}
+
+// loopNames lists the names of loops, for the serve.loops log line.
+func loopNames(loops []controller.Loop) []string {
+	names := make([]string, 0, len(loops))
+	for _, l := range loops {
+		names = append(names, l.Name())
+	}
+	return names
+}
+
+// knownLoops are the names registerLoops' loops report (Loop.Name), in the
+// order they register.
+var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reaper"}
+
+// selectLoops keeps the loops named in want, in registration order; an empty
+// want keeps every loop. A name that is not a known loop is a usage error
+// (exit 2) naming the known ones, so a typo never silently drops a loop.
+func selectLoops(loops []controller.Loop, want []string) ([]controller.Loop, error) {
+	if len(want) == 0 {
+		return loops, nil
+	}
+	keep := map[string]bool{}
+	for _, n := range want {
+		n = strings.TrimSpace(n)
+		if !slices.Contains(knownLoops, n) {
+			return nil, &cli.ExitError{Code: 2, Err: fmt.Errorf("ard serve: --loops: unknown loop %q (known: %s)", n, strings.Join(knownLoops, ", "))}
+		}
+		keep[n] = true
+	}
+	var out []controller.Loop
+	for _, l := range loops {
+		if keep[l.Name()] {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}
+
+func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []string) error {
+	if _, err := selectLoops(nil, wantLoops); err != nil {
+		return err
+	}
 	root, err := config.RepoRoot(e.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
@@ -183,6 +231,11 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		return gate.Check(ctx, c).Paused
 	}
 
+	selected, err := selectLoops(registerLoops(w), wantLoops)
+	if err != nil {
+		return err
+	}
+	log.Info("serve.loops", "selected", loopNames(selected))
 	cc, err := controller.New(controller.Deps{
 		Log: log,
 		Config: func(ctx context.Context) (*config.Resolved, error) {
@@ -235,7 +288,7 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 			}},
 		},
 		Force: forceOnSecondSignal(ctx),
-	}, registerLoops(w)...)
+	}, selected...)
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}

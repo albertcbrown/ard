@@ -42,6 +42,10 @@ spec:
             - --dry-run
             - --repo
             - {{ .Values.instance.repo }}
+            {{- with .Values.instance.loops }}
+            - --loops
+            - {{ join "," . }}
+            {{- end }}
           # ard serve seeds and owns its bare clone at ~/.ard/repos/<owner>/<repo>.git (#113); the working directory is
           # only read for the local `paused` key.
           workingDir: /home/ard

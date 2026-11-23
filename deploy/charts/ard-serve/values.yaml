@@ -3,6 +3,9 @@ instance:
   repo: albertcbrown/ard
   # dry-run only for now: live ard serve in a cluster needs the k8s executor (#54) and a Lease lock.
   dryRun: true
+  # The controller loops this instance runs (ard serve --loops, #187). The soak runs only the deterministic ones: the
+  # agent loops (triage, workers, reviewers) would run their roles in host mode in a pod that holds the App key.
+  loops: [scanners, stale, reaper]
 
 image:
   repository: ghcr.io/albertcbrown/ard
