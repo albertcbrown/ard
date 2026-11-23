@@ -521,6 +521,25 @@ func Run(t *testing.T, newClient func(t *testing.T) github.Client, opts ...Optio
 		}
 	})
 
+	t.Run("AppID", func(t *testing.T) {
+		c := newClient(t)
+		id, err := c.AppID(ctx, "github-actions")
+		if err != nil || id != 15368 {
+			t.Fatalf("AppID(github-actions) = %d, %v; want 15368", id, err)
+		}
+	})
+
+	t.Run("CommitStatusesRead", func(t *testing.T) {
+		if cfg.newPR == nil {
+			t.Skip("no PR factory")
+		}
+		c := newClient(t)
+		_, sha := cfg.newPR(t, c)
+		if _, err := c.ListCommitStatuses(ctx, sha); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("UpdateBranchSHAGuard", func(t *testing.T) {
 		if cfg.newPR == nil {
 			t.Skip("no PR factory")

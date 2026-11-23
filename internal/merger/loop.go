@@ -34,6 +34,8 @@ type Reader interface {
 	GetPermission(ctx context.Context, login string) (github.Permission, error)
 	RequiredChecks(ctx context.Context, branch string) (github.RequiredChecksResult, error)
 	ListCheckRuns(ctx context.Context, sha string) ([]github.CheckRun, error)
+	AppID(ctx context.Context, slug string) (int64, error)
+	ListCommitStatuses(ctx context.Context, sha string) ([]github.CommitStatus, error)
 }
 
 // Effects is the part of effects.Effects the loop uses.
@@ -94,6 +96,7 @@ type Loop struct {
 	mu    sync.Mutex
 	ticks uint64
 	heads map[int]headSeen
+	apps  map[string]int64 // App slug -> id, per process
 }
 
 var _ controller.Loop = (*Loop)(nil)
@@ -109,7 +112,7 @@ func New(d Deps) *Loop {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
-	return &Loop{d: d, heads: map[int]headSeen{}}
+	return &Loop{d: d, heads: map[int]headSeen{}, apps: map[string]int64{}}
 }
 
 // Name implements controller.Loop.

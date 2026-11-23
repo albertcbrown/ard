@@ -264,6 +264,10 @@ func TestRequiredChecksAndCheckRuns(t *testing.T) {
 	if got, err = f.RequiredChecks(ctx, "main"); err != nil || got.Available {
 		t.Errorf("unavailable = %+v, %v", got, err)
 	}
+	f.SetAppID("x", 5)
+	if id, err := f.AppID(ctx, "x"); err != nil || id != 5 {
+		t.Errorf("AppID = %d, %v", id, err)
+	}
 	if rs, err := f.ListCheckRuns(ctx, "s1"); err != nil || len(rs) != 0 {
 		t.Errorf("default runs = %+v, %v", rs, err)
 	}

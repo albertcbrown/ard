@@ -257,6 +257,100 @@ func TestChecks(t *testing.T) {
 	}
 }
 
+func TestChecksFromCommitStatuses(t *testing.T) {
+	jenkins := github.RequiredCheck{Context: "continuous-integration/jenkins/pr-merge"}
+	st := func(state string) github.CommitStatus {
+		return github.CommitStatus{Context: jenkins.Context, State: state, UpdatedAt: t0}
+	}
+	cases := []struct {
+		name      string
+		statuses  []github.CommitStatus
+		readErr   bool
+		wantMerge bool
+		wantHuman bool
+	}{
+		{"jenkins success merges", []github.CommitStatus{st("success")}, false, true, false},
+		{"jenkins pending waits", []github.CommitStatus{st("pending")}, false, false, false},
+		{"jenkins failure needs human", []github.CommitStatus{st("failure")}, false, false, true},
+		{"statuses read error fails closed", []github.CommitStatus{st("success")}, true, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.gh.SetRequiredChecks("main", jenkins)
+			p := h.newPR()
+			h.gh.SetCommitStatuses(p.head, tc.statuses...)
+			if tc.readErr {
+				h.gh.FailNext("ListCommitStatuses", errBoom)
+			}
+			if _, err := h.tick(); (err != nil) != tc.readErr {
+				t.Fatalf("tick error = %v, want error %v", err, tc.readErr)
+			}
+			h.now = h.now.Add(3 * time.Minute)
+			if tc.readErr {
+				if h.merged(p.n) {
+					t.Fatal("merged on a statuses read error")
+				}
+				h.mustTick() // the next tick recovers
+				if !h.merged(p.n) {
+					t.Fatal("not merged once statuses are readable")
+				}
+				return
+			}
+			h.mustTick()
+			if h.merged(p.n) != tc.wantMerge {
+				t.Fatalf("merged = %v", h.merged(p.n))
+			}
+			if h.has(p.n, labels.NeedsHuman) != tc.wantHuman {
+				t.Fatalf("needs-human = %v", h.has(p.n, labels.NeedsHuman))
+			}
+		})
+	}
+}
+
+func TestPinnedStatusApp(t *testing.T) {
+	const ctxName = "continuous-integration/jenkins/pr-merge"
+	pinned := github.RequiredCheck{Context: ctxName, IntegrationID: 5884800}
+	mk := func(login string) []github.CommitStatus {
+		return []github.CommitStatus{{Context: ctxName, State: "success", UpdatedAt: t0, Creator: login}}
+	}
+	cases := []struct {
+		name      string
+		statuses  []github.CommitStatus
+		lookupErr bool
+		wantMerge bool // after the lookup error (if any) and a retry tick
+	}{
+		{"right app", mk("jenkins[bot]"), false, true},
+		{"other app", mk("other[bot]"), false, false},
+		{"user", mk("someone"), false, false},
+		{"lookup error fails closed, then recovers", mk("jenkins[bot]"), true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.gh.SetRequiredChecks("main", pinned)
+			h.gh.SetAppID("jenkins", 5884800)
+			h.gh.SetAppID("other", 1)
+			p := h.newPR()
+			h.gh.SetCommitStatuses(p.head, tc.statuses...)
+			if tc.lookupErr {
+				h.gh.FailNext("AppID", errBoom)
+				if _, err := h.tick(); err == nil {
+					t.Fatal("no tick error")
+				}
+				if h.merged(p.n) {
+					t.Fatal("merged on a lookup error")
+				}
+			}
+			h.now = h.now.Add(3 * time.Minute)
+			h.mustTick()
+			if h.merged(p.n) != tc.wantMerge {
+				t.Fatalf("merged = %v", h.merged(p.n))
+			}
+		})
+	}
+}
+
 func TestUnevaluatedRulesWarn(t *testing.T) {
 	h := newHarness(t)
 	h.gh.SetUnevaluatedRules("main", "workflows")

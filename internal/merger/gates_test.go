@@ -68,7 +68,53 @@ func TestEvalChecks(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, names := evalChecks(tc.required, tc.runs, tc.graceOver)
+			got, names := evalChecks(tc.required, tc.runs, nil, tc.graceOver)
+			if got != tc.want || !reflect.DeepEqual(names, tc.names) {
+				t.Fatalf("evalChecks = %v %v, want %v %v", got, names, tc.want, tc.names)
+			}
+		})
+	}
+}
+
+func TestEvalChecksStatuses(t *testing.T) {
+	ci := []github.RequiredCheck{{Context: "jenkins"}}
+	st := func(state string, d time.Duration) github.CommitStatus {
+		return github.CommitStatus{Context: "jenkins", State: state, UpdatedAt: t0.Add(d)}
+	}
+	jr := func(conclusion string, d time.Duration) github.CheckRun {
+		return run("jenkins", "completed", conclusion, 1, d)
+	}
+	tests := []struct {
+		name     string
+		required []github.RequiredCheck
+		runs     []github.CheckRun
+		statuses []github.CommitStatus
+		grace    bool
+		want     checkState
+		names    []string
+	}{
+		{"status success", ci, nil, []github.CommitStatus{st("success", 0)}, false, checksGreen, nil},
+		{"status pending", ci, nil, []github.CommitStatus{st("pending", 0)}, false, checksPending, []string{"jenkins"}},
+		{"status failure", ci, nil, []github.CommitStatus{st("failure", 0)}, false, checksRed, []string{"jenkins"}},
+		{"status error", ci, nil, []github.CommitStatus{st("error", 0)}, false, checksRed, []string{"jenkins"}},
+		{"newest status of a context wins", ci, nil, []github.CommitStatus{st("failure", 0), st("success", time.Minute)}, false, checksGreen, nil},
+		{"other context ignored", ci, nil, []github.CommitStatus{{Context: "x", State: "success", UpdatedAt: t0}}, false, checksPending, []string{"jenkins"}},
+		{"newer status beats older red run", ci, []github.CheckRun{jr("failure", 0)}, []github.CommitStatus{st("success", time.Minute)}, false, checksGreen, nil},
+		{"newer red run beats older green status", ci, []github.CheckRun{jr("failure", time.Minute)}, []github.CommitStatus{st("success", 0)}, false, checksRed, []string{"jenkins"}},
+		{"tie: red wins", ci, []github.CheckRun{jr("success", 0)}, []github.CommitStatus{st("failure", 0)}, false, checksRed, []string{"jenkins"}},
+		{"run in flight beats green status", ci, []github.CheckRun{run("jenkins", "in_progress", "", 1, 0)}, []github.CommitStatus{st("success", time.Hour)}, false, checksPending, []string{"jenkins"}},
+		{"pinned rule, unresolved status", []github.RequiredCheck{{Context: "jenkins", IntegrationID: 7}}, nil, []github.CommitStatus{st("success", 0)}, false, checksPending, []string{"jenkins"}},
+		{"pinned rule, status from that app", []github.RequiredCheck{{Context: "jenkins", IntegrationID: 7}}, nil, []github.CommitStatus{{Context: "jenkins", State: "success", UpdatedAt: t0, AppID: 7}}, false, checksGreen, nil},
+		{"pinned rule, status from another app", []github.RequiredCheck{{Context: "jenkins", IntegrationID: 7}}, nil, []github.CommitStatus{{Context: "jenkins", State: "success", UpdatedAt: t0, AppID: 8}}, false, checksPending, []string{"jenkins"}},
+		{"no list, green status only", nil, nil, []github.CommitStatus{st("success", 0)}, false, checksGreen, nil},
+		{"no list, pending status", nil, []github.CheckRun{run("a", "completed", "success", 2, 0)}, []github.CommitStatus{st("pending", 0)}, true, checksPending, []string{"jenkins"}},
+		{"no list, red status", nil, nil, []github.CommitStatus{st("error", 0)}, true, checksRed, []string{"jenkins"}},
+		{"no list, none, grace over", nil, nil, nil, true, checksGreen, nil},
+		{"no list, none, grace not over", nil, nil, nil, false, checksPending, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, names := evalChecks(tc.required, tc.runs, tc.statuses, tc.grace)
 			if got != tc.want || !reflect.DeepEqual(names, tc.names) {
 				t.Fatalf("evalChecks = %v %v, want %v %v", got, names, tc.want, tc.names)
 			}
