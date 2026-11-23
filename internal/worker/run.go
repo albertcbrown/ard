@@ -848,6 +848,9 @@ func (jb *job) finish(ctx context.Context, s step, w *closeout.WorkerResult, cau
 		jb.recordUsage(ctx, su)
 	}
 	res := s.res
+	// agentStep already recorded this step's readings; recording them again
+	// here could overwrite a newer reading with this older one.
+	res.Windows = nil
 	if s.h.JobID != "" {
 		agentjob.SaveHandle(ctx, d.Store, jb.log, jb.sj.ID, s.h)
 	}

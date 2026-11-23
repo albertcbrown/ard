@@ -3,6 +3,7 @@ package limits
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -94,5 +95,26 @@ func TestExhaustAndReadingsIndependent(t *testing.T) {
 	b2, _ := open(t, m, c)
 	if len(b2.Readings()) != 1 || b2.Until("").IsZero() {
 		t.Errorf("readings=%v until=%v", b2.Readings(), b2.Until(""))
+	}
+}
+
+// The book holds at most 16 window types; known ones still update.
+func TestObserveBoundsWindowTypes(t *testing.T) {
+	b, _ := open(t, &fakeMeta{}, &clock{t0})
+	ctx := context.Background()
+	var ws []agent.Window
+	for i := range 20 {
+		ws = append(ws, agent.Window{Type: fmt.Sprintf("w%02d", i), Utilization: 0.1})
+	}
+	if err := b.Observe(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Readings(); len(got) != 16 || got[15].Window != "w15" {
+		t.Fatalf("readings = %+v", got)
+	}
+	_ = b.Observe(ctx, []agent.Window{{Type: "w00", Utilization: 0.9}, {Type: "new", Utilization: 0.9}})
+	got := b.Readings()
+	if len(got) != 16 || got[0].Utilization != 0.9 {
+		t.Errorf("readings = %+v", got)
 	}
 }

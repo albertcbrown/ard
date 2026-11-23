@@ -427,27 +427,56 @@ type windowJSON struct {
 	ResetsAt    *float64 `json:"resetsAt"`
 }
 
+// Bounds on what one stream may report: windows are persisted.
+const (
+	maxWindows     = 16
+	maxWindowField = 64 // bytes of a window's type or status
+)
+
 // readWindows reads rate_limit_info.unifiedWindows: an object keyed by window
-// name, or an array of objects with a type field. Anything else, and any entry
-// with a missing, negative or non-finite utilization, yields no window.
+// name, or an array of objects with a type field. Anything else yields no
+// window; an entry that does not decode, has a missing, negative or
+// non-finite utilization, or a type over 64 bytes is skipped on its own. A
+// status is cut to 64 bytes and at most 16 windows are kept.
 func readWindows(raw json.RawMessage) []agent.Window {
 	if len(raw) == 0 {
 		return nil
 	}
-	byName := map[string]windowJSON{}
-	var arr []windowJSON
+	var entries []json.RawMessage
+	var names []string
+	byName := map[string]json.RawMessage{}
 	if json.Unmarshal(raw, &byName) == nil {
-		for k, w := range byName {
-			w.Type = k
-			arr = append(arr, w)
+		for k := range byName {
+			names = append(names, k)
 		}
-	} else if json.Unmarshal(raw, &arr) != nil {
+		sort.Strings(names)
+		for _, k := range names {
+			entries = append(entries, byName[k])
+		}
+	} else if json.Unmarshal(raw, &entries) != nil {
 		return nil
+	}
+	var arr []windowJSON
+	for i, e := range entries {
+		var w windowJSON
+		if json.Unmarshal(e, &w) != nil {
+			continue
+		}
+		if names != nil {
+			w.Type = names[i]
+		}
+		arr = append(arr, w)
 	}
 	var out []agent.Window
 	for _, w := range arr {
-		if w.Type == "" || w.Utilization == nil {
+		if len(out) == maxWindows {
+			break
+		}
+		if w.Type == "" || len(w.Type) > maxWindowField || w.Utilization == nil {
 			continue
+		}
+		if len(w.Status) > maxWindowField {
+			w.Status = w.Status[:maxWindowField]
 		}
 		u := *w.Utilization
 		if math.IsNaN(u) || math.IsInf(u, 0) || u < 0 {

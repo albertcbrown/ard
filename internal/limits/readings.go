@@ -14,6 +14,10 @@ import (
 
 const readingsKey = "limits.readings"
 
+// maxReadings bounds the persisted readings: a new window type is ignored
+// once the book holds this many.
+const maxReadings = 16
+
 // Reading is the latest observed usage of one subscription window. Nothing
 // gates on it yet (#63).
 type Reading struct {
@@ -47,7 +51,7 @@ func (b *Book) loadReadings(ctx context.Context) error {
 // Observe records the latest reading of each window in ws, stamped with the
 // book's clock, and persists them. A window whose reading is unchanged is
 // skipped, so observing the same step twice neither logs nor writes twice.
-// An empty ws is a no-op. On a persist error memory is unchanged.
+// A new window type is ignored once the book holds 16. An empty ws is a no-op. On a persist error memory is unchanged.
 func (b *Book) Observe(ctx context.Context, ws []agent.Window) error {
 	if len(ws) == 0 {
 		return nil
@@ -62,7 +66,11 @@ func (b *Book) Observe(ctx context.Context, ws []agent.Window) error {
 	var changed []Reading
 	for _, w := range ws {
 		r := Reading{Window: w.Type, Utilization: w.Utilization, Status: w.Status, ResetsAt: w.ResetsAt.UTC(), ObservedAt: now}
-		if old, ok := next[w.Type]; ok && old.Utilization == r.Utilization && old.Status == r.Status && old.ResetsAt.Equal(r.ResetsAt) {
+		old, ok := next[w.Type]
+		if !ok && len(next) >= maxReadings {
+			continue
+		}
+		if ok && old.Utilization == r.Utilization && old.Status == r.Status && old.ResetsAt.Equal(r.ResetsAt) {
 			continue
 		}
 		next[w.Type] = r

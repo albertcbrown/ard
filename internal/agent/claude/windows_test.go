@@ -2,6 +2,7 @@ package claude
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,45 @@ func TestParseWindowsMalformed(t *testing.T) {
 		if err != nil || !res.OK || res.SkippedLines != 0 || len(res.Windows) != 0 {
 			t.Errorf("%s: err=%v ok=%v skipped=%d windows=%+v", raw, err, res.OK, res.SkippedLines, res.Windows)
 		}
+	}
+}
+
+// A bad entry is skipped on its own; the others are kept.
+func TestParseWindowsPartlyMalformed(t *testing.T) {
+	for _, raw := range []string{
+		`{"five_hour":{"utilization":0.1},"seven_day":"bad"}`,
+		`[{"type":"five_hour","utilization":0.1},"bad",{"type":"seven_day","utilization":"x"}]`,
+	} {
+		in := `{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":` + raw + `}}` + "\n" + okResult
+		res, err := parseStr(t, in)
+		if err != nil || len(res.Windows) != 1 || res.Windows[0].Type != "five_hour" {
+			t.Errorf("%s: err=%v windows=%+v", raw, err, res.Windows)
+		}
+	}
+}
+
+// Windows are persisted, so one stream's are bounded: a long type is
+// skipped, a long status cut, and at most 16 windows kept.
+func TestParseWindowsBounded(t *testing.T) {
+	long := strings.Repeat("x", 65)
+	var b strings.Builder
+	b.WriteString(`{"` + long + `":{"utilization":0.1},"a":{"utilization":0.1,"status":"` + long + `"}`)
+	for i := range 20 {
+		fmt.Fprintf(&b, `,"w%02d":{"utilization":0.1}`, i)
+	}
+	b.WriteString("}")
+	in := `{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":` + b.String() + `}}` + "\n" + okResult
+	res, _ := parseStr(t, in)
+	if len(res.Windows) != 16 {
+		t.Fatalf("got %d windows, want 16", len(res.Windows))
+	}
+	for _, w := range res.Windows {
+		if w.Type == long {
+			t.Error("a type over 64 bytes was kept")
+		}
+	}
+	if w := res.Windows[0]; w.Type != "a" || len(w.Status) != 64 {
+		t.Errorf("first window = %q status len %d, want a with 64", w.Type, len(w.Status))
 	}
 }
 
