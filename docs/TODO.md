@@ -9,7 +9,6 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 ## Phase 1: First loop
 
 - #39 Gate 2: first loop proven
-- #165 serve: refuse to start on a git too old for the committer
 - #172 Cost and tokens table on each issue
 
 ## Phase 2: All roles
@@ -31,8 +30,7 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 - #89 Optional gitleaks pass in the log secret scan
 - #138 closeout: don't revert newer plan.md sections committed after a job's base
 - #142 Workers: .gitattributes changes can hide diffs from review
-- #160 eng-review should run the repository's own lint target
-- #174 Job cleanup fails on Go's read-only module cache and leaks it
+- #184 Reviewer close-out fails when its PR is merged mid-review
 
 ## Phase 3: Scale
 
