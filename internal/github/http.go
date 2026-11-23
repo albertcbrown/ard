@@ -632,6 +632,74 @@ func (h *HTTP) ListReviews(ctx context.Context, n int) ([]Review, error) {
 	return items, h.fail(ctx, fmt.Sprintf("list reviews %d", n), n, err)
 }
 
+// rulesUnavailable reports whether err is GitHub saying the rules API does not
+// exist for this repository: a 404, or the plan/visibility 403. A permissions
+// 403 ("Resource not accessible by integration") is not, and stays an error.
+func rulesUnavailable(err error) bool {
+	if errors.Is(err, ErrNotFound) {
+		return true
+	}
+	if !errors.Is(err, ErrForbidden) {
+		return false
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "upgrade to github pro") || strings.Contains(m, "make this repository public")
+}
+
+func (h *HTTP) RequiredChecks(ctx context.Context, branch string) (RequiredChecksResult, error) {
+	opts := &gogh.ListOptions{PerPage: 100}
+	failedPage := 0
+	items, err := paginate(0, func(page int) ([]RequiredCheck, int, error) {
+		opts.Page = page
+		rules, resp, err := h.gh.Repositories.ListRulesForBranch(ctx, h.o(), h.r(), branch, opts)
+		if err != nil {
+			failedPage = page
+			return nil, 0, err
+		}
+		var out []RequiredCheck
+		if rules != nil {
+			for _, rule := range rules.RequiredStatusChecks {
+				if rule == nil {
+					continue
+				}
+				for _, c := range rule.Parameters.RequiredStatusChecks {
+					if c != nil {
+						out = append(out, RequiredCheck{Context: c.Context, IntegrationID: c.GetIntegrationID()})
+					}
+				}
+			}
+		}
+		return out, nextPage(resp), nil
+	})
+	if err != nil {
+		err = h.fail(ctx, fmt.Sprintf("required checks of %q", branch), 0, err)
+		// Only a failure on the first page means "no rules API"; a later page
+		// failing after page 1 read fine is an ordinary error.
+		if failedPage <= 1 && rulesUnavailable(err) {
+			return RequiredChecksResult{}, nil
+		}
+		return RequiredChecksResult{}, err
+	}
+	return RequiredChecksResult{Available: true, Checks: normalizeChecks(items)}, nil
+}
+
+func (h *HTTP) ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error) {
+	opts := &gogh.ListCheckRunsOptions{Filter: gogh.Ptr("latest"), ListOptions: gogh.ListOptions{PerPage: 100}}
+	items, err := paginate(0, func(page int) ([]CheckRun, int, error) {
+		opts.Page = page
+		res, resp, err := h.gh.Checks.ListCheckRunsForRef(ctx, h.o(), h.r(), sha, opts)
+		if err != nil {
+			return nil, 0, err
+		}
+		out := make([]CheckRun, len(res.CheckRuns))
+		for i, r := range res.CheckRuns {
+			out[i] = CheckRun{Name: r.GetName(), AppID: r.GetApp().GetID(), Status: r.GetStatus(), Conclusion: r.GetConclusion(), ID: r.GetID(), CompletedAt: r.GetCompletedAt().Time}
+		}
+		return out, nextPage(resp), nil
+	})
+	return items, h.fail(ctx, fmt.Sprintf("list check runs of %s", sha), 0, err)
+}
+
 // ---- Writer ----
 
 func (h *HTTP) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {

@@ -222,3 +222,33 @@ type MergeInput struct{ SHA, Title, Message string }
 
 // MergeResult is the outcome of a merge.
 type MergeResult struct{ SHA string }
+
+// RequiredCheck is one status check a ruleset requires on a branch.
+type RequiredCheck struct {
+	Context       string
+	IntegrationID int64 // 0: any source may report it
+}
+
+// RequiredChecksResult is what the rules API says about a branch.
+//
+// Available is false when the repository has no rules API to ask: a free-plan
+// private repository (HTTP 403 "Upgrade to GitHub Pro or make this repository
+// public") or a 404. That is a normal answer meaning "no required checks", not
+// a failure. Available is true when the rules were read; Checks may then be
+// empty (no required_status_checks rule applies). Any other failure (5xx,
+// network, timeout, a permissions 403, an unexpected status) is returned as an
+// ordinary error and callers must treat it as "rules could not be read".
+type RequiredChecksResult struct {
+	Available bool
+	Checks    []RequiredCheck // union over every required_status_checks rule, deduped, sorted
+}
+
+// CheckRun is the latest run of one check on a commit.
+type CheckRun struct {
+	ID          int64     // higher is newer; filter=latest does not merge runs across check suites
+	CompletedAt time.Time // zero until completed
+	Name        string
+	AppID       int64
+	Status      string // queued|in_progress|completed|waiting|requested|pending
+	Conclusion  string // set when Status is completed
+}

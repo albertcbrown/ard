@@ -1,6 +1,8 @@
 package github
 
 import (
+	"sort"
+
 	gogh "github.com/google/go-github/v88/github"
 )
 
@@ -152,4 +154,24 @@ func timelineFrom(t *gogh.Timeline) TimelineEvent {
 		ev.Source = &IssueRef{Number: is.GetNumber(), IsPR: is.IsPullRequest(), State: State(is.GetState())}
 	}
 	return ev
+}
+
+// normalizeChecks dedupes on (Context, IntegrationID) and sorts by Context then
+// IntegrationID. The result is never nil-sensitive: empty in, empty out.
+func normalizeChecks(in []RequiredCheck) []RequiredCheck {
+	seen := map[RequiredCheck]bool{}
+	var out []RequiredCheck
+	for _, c := range in {
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Context != out[j].Context {
+			return out[i].Context < out[j].Context
+		}
+		return out[i].IntegrationID < out[j].IntegrationID
+	})
+	return out
 }

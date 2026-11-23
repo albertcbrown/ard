@@ -26,6 +26,8 @@ type config struct {
 	// interval; zero settle means a single call.
 	settle, every time.Duration
 	pin           bool
+	requiredCheck string
+	rulesPrivate  bool
 	pinCleanup    func(t *testing.T, c github.Client, n int)
 }
 
@@ -42,6 +44,19 @@ func WithEventualConsistency(timeout, interval time.Duration) Option {
 // the case ends, typically closing the issue.
 func WithPin(cleanup func(t *testing.T, c github.Client, n int)) Option {
 	return func(cfg *config) { cfg.pin, cfg.pinCleanup = true, cleanup }
+}
+
+// WithRequiredCheck declares that the repository's default branch requires the
+// status check named ctx, so RequiredChecksRead asserts it is reported.
+func WithRequiredCheck(ctx string) Option {
+	return func(cfg *config) { cfg.requiredCheck = ctx }
+}
+
+// WithRulesUnavailable declares that the repository has no rules API (a
+// free-plan private repository answers 403 "Upgrade to GitHub Pro or make this
+// repository public"), so RequiredChecksRead asserts Available is false.
+func WithRulesUnavailable() Option {
+	return func(cfg *config) { cfg.rulesPrivate = true }
 }
 
 // listUntil calls list until ok accepts the result or the deadline passes,
@@ -465,6 +480,86 @@ func Run(t *testing.T, newClient func(t *testing.T) github.Client, opts ...Optio
 		}
 		if !pr.Merged || pr.State != github.StateClosed {
 			t.Errorf("after merge: %+v", pr)
+		}
+	})
+
+	t.Run("RequiredChecksRead", func(t *testing.T) {
+		c := newClient(t)
+		res, err := c.RequiredChecks(ctx, "main")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.rulesPrivate {
+			if res.Available || len(res.Checks) != 0 {
+				t.Fatalf("got %+v, want rules unavailable", res)
+			}
+			return
+		}
+		if !res.Available {
+			t.Fatalf("rules unavailable: %+v", res)
+		}
+		found := false
+		for _, rc := range res.Checks {
+			if rc.Context == "" {
+				t.Errorf("empty context in %+v", res.Checks)
+			}
+			found = found || rc.Context == cfg.requiredCheck
+		}
+		if cfg.requiredCheck != "" && !found {
+			t.Errorf("required check %q missing from %+v", cfg.requiredCheck, res.Checks)
+		}
+	})
+
+	t.Run("CheckRunsRead", func(t *testing.T) {
+		if cfg.newPR == nil {
+			t.Skip("no PR factory")
+		}
+		c := newClient(t)
+		_, sha := cfg.newPR(t, c)
+		if _, err := c.ListCheckRuns(ctx, sha); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("UpdateBranchSHAGuard", func(t *testing.T) {
+		if cfg.newPR == nil {
+			t.Skip("no PR factory")
+		}
+		c := newClient(t)
+		n, _ := cfg.newPR(t, c)
+		err := c.UpdateBranch(ctx, n, "0000000000000000000000000000000000000000")
+		if !errors.Is(err, github.ErrConflict) {
+			t.Fatalf("stale SHA err = %v, want ErrConflict", err)
+		}
+	})
+
+	t.Run("MergeClosesLinkedIssue", func(t *testing.T) {
+		if cfg.newPR == nil {
+			t.Skip("no PR factory")
+		}
+		c := newClient(t)
+		n, sha := cfg.newPR(t, c)
+		is := mustIssue(t, c, "linked")
+		body := fmt.Sprintf("Closes #%d", is.Number)
+		if err := c.UpdatePR(ctx, n, github.PRUpdate{Body: &body}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.MergePR(ctx, n, github.MergeInput{SHA: sha}); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(cfg.settle)
+		for {
+			got, err := c.GetIssue(ctx, is.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State == github.StateClosed {
+				return
+			}
+			if !time.Now().Add(cfg.every).Before(deadline) {
+				t.Fatalf("issue #%d not closed by merge: %+v", is.Number, got)
+			}
+			time.Sleep(cfg.every)
 		}
 	})
 }

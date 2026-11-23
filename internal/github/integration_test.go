@@ -22,6 +22,11 @@ import (
 // TestIntegration runs the conformance suite against a real repository. It
 // skips unless ARD_IT_REPO (owner/name) and ARD_GITHUB_* credentials are set.
 // It creates issues and labels in that repo: point it at a scratch repository.
+//
+// Optional: ARD_IT_REQUIRED_CHECK names a status check the repo's rules require
+// (RequiredChecksRead asserts it is reported). ARD_IT_RULES_UNAVAILABLE=1 is
+// required on a free-plan private repository such as ard-scratch, whose rules
+// API answers 403 "Upgrade to GitHub Pro"; without it RequiredChecksRead fails.
 func TestIntegration(t *testing.T) {
 	repoName := os.Getenv("ARD_IT_REPO")
 	if repoName == "" {
@@ -49,7 +54,7 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clienttest.Run(t, func(t *testing.T) github.Client { return c },
+	opts := []clienttest.Option{
 		// Real GitHub's label and state filters lag a write by ~20 s.
 		clienttest.WithEventualConsistency(60*time.Second, 3*time.Second),
 		clienttest.WithPR(func(t *testing.T, c github.Client) (int, string) {
@@ -64,7 +69,17 @@ func TestIntegration(t *testing.T) {
 				t.Logf("cleanup: close pinned issue %d: %v", n, err)
 			}
 		}),
-	)
+	}
+	if rc := os.Getenv("ARD_IT_REQUIRED_CHECK"); rc != "" {
+		opts = append(opts, clienttest.WithRequiredCheck(rc))
+	}
+	// ard-scratch is private on a free plan: its rules API answers 403
+	// "Upgrade to GitHub Pro", which RequiredChecks reports as unavailable.
+	// Set ARD_IT_RULES_UNAVAILABLE=1 for such a repository.
+	if os.Getenv("ARD_IT_RULES_UNAVAILABLE") != "" {
+		opts = append(opts, clienttest.WithRulesUnavailable())
+	}
+	clienttest.Run(t, func(t *testing.T) github.Client { return c }, opts...)
 }
 
 // unpinIssue unpins issue n with the GraphQL unpinIssue mutation, logging any

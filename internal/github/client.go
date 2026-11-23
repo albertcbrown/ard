@@ -21,6 +21,11 @@ type Reader interface {
 	ListPRFiles(ctx context.Context, n int) ([]PRFile, error)
 	ListReviewComments(ctx context.Context, n int) ([]ReviewComment, error)
 	ListReviews(ctx context.Context, n int) ([]Review, error) // all pages, oldest first
+	// RequiredChecks reads the required status checks of the rules that apply
+	// to branch. See RequiredChecksResult for the "no rules API" result versus
+	// an error.
+	RequiredChecks(ctx context.Context, branch string) (RequiredChecksResult, error)
+	ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error) // filter=latest, all pages
 }
 
 // Writer is the write side. Only the effect layer (#13) may hold one.

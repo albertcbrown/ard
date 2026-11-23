@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -831,5 +832,105 @@ func TestRepoMovedErrorIsNotTransient(t *testing.T) {
 	e := fmt.Errorf("wrapped: %w", &RepoMovedError{Repo: Repo{"o", "r"}, Location: "/repositories/7"})
 	if IsTransient(e) || !errors.Is(e, ErrRepoMoved) || errors.Is(e, ErrNotFound) {
 		t.Errorf("err = %v", e)
+	}
+}
+
+func TestRequiredChecks(t *testing.T) {
+	ctx := context.Background()
+	const rules = "GET /repos/o/r/rules/branches/main"
+	const upgrade = `{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest/repos/rules#get-rules-for-a-branch","status":"403"}`
+	var base string
+	paged := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			fmt.Fprint(w, `[{"type":"required_status_checks","ruleset_id":2,"parameters":{"required_status_checks":[{"context":"build","integration_id":15368},{"context":"lint"}]}}]`)
+			return
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/rules/branches/main?page=2>; rel="next"`, base))
+		fmt.Fprint(w, `[{"type":"deletion","ruleset_id":1},{"type":"required_status_checks","ruleset_id":1,"parameters":{"required_status_checks":[{"context":"test"},{"context":"build","integration_id":15368}]}}]`)
+	}
+	tests := []struct {
+		name    string
+		h       http.HandlerFunc
+		want    RequiredChecksResult
+		wantErr func(error) bool // nil: no error
+	}{
+		{"paginated, deduped, sorted, nil integration id", paged,
+			RequiredChecksResult{Available: true, Checks: []RequiredCheck{{"build", 15368}, {"lint", 0}, {"test", 0}}}, nil},
+		{"empty list", respond(200, `[]`), RequiredChecksResult{Available: true}, nil},
+		{"no checks rule", respond(200, `[{"type":"deletion","ruleset_id":1}]`), RequiredChecksResult{Available: true}, nil},
+		{"403 upgrade is unavailable", respond(403, upgrade), RequiredChecksResult{}, nil},
+		{"404 is unavailable", respond(404, `{"message":"Not Found"}`), RequiredChecksResult{}, nil},
+		{"permissions 403 is an error", respond(403, `{"message":"Resource not accessible by integration"}`), RequiredChecksResult{},
+			func(e error) bool { return errors.Is(e, ErrForbidden) }},
+		{"403 rate limit header is a transient error", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.Header().Set("X-RateLimit-Reset", "4102444800")
+			w.WriteHeader(403)
+			fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+		}, RequiredChecksResult{}, IsTransient},
+		{"403 secondary rate limit is a transient error", respond(403, `{"message":"You have exceeded a secondary rate limit. Please wait."}`), RequiredChecksResult{}, IsTransient},
+		{"403 upgrade to Team is unavailable", respond(403, `{"message":"Upgrade to GitHub Team or make this repository public to enable this feature."}`), RequiredChecksResult{}, nil},
+		{"404 on page 2 is an error", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("page") == "2" {
+				w.WriteHeader(404)
+				fmt.Fprint(w, `{"message":"Not Found"}`)
+				return
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/rules/branches/main?page=2>; rel="next"`, base))
+			fmt.Fprint(w, `[{"type":"required_status_checks","ruleset_id":1,"parameters":{"required_status_checks":[{"context":"test"}]}}]`)
+		}, RequiredChecksResult{}, func(e error) bool { return errors.Is(e, ErrNotFound) }},
+		{"500 is a transient error", respond(500, `{"message":"boom"}`), RequiredChecksResult{}, IsTransient},
+		{"unexpected status is an error", respond(418, `{"message":"teapot"}`), RequiredChecksResult{},
+			func(e error) bool { var he *HTTPError; return errors.As(e, &he) && he.Status == 418 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newStubAPI(t, map[string]http.HandlerFunc{rules: tt.h})
+			base = s.URL
+			h := newTestHTTP(t, s, nil)
+			got, err := h.RequiredChecks(ctx, "main")
+			if tt.wantErr != nil {
+				if err == nil || !tt.wantErr(err) {
+					t.Fatalf("err = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestListCheckRunsPaginates(t *testing.T) {
+	var base string
+	s := newStubAPI(t, nil)
+	s.routes = map[string]http.HandlerFunc{
+		"GET /repos/o/r/commits/abc/check-runs": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("filter") != "latest" {
+				t.Errorf("filter = %q", r.URL.Query().Get("filter"))
+			}
+			if r.URL.Query().Get("page") == "2" {
+				fmt.Fprint(w, `{"total_count":2,"check_runs":[{"id":8,"name":"lint","status":"in_progress"}]}`)
+				return
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/commits/abc/check-runs?page=2>; rel="next"`, base))
+			fmt.Fprint(w, `{"total_count":2,"check_runs":[{"id":7,"name":"build","status":"completed","conclusion":"success","completed_at":"2026-01-02T03:04:05Z","app":{"id":15368}}]}`)
+		},
+	}
+	base = s.URL
+	h := newTestHTTP(t, s, nil)
+	got, err := h.ListCheckRuns(context.Background(), "abc")
+	want := []CheckRun{{ID: 7, Name: "build", AppID: 15368, Status: "completed", Conclusion: "success", CompletedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}, {ID: 8, Name: "lint", Status: "in_progress"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("runs = %+v, %v", got, err)
+	}
+
+	s2 := newStubAPI(t, map[string]http.HandlerFunc{"GET /repos/o/r/commits/abc/check-runs": respond(404, `{"message":"Not Found"}`)})
+	if _, err := newTestHTTP(t, s2, nil).ListCheckRuns(context.Background(), "abc"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }

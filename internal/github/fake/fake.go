@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +62,8 @@ type state struct {
 	pinned   map[int]bool
 	writes   []Call
 	fail     map[string][]error
+	required map[string]github.RequiredChecksResult
+	runs     map[string][]github.CheckRun
 }
 
 // Fake implements github.Client. Methods on the value returned by As attribute
@@ -84,6 +88,8 @@ func New(opts ...Option) *Fake {
 		branches: map[string]bool{},
 		pinned:   map[int]bool{},
 		fail:     map[string][]error{},
+		required: map[string]github.RequiredChecksResult{},
+		runs:     map[string][]github.CheckRun{},
 	}
 	for _, o := range opts {
 		o(s)
@@ -169,6 +175,28 @@ func (f *Fake) SetPRFiles(n int, files []github.PRFile) {
 	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
 	f.s.must(n).files = append([]github.PRFile(nil), files...)
+}
+
+// SetRequiredChecks sets the required status checks of branch (rules readable).
+func (f *Fake) SetRequiredChecks(branch string, cs ...github.RequiredCheck) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.required[branch] = github.RequiredChecksResult{Available: true, Checks: append([]github.RequiredCheck(nil), cs...)}
+}
+
+// SetRulesUnavailable makes RequiredChecks report no rules API for branch, as
+// a free-plan private repository does.
+func (f *Fake) SetRulesUnavailable(branch string) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.required[branch] = github.RequiredChecksResult{}
+}
+
+// SetCheckRuns sets the check runs reported on sha.
+func (f *Fake) SetCheckRuns(sha string, rs ...github.CheckRun) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.runs[sha] = append([]github.CheckRun(nil), rs...)
 }
 
 // SetMergeableState sets PR n's mergeable_state.
@@ -600,6 +628,31 @@ func (f *Fake) ListReviews(ctx context.Context, n int) ([]github.Review, error) 
 	return append([]github.Review(nil), it.reviewList...), nil
 }
 
+// RequiredChecks returns what SetRequiredChecks or SetRulesUnavailable seeded;
+// by default the rules are readable and empty.
+func (f *Fake) RequiredChecks(ctx context.Context, branch string) (github.RequiredChecksResult, error) {
+	unlock, err := f.beginRead("RequiredChecks")
+	defer unlock()
+	if err != nil {
+		return github.RequiredChecksResult{}, err
+	}
+	r, ok := f.s.required[branch]
+	if !ok {
+		return github.RequiredChecksResult{Available: true}, nil
+	}
+	r.Checks = append([]github.RequiredCheck(nil), r.Checks...)
+	return r, nil
+}
+
+func (f *Fake) ListCheckRuns(ctx context.Context, sha string) ([]github.CheckRun, error) {
+	unlock, err := f.beginRead("ListCheckRuns")
+	defer unlock()
+	if err != nil {
+		return nil, err
+	}
+	return append([]github.CheckRun(nil), f.s.runs[sha]...), nil
+}
+
 // ---- Writer ----
 
 func (f *Fake) CreateIssue(ctx context.Context, in github.NewIssue) (github.Issue, error) {
@@ -876,7 +929,11 @@ func (f *Fake) UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) 
 	if expectedHeadSHA != it.headSHA {
 		return fmt.Errorf("github: update branch %d: head moved: %w", n, github.ErrConflict)
 	}
+	if it.mergeSt == "dirty" {
+		return fmt.Errorf("github: update branch %d: merge conflict: %w", n, github.ErrConflict)
+	}
 	it.headSHA += "+base"
+	it.mergeSt = "clean"
 	return nil
 }
 
@@ -906,7 +963,29 @@ func (f *Fake) MergePR(ctx context.Context, n int, in github.MergeInput) (github
 	it.issue.StateReason = github.ReasonCompleted
 	f.s.event(it, f.actor, github.TimelineEvent{Event: "merged"})
 	f.s.event(it, f.actor, github.TimelineEvent{Event: "closed"})
+	if it.baseRef == "main" {
+		f.closeLinked(it.issue.Body)
+	}
 	return github.MergeResult{SHA: fmt.Sprintf("merge-%d", n)}, nil
+}
+
+var closesRe = regexp.MustCompile(`(?m)^Closes #(\d+)\s*$`)
+
+// closeLinked closes every open issue named by a "Closes #<n>" line, as GitHub
+// does for a PR merged into the default branch. Caller holds the lock.
+func (f *Fake) closeLinked(body string) {
+	for _, m := range closesRe.FindAllStringSubmatch(body, -1) {
+		n, _ := strconv.Atoi(m[1])
+		it, err := f.s.get(n)
+		if err != nil || it.isPR || it.issue.State != github.StateOpen {
+			continue
+		}
+		now := f.s.now()
+		it.issue.State = github.StateClosed
+		it.issue.ClosedAt = &now
+		it.issue.StateReason = github.ReasonCompleted
+		f.s.event(it, f.actor, github.TimelineEvent{Event: "closed"})
+	}
 }
 
 func (f *Fake) DeleteBranch(ctx context.Context, branch string) error {
