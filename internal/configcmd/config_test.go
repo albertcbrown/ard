@@ -323,3 +323,20 @@ func TestCheckIntakeLabel(t *testing.T) {
 		}
 	})
 }
+
+func TestCheckRefusesOldGit(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "git")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\necho 'git version 2.39.5'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitBin = shim
+	t.Cleanup(func() { gitBin = "" })
+	e, stdout, _ := testEnv(t, t.TempDir())
+	err := Check(context.Background(), e, cli.ConfigCheckOpts{})
+	if err == nil || !strings.Contains(err.Error(), "ard config check:") || !strings.Contains(err.Error(), "2.39.5") {
+		t.Fatalf("err = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+}
