@@ -1,0 +1,6 @@
+# whole package
+example.com/mt/a
+
+example.com/mt/tree/...
+example.com/mt/b:Fake*
+example.com/mt/b:T.Fake*
