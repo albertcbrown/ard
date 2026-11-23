@@ -42,7 +42,8 @@ func TestCommitType(t *testing.T) {
 		labels []string
 		want   string
 	}{
-		{nil, "chore"},
+		{nil, ""},
+		{[]string{"area:x"}, ""},
 		{[]string{"type:feature"}, "feat"},
 		{[]string{"area:x", "type:bug"}, "fix"},
 		{[]string{"type:docs"}, "docs"},
@@ -50,7 +51,7 @@ func TestCommitType(t *testing.T) {
 		{[]string{"type:refactor"}, "refactor"},
 		{[]string{"type:test"}, "test"},
 		{[]string{"TYPE:Bug"}, "fix"},
-		{[]string{"type:decision"}, "chore"},
+		{[]string{"type:decision"}, ""},
 	} {
 		if got := CommitType(tc.labels); got != tc.want {
 			t.Errorf("CommitType(%v) = %q, want %q", tc.labels, got, tc.want)
@@ -185,6 +186,9 @@ Opened by ard from issue #7. The summary below was written by an agent and is un
 	}
 	if got, _ := Title("fix", "Crash (on) start", 7, "J1"); got != "fix: Crash (on) start (#7)" {
 		t.Errorf("title = %q", got)
+	}
+	if got, _ := Title("", "Crash on start", 7, "J1"); got != "Crash on start (#7)" {
+		t.Errorf("unprefixed title = %q", got)
 	}
 	if got, _ := Title("fix", "Fixes #5 now", 7, "J1"); strings.Contains(got, "#5") {
 		t.Errorf("title keeps a closing ref: %q", got)

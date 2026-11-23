@@ -4,7 +4,8 @@ import "strings"
 
 // CommitType maps an issue's type:* label to a conventional-commit type:
 // type:feature is feat, type:bug is fix, and docs, chore, refactor and test
-// keep their names. Any other label, or none, is chore.
+// keep their names. Any other label, or none, is "": the caller then leaves
+// the prefix out rather than guessing one.
 func CommitType(labels []string) string {
 	for _, l := range labels {
 		switch strings.ToLower(l) {
@@ -22,5 +23,5 @@ func CommitType(labels []string) string {
 			return "test"
 		}
 	}
-	return "chore"
+	return ""
 }
