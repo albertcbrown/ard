@@ -1,0 +1,548 @@
+# Versions every PR merge to main as vX.Y.Z (#183). Each run reconciles: it
+# tags every untagged first-parent commit after the newest version tag, oldest
+# first, with an annotated tag and a notes-only release. It never moves or
+# deletes a tag. The bump comes from the merged PR's labels: semver:major,
+# semver:minor, else patch. ard's own main-lane commits (committer ARD_BOT_LOGIN)
+# are skipped; a direct push gets patch.
+#
+# Every run is a dry run until the repository variable ARD_VERSIONING is "on".
+# workflow_dispatch is a dry run unless dry_run is false.
+#
+# The logic is inline bash here, not Go, for the reason bot-commits.yml gives:
+# the job holds a tag-writing credential, and .github/ is the one place ard
+# cannot change. It never runs code from the checkout. internal/versioncheck
+# extracts the scripts in steps "plan" and "tag" and tests them.
+name: version
+
+on:
+  push:
+    branches: [main]
+  # Catches merges whose push run was suppressed by [skip ci] or dropped.
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Plan only; create no tag or release
+        type: boolean
+        default: true
+      max_tags:
+        description: Most tags one run may create
+        type: string
+        default: '20'
+
+concurrency:
+  group: version-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      live: ${{ steps.plan.outputs.live }}
+      count: ${{ steps.plan.outputs.count }}
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: main
+          persist-credentials: false
+      - id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: main
+          BOT_LOGIN: ${{ vars.ARD_BOT_LOGIN }}
+          ENABLED: ${{ vars.ARD_VERSIONING }}
+          EVENT: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          MAX_TAGS: ${{ inputs.max_tags }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          # Exit 0: plan written (possibly empty). 2: cannot plan. Never 1.
+          # Plan rows, tab-separated: kind sha tag pr bump title, where kind is
+          # "tag" or "backfill" (a release for an existing tag).
+          tmpd=""
+          on_exit() {
+            local rc=$?
+            if [[ -n "$tmpd" ]]; then rm -rf "$tmpd"; fi
+            if [[ $rc -ne 0 && $rc -ne 2 ]]; then
+              echo "::error title=version::unexpected failure (exit $rc)"
+              exit 2
+            fi
+          }
+          trap on_exit EXIT
+          esc() {
+            local s=$1
+            s=${s//'%'/%25}
+            s=${s//$'\r'/%0D}
+            s=${s//$'\n'/%0A}
+            printf '%s' "$s"
+          }
+          fail() { echo "::error title=version::$(esc "$1")"; exit 2; }
+          warn() { echo "::warning title=version::$(esc "$1")"; }
+
+          if [[ -z "${BOT_LOGIN:-}" ]]; then
+            fail "set the ARD_BOT_LOGIN repository variable to the App's <slug>[bot] login"
+          fi
+          [[ -n "${REPO:-}" ]] || fail "REPO is not set"
+          branch=${BRANCH:-main}
+          head_ref="refs/remotes/origin/$branch"
+          retry_sleep=${RETRY_SLEEP:-5}
+          [[ "$retry_sleep" =~ ^[0-9]{1,4}$ ]] || retry_sleep=5
+          retry_max=${RETRY_MAX:-3}
+          [[ "$retry_max" =~ ^[0-9]{1,4}$ ]] || retry_max=3
+          max_tags=20
+          if [[ "${MAX_TAGS:-}" =~ ^[0-9]{1,6}$ ]]; then
+            max_tags=$((10#$MAX_TAGS))
+          fi
+
+          live=false
+          mode="dry run: ARD_VERSIONING is not on"
+          if [[ "${ENABLED:-}" == on ]]; then
+            if [[ "${EVENT:-}" != workflow_dispatch || "${INPUT_DRY_RUN:-}" == false ]]; then
+              live=true
+              mode=live
+            else
+              mode="dry run: workflow_dispatch with dry_run"
+            fi
+          fi
+
+          tmpd=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/version.XXXXXX")
+          plan=$tmpd/plan
+          : >"$plan"
+          rows=()
+
+          write_outputs() {
+            local count b64
+            count=$(wc -l <"$plan")
+            count=$((count + 0))
+            b64=$(base64 <"$plan" | tr -d '\n')
+            if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+              {
+                echo "live=$live"
+                echo "count=$count"
+                echo "plan=$b64"
+              } >>"$GITHUB_OUTPUT"
+            fi
+            echo "$count plan row(s); $mode"
+          }
+
+          write_summary() { # note
+            [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
+            {
+              echo "### Version plan ($mode)"
+              echo
+              if [[ ${#rows[@]} -gt 0 ]]; then
+                echo "| sha | tag | bump | PR |"
+                echo "| --- | --- | --- | --- |"
+                printf '%s\n' "${rows[@]}"
+              else
+                echo "$1"
+              fi
+            } >>"$GITHUB_STEP_SUMMARY"
+          }
+
+          # api PATH: API_STATUS=ok with API_BODY, or API_STATUS=404.
+          # Any other failure stops the run: it never guesses after an API error.
+          api() {
+            API_BODY=""
+            API_STATUS=""
+            if API_BODY=$(gh api "$1" 2>"$tmpd/gh.err"); then
+              API_STATUS=ok
+              return 0
+            fi
+            if grep -q 'HTTP 404' "$tmpd/gh.err"; then
+              API_STATUS=404
+              return 0
+            fi
+            cat "$tmpd/gh.err" >&2
+            fail "GitHub API call $1 failed"
+          }
+
+          [[ "$(git rev-parse --is-shallow-repository)" == false ]] || fail "shallow clone; check out with fetch-depth: 0"
+          git rev-parse -q --verify "$head_ref^{commit}" >/dev/null || fail "$head_ref is missing"
+          head=$(git rev-parse "$head_ref^{commit}")
+
+          # Version tags. Anything not matching ver_re is ignored.
+          ver_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          vgt() { # x y z X Y Z: is x.y.z greater than X.Y.Z
+            if (($1 != $4)); then (($1 > $4)); return; fi
+            if (($2 != $5)); then (($2 > $5)); return; fi
+            (($3 > $6))
+          }
+          parts() { # tag: sets PX PY PZ
+            [[ "$1" =~ $ver_re ]] || fail "$1 is not a version tag"
+            if ((${#BASH_REMATCH[1]} > 9 || ${#BASH_REMATCH[2]} > 9 || ${#BASH_REMATCH[3]} > 9)); then
+              fail "version tag $1 is too large"
+            fi
+            PX=${BASH_REMATCH[1]}
+            PY=${BASH_REMATCH[2]}
+            PZ=${BASH_REMATCH[3]}
+          }
+          declare -A tag_of=()
+          max_tag=""
+          mx=0 my=0 mz=0
+          while IFS= read -r name; do
+            [[ "$name" =~ $ver_re ]] || continue
+            parts "$name"
+            x=$PX y=$PY z=$PZ
+            c=$(git rev-parse -q --verify "refs/tags/$name^{commit}") || fail "version tag $name does not point at a commit"
+            if [[ -n "${tag_of[$c]:-}" ]]; then
+              parts "${tag_of[$c]}"
+              if vgt "$x" "$y" "$z" "$PX" "$PY" "$PZ"; then tag_of[$c]=$name; fi
+            else
+              tag_of[$c]=$name
+            fi
+            if [[ -z "$max_tag" ]] || vgt "$x" "$y" "$z" "$mx" "$my" "$mz"; then
+              max_tag=$name mx=$x my=$y mz=$z
+            fi
+          done < <(git for-each-ref --format='%(refname:strip=2)' 'refs/tags/v*')
+
+          if [[ -z "$max_tag" ]]; then
+            if [[ "$live" == true ]]; then
+              fail "no version tag: create the annotated seed tag v0.1.0 (docs/runbooks/release.md)"
+            fi
+            echo "::notice title=version::no version tag yet; nothing to plan until an admin creates the annotated seed tag v0.1.0 (docs/runbooks/release.md)"
+            write_summary "No version tag yet: create the annotated seed tag v0.1.0 (docs/runbooks/release.md)."
+            write_outputs
+            exit 0
+          fi
+
+          base="" base_tag=""
+          while IFS= read -r c; do
+            if [[ -n "${tag_of[$c]:-}" ]]; then
+              base=$c base_tag=${tag_of[$c]}
+              break
+            fi
+          done < <(git rev-list --first-parent "$head")
+          [[ -n "$base" ]] || fail "version tags exist (highest $max_tag) but none is on first-parent origin/$branch"
+          if [[ "$max_tag" != "$base_tag" ]]; then
+            warn "highest version tag $max_tag is not the newest on first-parent origin/$branch ($base_tag); numbering continues from $max_tag"
+          fi
+
+          # A tag without a release: the seed tag, or a run that died between
+          # pushing a tag and creating its release.
+          api "repos/$REPO/releases/tags/$base_tag"
+          if [[ "$API_STATUS" == 404 ]]; then
+            printf 'backfill\t%s\t%s\t\t\t\n' "$base" "$base_tag" >>"$plan"
+            rows+=("| \`${base:0:12}\` | $base_tag | release only | |")
+            echo "$base -> $base_tag (release backfill)"
+          fi
+
+          squash_re='\(#([0-9]+)\)$'
+          merge_re='^Merge pull request #([0-9]+) from '
+          # shellcheck disable=SC2016 # jq variables, not shell
+          match='select(.merged_at != null and .merge_commit_sha == $sha and .base.ref == $b)'
+          suffix="+${BOT_LOGIN}@users.noreply.github.com"
+          ntag=0
+          while IFS= read -r -u 3 sha; do
+            ce=$(git log -1 --format=%ce "$sha")
+            cn=$(git log -1 --format=%cn "$sha")
+            subject=$(git log -1 --format=%s "$sha")
+
+            # ard's main-lane commits: the identity test bot-commits.yml uses.
+            bot=0
+            # Case-insensitive; the legacy <login>@users.noreply form and any
+            # control character in the identity (fail closed) also count.
+            shopt -s nocasematch
+            [[ "$cn" == "$BOT_LOGIN" ]] && bot=1
+            [[ "$ce" == "$BOT_LOGIN@users.noreply.github.com" ]] && bot=1
+            if [[ "$ce" == *"$suffix" ]]; then
+              prefix=${ce:0:$((${#ce} - ${#suffix}))}
+              [[ -n "$prefix" && "$prefix" != *[!0-9]* ]] && bot=1
+            fi
+            shopt -u nocasematch
+            [[ "$cn" == *[[:cntrl:]]* || "$ce" == *[[:cntrl:]]* ]] && bot=1
+            if [[ $bot == 1 ]]; then
+              echo "skip $sha (ard main-lane commit)"
+              continue
+            fi
+
+            subj_pr=""
+            if [[ "$subject" =~ $squash_re || "$subject" =~ $merge_re ]]; then
+              if ((${#BASH_REMATCH[1]} <= 9)); then subj_pr=$((10#${BASH_REMATCH[1]})); fi
+            fi
+
+            # The merged PR: commits/{sha}/pulls, then the number in the
+            # subject; retried while GitHub's association lags the merge.
+            pr_json=""
+            attempt=0
+            while :; do
+              api "repos/$REPO/commits/$sha/pulls"
+              [[ "$API_STATUS" == ok ]] || fail "GitHub API call repos/$REPO/commits/$sha/pulls: HTTP 404"
+              pr_json=$(jq -c --arg sha "$sha" --arg b "$branch" "first(.[] | $match) // empty" <<<"$API_BODY")
+              [[ -n "$pr_json" ]] && break
+              [[ -n "$subj_pr" ]] || break
+              api "repos/$REPO/pulls/$subj_pr"
+              if [[ "$API_STATUS" == ok ]]; then
+                pr_json=$(jq -c --arg sha "$sha" --arg b "$branch" "$match" <<<"$API_BODY")
+              fi
+              [[ -n "$pr_json" ]] && break
+              ((attempt < retry_max)) || break
+              attempt=$((attempt + 1))
+              sleep "$retry_sleep"
+            done
+
+            if [[ -n "$pr_json" ]]; then
+              pr=$(jq -r '.number' <<<"$pr_json")
+              title=$(jq -r '.title // ""' <<<"$pr_json")
+              major=$(jq -r 'any(.labels[]?; .name == "semver:major")' <<<"$pr_json")
+              minor=$(jq -r 'any(.labels[]?; .name == "semver:minor")' <<<"$pr_json")
+              who="PR #$pr"
+            else
+              warn "$sha has no merged PR; patch bump"
+              pr="" title=$subject major=false minor=false
+              who="commit $sha"
+            fi
+            [[ "$pr" =~ ^[0-9]*$ ]] || fail "$sha: unexpected PR number"
+            title=$(jq -rn --arg t "$title" '$t | gsub("\\p{Cc}"; " ") | .[0:200]')
+
+            if [[ "$major" == true ]]; then
+              bump="major"
+              if [[ "$minor" == true ]]; then warn "PR #$pr has both semver labels; major wins"; fi
+              mx=$((mx + 1)) my=0 mz=0
+            elif [[ "$minor" == true ]]; then
+              bump="minor"
+              my=$((my + 1)) mz=0
+            else
+              bump="patch"
+              mz=$((mz + 1))
+            fi
+            ver="v$mx.$my.$mz"
+
+            # Go requires the /vN module path for a vN tag, N >= 2, and none below.
+            mod=""
+            if git cat-file -e "$sha:go.mod" 2>/dev/null; then
+              mod=$(git cat-file blob "$sha:go.mod" | awk '$1 == "module" { m = $2 } END { print m }')
+              mod=${mod//\"/}
+            fi
+            s=0
+            if [[ "$mod" =~ /v([0-9]{1,9})$ ]] && ((10#${BASH_REMATCH[1]} >= 2)); then
+              s=$((10#${BASH_REMATCH[1]}))
+            fi
+            if ! { ((mx >= 2 && s == mx)) || ((mx < 2 && s == 0)); }; then
+              if ((mx >= 2)); then need="module path ending in /v$mx"; else need="module path without a /vN suffix"; fi
+              fail "$who ($sha) would be $ver, which needs a $need, but go.mod declares module '$mod'. Relabel the PR and rerun, or change go.mod."
+            fi
+
+            printf 'tag\t%s\t%s\t%s\t%s\t%s\n' "$sha" "$ver" "$pr" "$bump" "$title" >>"$plan"
+            if [[ -n "$pr" ]]; then
+              echo "$sha -> $ver ($bump, #$pr)"
+              rows+=("| \`${sha:0:12}\` | $ver | $bump | #$pr |")
+            else
+              echo "$sha -> $ver ($bump, no PR)"
+              rows+=("| \`${sha:0:12}\` | $ver | $bump | none |")
+            fi
+            ntag=$((ntag + 1))
+          done 3< <(git rev-list --first-parent --reverse "$base..$head")
+
+          write_summary "Nothing to tag: $base_tag is current."
+          if ((ntag > max_tags)); then
+            fail "$ntag untagged merges, over the cap of $max_tags; rerun with workflow_dispatch max_tags=$ntag after checking the plan"
+          fi
+          write_outputs
+
+  tag:
+    needs: plan
+    if: needs.plan.outputs.live == 'true' && needs.plan.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: main
+          persist-credentials: false
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - id: tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PUSH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          BOT_LOGIN: ${{ vars.ARD_BOT_LOGIN }}
+          TAGGER_NAME: ${{ vars.RELEASE_BOT_NAME }}
+          TAGGER_EMAIL: ${{ vars.RELEASE_BOT_EMAIL }}
+          REPO: ${{ github.repository }}
+          BRANCH: main
+          LIVE: ${{ needs.plan.outputs.live }}
+          PLAN_B64: ${{ needs.plan.outputs.plan }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          # Exit 0: every plan row done. 2: stopped at the first failure; the
+          # next run replans from the tags that exist. Never 1.
+          tmpd=""
+          on_exit() {
+            local rc=$?
+            if [[ -n "$tmpd" ]]; then rm -rf "$tmpd"; fi
+            if [[ $rc -ne 0 && $rc -ne 2 ]]; then
+              echo "::error title=version::unexpected failure (exit $rc)"
+              exit 2
+            fi
+          }
+          trap on_exit EXIT
+          esc() {
+            local s=$1
+            s=${s//'%'/%25}
+            s=${s//$'\r'/%0D}
+            s=${s//$'\n'/%0A}
+            printf '%s' "$s"
+          }
+          fail() { echo "::error title=version::$(esc "$1")"; exit 2; }
+
+          [[ "${LIVE:-}" == true ]] || fail "refusing to tag: not a live run"
+          if [[ -z "${BOT_LOGIN:-}" ]]; then
+            fail "set the ARD_BOT_LOGIN repository variable to the App's <slug>[bot] login"
+          fi
+          shopt -s nocasematch
+          if [[ "${APP_SLUG:-}[bot]" == "$BOT_LOGIN" ]]; then
+            shopt -u nocasematch
+            fail "refusing to tag: the release App must not be ard's App ($BOT_LOGIN)"
+          fi
+          shopt -u nocasematch
+          if [[ -z "${TAGGER_NAME:-}" || -z "${TAGGER_EMAIL:-}" ]]; then
+            fail "refusing to tag: set the RELEASE_BOT_NAME and RELEASE_BOT_EMAIL repository variables"
+          fi
+          [[ -n "${REPO:-}" ]] || fail "REPO is not set"
+          export GH_REPO=$REPO
+          branch=${BRANCH:-main}
+          head_ref="refs/remotes/origin/$branch"
+          ver_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+          tmpd=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/version.XXXXXX")
+          plan=$tmpd/plan
+          printf '%s' "${PLAN_B64:-}" | base64 --decode >"$plan" || fail "cannot decode the plan"
+
+          # The token goes in a per-command header, never into .git/config.
+          auth=()
+          if [[ -n "${PUSH_TOKEN:-}" ]]; then
+            basic=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')
+            echo "::add-mask::$basic"
+            auth=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic $basic")
+          fi
+
+          # Split a plan row on tabs, keeping empty fields.
+          split() {
+            local s=$1
+            F=()
+            while [[ "$s" == *$'\t'* ]]; do
+              F+=("${s%%$'\t'*}")
+              s=${s#*$'\t'}
+            done
+            F+=("$s")
+          }
+
+          # Notes: the tag message body and the release notes. The title is
+          # untrusted; a code span keeps mentions, markdown and closing
+          # references from rendering.
+          notes() { # title pr sha bump
+            local t=${1//'`'/\'} link
+            [[ -n "$t" ]] || t="(no title)"
+            if [[ -n "$2" ]]; then
+              link=" ([#$2](https://github.com/$REPO/pull/$2))"
+            else
+              link=" (${3:0:7})"
+            fi
+            # shellcheck disable=SC2016 # literal backticks: a code span
+            printf '`%s`%s\n\nBump: %s\n' "$t" "$link" "$4"
+          }
+
+          # Check every row before acting on any.
+          n=0
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            n=$((n + 1))
+            split "$line"
+            [[ ${#F[@]} -eq 6 ]] || fail "plan row $n: want 6 fields, got ${#F[@]}"
+            case "${F[0]}" in
+              tag)
+                [[ "${F[1]}" =~ ^[0-9a-f]{40}$ && "${F[2]}" =~ $ver_re && "${F[3]}" =~ ^[0-9]*$ ]] || fail "plan row $n is malformed"
+                case "${F[4]}" in major | minor | patch) ;; *) fail "plan row $n: bad bump" ;; esac
+                ;;
+              backfill)
+                [[ "${F[2]}" =~ $ver_re ]] || fail "plan row $n is malformed"
+                ;;
+              *) fail "plan row $n: unknown kind" ;;
+            esac
+          done <"$plan"
+          if [[ $n -eq 0 ]]; then
+            echo "empty plan; nothing to do"
+            exit 0
+          fi
+
+          git rev-parse -q --verify "$head_ref^{commit}" >/dev/null || fail "$head_ref is missing"
+          declare -A first_parent=()
+          while IFS= read -r c; do first_parent[$c]=1; done < <(git rev-list --first-parent "$head_ref")
+
+          # Tags on origin now: name -> commit, and commit -> version tag.
+          git "${auth[@]}" ls-remote --tags origin >"$tmpd/remote" || fail "cannot list the tags on origin"
+          declare -A remote_tag=() remote_ver_at=()
+          while IFS=$'\t' read -r obj ref; do
+            name=${ref#refs/tags/}
+            name=${name%'^{}'}
+            remote_tag[$name]=1
+            if [[ "$name" =~ $ver_re ]]; then
+              # Keyed by the object and, from the peeled ^{} line, by the commit.
+              remote_ver_at[$obj]=$name
+            fi
+          done <"$tmpd/remote"
+
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            split "$line"
+            kind=${F[0]} sha=${F[1]} ver=${F[2]} pr=${F[3]} bump=${F[4]} title=${F[5]}
+
+            if [[ "$kind" == backfill ]]; then
+              git rev-parse -q --verify "refs/tags/$ver" >/dev/null || fail "backfill: $ver is not a local tag"
+              body=""
+              if [[ "$(git cat-file -t "refs/tags/$ver")" == tag ]]; then
+                body=$(git for-each-ref --format='%(contents:body)' "refs/tags/$ver")
+              fi
+              [[ -n "${body//[[:space:]]/}" ]] || body="Version $ver."
+              printf '%s\n' "$body" >"$tmpd/notes"
+              gh release create "$ver" --verify-tag --title "$ver" --notes-file "$tmpd/notes" || fail "release for $ver failed; the next run retries it"
+              echo "released $ver (backfill)"
+              continue
+            fi
+
+            # Re-check against what exists now; never renumber.
+            [[ -n "${first_parent[$sha]:-}" ]] || fail "$sha is not on first-parent origin/$branch; not tagging $ver"
+            while IFS= read -r t; do
+              [[ "$t" =~ $ver_re ]] && fail "$sha already has version tag $t"
+            done < <(git tag --points-at "$sha")
+            [[ -z "${remote_ver_at[$sha]:-}" ]] || fail "$sha already has version tag ${remote_ver_at[$sha]} on origin"
+            if git rev-parse -q --verify "refs/tags/$ver" >/dev/null || [[ -n "${remote_tag[$ver]:-}" ]]; then
+              fail "$ver already exists; not tagging $sha"
+            fi
+
+            notes "$title" "$pr" "$sha" "$bump" >"$tmpd/notes"
+            { printf '%s\n\n' "$ver"; cat "$tmpd/notes"; } >"$tmpd/msg"
+            GIT_COMMITTER_NAME=$TAGGER_NAME GIT_COMMITTER_EMAIL=$TAGGER_EMAIL \
+              git tag -a --cleanup=whitespace -F "$tmpd/msg" "$ver" "$sha" || fail "cannot create tag $ver"
+            git "${auth[@]}" push origin "refs/tags/$ver" || fail "push of $ver was rejected"
+            echo "tagged $sha as $ver"
+            gh release create "$ver" --verify-tag --title "$ver" --notes-file "$tmpd/notes" || fail "release for $ver failed; the next run backfills it"
+            echo "released $ver"
+          done <"$plan"
