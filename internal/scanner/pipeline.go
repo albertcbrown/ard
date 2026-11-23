@@ -69,6 +69,7 @@ type RunResult struct {
 	Closed     int
 	Deferred   int // closes or edits skipped for a hold or a running job
 	OverBudget int
+	NearDup    int // findings skipped as near-duplicates of an open issue or an earlier finding (LLM scanners)
 
 	// GuardRule and GuardField are the first guard hit's rule and field, or
 	// "scan-error" and "" when a guard pass failed.
@@ -180,7 +181,7 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 		p.noteRun(ctx, store, role, res)
 		log.Info("scanner.run", "sha", res.SHA, "outcome", outcome, "found", res.Found, "new", res.New,
 			"regressions", res.Regress, "suppressed", res.Suppressed, "joined", res.Joined, "created", res.Created,
-			"closed", res.Closed, "edited", res.Edited, "deferred", res.Deferred, "over_budget", res.OverBudget,
+			"closed", res.Closed, "edited", res.Edited, "deferred", res.Deferred, "over_budget", res.OverBudget, "near_duplicates", res.NearDup,
 			"duration", p.now().Sub(start).String())
 	}
 
@@ -200,7 +201,7 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 	views := make([]IssueView, 0, len(open))
 	openNums := map[int]bool{}
 	for _, is := range open {
-		views = append(views, IssueView{Number: is.Number, Labels: is.Labels, CreatedAt: is.CreatedAt, Body: is.Body, Parsed: ParseBody(is.Body)})
+		views = append(views, IssueView{Number: is.Number, Title: is.Title, Labels: is.Labels, CreatedAt: is.CreatedAt, Body: is.Body, Parsed: ParseBody(is.Body)})
 		openNums[is.Number] = true
 	}
 
@@ -382,6 +383,23 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 	}
 	for _, r := range plan.Regress {
 		items = append(items, Item{F: r.Finding, RegressionOf: r.Of})
+	}
+	if role.LLMScanner() {
+		// Dry-run synthetic issues carry no title and are not compared.
+		var titled []TitledIssue
+		for _, v := range views {
+			ti := TitledIssue{Number: v.Number, Titles: []string{v.Title}}
+			for _, l := range v.Parsed.Lines {
+				ti.Titles = append(ti.Titles, l.Title)
+			}
+			titled = append(titled, ti)
+		}
+		var dups []NearDup
+		items, dups = SkipNearDuplicates(items, titled)
+		res.NearDup = len(dups)
+		for _, d := range dups {
+			log.Info("scanner.near_duplicate", "fingerprint", d.Fingerprint, "issue", d.Issue)
+		}
 	}
 	ops, over := PlanGroups(items, ex.joinable(views, synth), role.GroupSize, budget)
 	res.OverBudget = over
@@ -824,6 +842,20 @@ func linesOf(items []Item) []Line {
 	return out
 }
 
+// llmFooter ends the body of an issue filed by a scanner that does not route
+// to triage. A later join edits the body in place, so the footer stays put.
+const llmFooter = "Filed by an LLM scanner; not triaged automatically. Add `ard:pending` to send it to triage, or close it as not planned to dismiss it for 90 days."
+
+// createBody renders the body of a new issue, with the footer unless the
+// scanner routes to ard:pending.
+func createBody(role config.Role, parsed Parsed, fs []Finding) string {
+	body := RenderBody("", parsed, fs)
+	if role.Route != config.RoutePending {
+		body = strings.TrimRight(body, "\n") + "\n\n" + llmFooter + "\n"
+	}
+	return body
+}
+
 // create files a new issue for op.Items.
 func (e *execution) create(op GroupOp) {
 	if e.budget <= 0 {
@@ -838,7 +870,7 @@ func (e *execution) create(op GroupOp) {
 	}
 	parsed := Parsed{Scanner: e.role.Name, Group: op.Group, HasSpan: true, Lines: linesOf(op.Items)}
 	title := IssueTitle(e.role.Name, op.Group, e.p.groupSize(e.role), op.Items)
-	body := RenderBody("", parsed, findingsOf(op.Items))
+	body := createBody(e.role, parsed, findingsOf(op.Items))
 	is, err := e.p.Effects.CreateIssue(e.ctx, github.NewIssue{Title: title, Body: body, Labels: e.roleLabels()})
 	if err != nil {
 		e.fail(fmt.Errorf("create issue %q: %w", title, err))

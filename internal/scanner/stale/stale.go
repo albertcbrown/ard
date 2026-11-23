@@ -81,8 +81,10 @@ func (c *Closer) run(ctx context.Context, log *slog.Logger, cfg *config.Resolved
 		return ErrNoBotIdentity
 	}
 	scanners := map[string]bool{}
+	var names []string
 	for _, r := range cfg.RolesOf(config.KindScanner) {
 		scanners[r.Name] = true
+		names = append(names, r.Name)
 	}
 	in := inputs{
 		bot: id.Login, scanners: scanners,
@@ -92,6 +94,27 @@ func (c *Closer) run(ctx context.Context, log *slog.Logger, cfg *config.Resolved
 	issues, err := c.gh.SearchIssues(ctx, q, github.SearchOpts{Sort: "created", Order: "asc", Max: 1000})
 	if err != nil {
 		return fmt.Errorf("stale: search: %w", err)
+	}
+	// A scanner whose route is none leaves its issues with only the scanner
+	// label, which no search can express as "no other ard: label"; ask per
+	// scanner and let precheck decide.
+	seen := map[int]bool{}
+	for _, is := range issues {
+		seen[is.Number] = true
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		q := fmt.Sprintf(`is:open label:"%s" -label:"%s" -label:"%s"`, labels.Scanner(name), labels.NeedsHuman, labels.Hold)
+		more, err := c.gh.SearchIssues(ctx, q, github.SearchOpts{Sort: "created", Order: "asc", Max: 1000})
+		if err != nil {
+			return fmt.Errorf("stale: search %s: %w", name, err)
+		}
+		for _, is := range more {
+			if !seen[is.Number] {
+				seen[is.Number] = true
+				issues = append(issues, is)
+			}
+		}
 	}
 	sort.Slice(issues, func(i, j int) bool { return issues[i].Number < issues[j].Number })
 
