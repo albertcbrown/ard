@@ -7,7 +7,8 @@ import (
 )
 
 func newServe(app *App) *cobra.Command {
-	return &cobra.Command{
+	var opts ServeOpts
+	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the ard controller loops",
 		Args:  cobra.NoArgs,
@@ -16,8 +17,11 @@ func newServe(app *App) *cobra.Command {
 				if app.Handlers.Serve == nil {
 					return notImpl(cmd.CommandPath(), "#15")
 				}
-				return app.Handlers.Serve(ctx, e)
+				return app.Handlers.Serve(ctx, e, opts)
 			})
 		},
 	}
+	cmd.Flags().StringSliceVar(&opts.Loops, "loops", nil,
+		"run only these controller loops (comma-separated: scanners, stale, triage, workers, reviewers, reaper); default every loop")
+	return cmd
 }

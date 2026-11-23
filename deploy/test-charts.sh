@@ -70,7 +70,9 @@ check "pod has no other container or init container" test "$(dep '[.spec.templat
 check "deployment is one replica with Recreate" test "$(dep '(.spec.replicas | tostring) + " " + .spec.strategy.type')" = "1 Recreate"
 args="$(ctr '.args | join(" ")')"
 check "serve args include --dry-run --repo albertcbrown/ard" \
-  test "$args" = "serve --dry-run --repo albertcbrown/ard"
+  test "$args" = "serve --dry-run --repo albertcbrown/ard --loops scanners,stale,reaper"
+check "serve runs only the scanners, stale and reaper loops" \
+  bash -c "printf '%s\n' \"$args\" | grep -Eq -- '--loops scanners,stale,reaper( |\$)'"
 check "HOME is /home/ard" test "$(ctr '.env[] | select(.name == "HOME") | .value')" = "/home/ard"
 claim="$(dep '.spec.template.spec.volumes[] | select(.name == "home") | .persistentVolumeClaim.claimName')"
 pvc="$(yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' "$work/serve.yaml")"

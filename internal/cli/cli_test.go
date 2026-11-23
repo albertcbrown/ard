@@ -141,9 +141,25 @@ func TestRunHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("serve --loops reaches the handler", func(t *testing.T) {
+		var got []string
+		h := Handlers{Serve: func(_ context.Context, _ *Env, o ServeOpts) error { got = o.Loops; return nil }}
+		var stdout, stderr strings.Builder
+		if code := Run([]string{"serve", "--loops", "scanners,stale", "--loops", "reaper"}, &stdout, &stderr, h, "dev"); code != 0 {
+			t.Fatalf("exit = %d (stderr %q)", code, stderr.String())
+		}
+		if strings.Join(got, ",") != "scanners,stale,reaper" {
+			t.Errorf("Loops = %v", got)
+		}
+		got = []string{"x"}
+		if code := Run([]string{"serve"}, &stdout, &stderr, h, "dev"); code != 0 || len(got) != 0 {
+			t.Errorf("no --loops: exit %d, Loops = %v, want empty", code, got)
+		}
+	})
+
 	t.Run("handler error exits 1 and prints", func(t *testing.T) {
 		h := Handlers{
-			Serve: func(context.Context, *Env) error { return errors.New("boom") },
+			Serve: func(context.Context, *Env, ServeOpts) error { return errors.New("boom") },
 		}
 		var stdout, stderr strings.Builder
 		if code := Run([]string{"serve"}, &stdout, &stderr, h, "dev"); code != 1 {
@@ -156,7 +172,7 @@ func TestRunHandlers(t *testing.T) {
 
 	t.Run("ExitError chooses the code", func(t *testing.T) {
 		h := Handlers{
-			Serve: func(context.Context, *Env) error {
+			Serve: func(context.Context, *Env, ServeOpts) error {
 				return &ExitError{Code: 7, Err: errors.New("nope")}
 			},
 		}
@@ -171,7 +187,7 @@ func TestRunHandlers(t *testing.T) {
 
 	t.Run("handler can write to env writers", func(t *testing.T) {
 		h := Handlers{
-			Serve: func(_ context.Context, e *Env) error {
+			Serve: func(_ context.Context, e *Env, _ ServeOpts) error {
 				fmt.Fprint(e.Stdout, "hello stdout")
 				return nil
 			},
@@ -188,7 +204,7 @@ func TestRunHandlers(t *testing.T) {
 	t.Run("handler receives a context", func(t *testing.T) {
 		var hasCtx bool
 		h := Handlers{
-			Serve: func(ctx context.Context, _ *Env) error {
+			Serve: func(ctx context.Context, _ *Env, _ ServeOpts) error {
 				hasCtx = ctx != nil
 				return nil
 			},

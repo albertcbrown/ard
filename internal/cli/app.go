@@ -31,11 +31,17 @@ type Env struct {
 // Handlers holds one function per implemented command. A nil field makes
 // that command exit non-zero with an ErrNotImplemented message.
 type Handlers struct {
-	Serve        func(ctx context.Context, e *Env) error                    // #15
+	Serve        func(ctx context.Context, e *Env, o ServeOpts) error       // #15
 	ConfigCheck  func(ctx context.Context, e *Env, o ConfigCheckOpts) error // #11
 	LabelsSync   func(ctx context.Context, e *Env) error                    // #22
 	RebuildState func(ctx context.Context, e *Env, scanner string) error    // #23
 	Init         func(ctx context.Context, e *Env, o InitOpts) error        // #27
+}
+
+// ServeOpts is the parsed flag set of `ard serve`.
+type ServeOpts struct {
+	// Loops names the controller loops to run; empty means every loop (#187).
+	Loops []string
 }
 
 // ConfigCheckOpts is the parsed flag set of `ard config check`.
