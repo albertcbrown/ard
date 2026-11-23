@@ -287,6 +287,8 @@ Host log files older than 7 days are pruned hourly. The Reaper keeps running whi
 
 Successful jobs clean up at close-out: the worktree is removed, the Kubernetes `Job` gets a short TTL, and logs stay 7 days.
 
+Host job steps run with `GOFLAGS=-modcacherw`, so a Go module cache downloaded into the job home is writable. The module cache is per job and is not shared, because a cache that jobs can write to would let one job poison modules that later jobs build. Cleanup restores owner write permission on the whole job home and worktree before removing them, and never follows symlinks, so read-only trees no longer leak.
+
 ## Worker loop
 
 A worker implements `plan.md` on its own branch and ends with a draft PR, test results, and a summary on the issue.
