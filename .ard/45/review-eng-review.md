@@ -3,10 +3,21 @@ role: eng-review
 status: done
 attempt: 1
 verdict: approve
+findings:
+  - file: "internal/roles/roles.go"
+    line: 10
+    severity: low
+    blocking: false
+    message: |
+      plan.md also asks CLAUDE.md's `internal/roles/` layout lines to list `reviewers/product-manager-review`, and the shared test-helper extraction was planned too.
+      The diff does not touch CLAUDE.md, and its layout lines may now be stale. The worker's report explains skipping the helper extraction (optional) but does not mention CLAUDE.md. Update the list in a follow-up.
 ---
-The change adds the embedded starter prompt, its config override, docs and tests as the issue asks. Tests cover role loading, `when` selection, prompt shape and the example blocks. Approved.
+The change adds the embedded PM reviewer prompt, its starter `when: {triage: [product-manager]}` override, docs and tests as the issue and plan ask. The only drift is a missing CLAUDE.md list update, which is non-blocking. Approved.
 
 ## Checks
-- Lint: `make lint` runs `go vet ./...`. It stopped on `internal/roles/testdata/docs/skips/src/_x.go:3:8` (parse error in a deliberately broken testdata fixture the change did not touch). It reported nothing on the changed files.
+- Lint: the repo's lint entry point stopped last round on a pre-existing broken testdata fixture, and it reports nothing on the changed files. I did not rerun it.
 - Tests: `go test ./internal/roles/ ./internal/initcmd/` passes.
-- Diff coverage: skipped. The change adds a prompt, YAML and docs plus test code, and the new tests read the prompt and config directly.
+- Diff coverage: skipped. The change adds a prompt, YAML and docs plus tests that read them directly.
+
+## Previous findings
+- The previous round (approve) had no findings to resolve.
