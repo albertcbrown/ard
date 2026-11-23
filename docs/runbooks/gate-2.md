@@ -79,8 +79,9 @@ eng-review, and a human merges it. About an hour and a few dollars.
    - `ard:review:eng-review` on the PR, then a PR review and
      `ard:review:eng-review:done` or `:changes`
 6. **Merge** the PR by hand once you are satisfied: the worker opens it as a
-   draft (the merger marks PRs ready from Phase 2), so mark it ready, then
-   **Squash and merge**. Stop `serve` with Ctrl-C (SIGINT); it stops cleanly
+   draft and the controller marks it ready once every requested review is
+   `:done` at the head, so just **Squash and merge**. (Mark it ready by hand
+   only to override a review that is still `:changes`.) Stop `serve` with Ctrl-C (SIGINT); it stops cleanly
    between jobs.
 
 **Moving faster than the poll.** Each loop ticks once at startup, then every

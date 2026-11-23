@@ -185,6 +185,9 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 	}
 	rc.HeadMoved = l.headMoved(ctx, log, c, n, p.tip)
 	finish(h, st, res, closeout.Cause{})
+	// Errors are logged inside maybeReady: close-out is never failed by it.
+	t := &tick{l: l, cfg: cfg, log: log, self: c.pr.Author, dry: d.Effects.DryRun()}
+	t.maybeReady(ctx, pr)
 }
 
 // issueDir is the only part of .ard/ the reviewer's diff and head check leave
