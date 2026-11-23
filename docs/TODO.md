@@ -32,7 +32,6 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 - #138 closeout: don't revert newer plan.md sections committed after a job's base
 - #142 Workers: .gitattributes changes can hide diffs from review
 - #160 eng-review should run the repository's own lint target
-- #161 Wake the loops without restarting ard serve
 - #174 Job cleanup fails on Go's read-only module cache and leaks it
 
 ## Phase 3: Scale
