@@ -58,7 +58,7 @@ func TestEmbeddedSecurityReviewLoadsAsReviewer(t *testing.T) {
 	if !found {
 		t.Errorf("HostUntrusted = %v, want it to include reviewers/security-review", res.HostUntrusted())
 	}
-	if got := strings.Join(reviewerNames(res), ","); got != "eng-review,license-review,security-review" {
+	if got := strings.Join(reviewerNames(res), ","); got != "eng-review,license-review,product-manager-review,security-review" {
 		t.Errorf("reviewer roles = %s", got)
 	}
 }
