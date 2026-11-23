@@ -15,24 +15,25 @@ import (
 
 // rawConfig is .ard/config.yaml before defaults and merging.
 type rawConfig struct {
-	maxPods         *int
-	executor        *string
-	agent           *string
-	requireApproval *bool
-	budgetUSDPerDay *float64
-	maxBudgetUSD    *float64
-	globalMaxOpen   *int
-	paused          *bool
-	intervals       rawIntervals
-	intake          rawIntake
-	protectedPaths  []string // merge.protected_paths
-	haveMerge       bool
-	stale           rawStale
-	haveStale       bool
-	gitleaksEnabled *bool // redact.gitleaks.enabled
-	gitleaksPath    *string
-	sidecars        map[string]rawSidecar
-	overrides       []rawOverrideRef
+	maxPods                *int
+	executor               *string
+	agent                  *string
+	requireApproval        *bool
+	budgetUSDPerDay        *float64
+	maxBudgetUSD           *float64
+	globalMaxOpen          *int
+	paused                 *bool
+	intervals              rawIntervals
+	intake                 rawIntake
+	protectedPaths         []string // merge.protected_paths
+	haveMerge              bool
+	stale                  rawStale
+	haveStale              bool
+	gitleaksEnabled        *bool // redact.gitleaks.enabled
+	gitleaksPath           *string
+	gitleaksBlockAutoclose *bool // redact.gitleaks.block_autoclose_when_missing
+	sidecars               map[string]rawSidecar
+	overrides              []rawOverrideRef
 }
 
 // rawIntervals keeps every interval optional so defaults can tell "unset"
@@ -293,8 +294,10 @@ func (raw *rawConfig) parseRedact(n *yaml.Node, file string) Errors {
 				errs = append(errs, decodeValue(v, file, "redact.gitleaks.enabled", &raw.gitleaksEnabled)...)
 			case "path":
 				errs = append(errs, decodeValue(v, file, "redact.gitleaks.path", &raw.gitleaksPath)...)
+			case "block_autoclose_when_missing":
+				errs = append(errs, decodeValue(v, file, "redact.gitleaks.block_autoclose_when_missing", &raw.gitleaksBlockAutoclose)...)
 			default:
-				errs = append(errs, &Error{File: file, Key: "redact.gitleaks." + k.Value, Msg: "unknown key (want enabled or path)"})
+				errs = append(errs, &Error{File: file, Key: "redact.gitleaks." + k.Value, Msg: "unknown key (want enabled, path or block_autoclose_when_missing)"})
 			}
 		}
 	}

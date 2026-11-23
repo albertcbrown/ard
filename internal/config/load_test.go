@@ -193,12 +193,56 @@ func TestLoadRedactGitleaks(t *testing.T) {
 		{"enabled", "redact: {gitleaks: {enabled: true}}\n", Gitleaks{Enabled: true, Path: "gitleaks"}},
 		{"path", "redact: {gitleaks: {enabled: true, path: /opt/gl}}\n", Gitleaks{Enabled: true, Path: "/opt/gl"}},
 		{"null", "redact:\n", Gitleaks{Path: "gitleaks"}},
+		{"block true", "redact: {gitleaks: {enabled: true, block_autoclose_when_missing: true}}\n", Gitleaks{Enabled: true, Path: "gitleaks", BlockAutocloseWhenMissing: true}},
+		{"block false", "redact: {gitleaks: {block_autoclose_when_missing: false}}\n", Gitleaks{Path: "gitleaks"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := mustLoad(t, withConfig(t, tt.yaml)).Redact.Gitleaks; got != tt.want {
 				t.Errorf("Gitleaks = %+v, want %+v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestRoute(t *testing.T) {
+	ok := []struct {
+		name, yaml, scanner string
+		want                Route
+	}{
+		{"default executable", "paused: false", "cve", RoutePending},
+		{"default LLM", "paused: false", "lint", RouteNone},
+		{"pending", "overrides: {scanners/cve: {route: pending}}\n", "cve", RoutePending},
+		{"none", "overrides: {scanners/cve: {route: none}}\n", "cve", RouteNone},
+		{"needs-human", "overrides: {scanners/cve: {route: needs-human}}\n", "cve", RouteNeedsHuman},
+		{"LLM none", "overrides: {scanners/lint: {route: none}}\n", "lint", RouteNone},
+		{"LLM needs-human", "overrides: {scanners/lint: {route: needs-human}}\n", "lint", RouteNeedsHuman},
+	}
+	for _, tt := range ok {
+		t.Run(tt.name, func(t *testing.T) {
+			role, _ := mustLoad(t, withConfig(t, tt.yaml+"\n")).Role(KindScanner, tt.scanner)
+			if role.Route != tt.want {
+				t.Errorf("Route = %q, want %q", role.Route, tt.want)
+			}
+		})
+	}
+	bad := []struct{ name, yaml, key, msg string }{
+		{"bad value", "overrides: {scanners/cve: {route: sometimes}}\n", `overrides["scanners/cve"].route`, "must be pending, none or needs-human"},
+		{"LLM pending", "overrides: {scanners/lint: {route: pending}}\n", `overrides["scanners/lint"].route`, "LLM scanners may not use pending"},
+		{"triage", "overrides: {triage/lead: {route: none}}\n", `overrides["triage/lead"].route`, "only valid for scanners roles"},
+		{"worker", "overrides: {workers/engineer: {route: none}}\n", `overrides["workers/engineer"].route`, "only valid for scanners roles"},
+		{"reviewer", "overrides: {reviewers/eng-review: {route: none}}\n", `overrides["reviewers/eng-review"].route`, "only valid for scanners roles"},
+		{"gitleaks key", "redact: {gitleaks: {block_autoclose_when_missing: [1]}}\n", "redact.gitleaks.block_autoclose_when_missing", ""},
+	}
+	for _, tt := range bad {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := loadErrs(t, withConfig(t, tt.yaml))
+			for _, e := range errs {
+				if e.Key == tt.key && strings.Contains(e.Msg, tt.msg) {
+					return
+				}
+			}
+			t.Errorf("no error on %s containing %q in %v", tt.key, tt.msg, errs)
 		})
 	}
 }

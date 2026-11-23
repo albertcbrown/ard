@@ -16,6 +16,7 @@ import (
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
+	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state/scannerdb"
 )
 
@@ -122,7 +123,7 @@ type harness struct {
 func scannerRole(name string) config.Role {
 	return config.Role{
 		Kind: config.KindScanner, Name: name, Dir: ".ard/scanners/" + name, ScanPath: ".ard/scanners/" + name + "/scan",
-		Timeout: 30 * time.Minute, Every: 6 * time.Hour, MaxOpen: 5, GroupSize: 10, Autoclose: true,
+		Timeout: 30 * time.Minute, Every: 6 * time.Hour, MaxOpen: 5, GroupSize: 10, Autoclose: true, Route: config.RoutePending,
 	}
 }
 
@@ -148,6 +149,7 @@ func newHarness(t *testing.T, mod func(*config.Role)) *harness {
 		Reader: h.gh, Effects: h.fx, Committer: h.com, Engine: h.eng, Repo: "",
 		Stores: func(context.Context, string) (Store, error) { return h.store, nil },
 		Log:    quiet, Now: func() time.Time { return h.clock },
+		Secrets: redact.NewSecrets,
 	}
 	return h
 }

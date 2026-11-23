@@ -24,6 +24,7 @@ redact:
   gitleaks:
     enabled: false
     path: gitleaks
+    block_autoclose_when_missing: false
 sidecars:
   vpe-specs:
     repo: acme/specs
@@ -41,6 +42,7 @@ roles:
     max_open: 10
     group_size: 1
     autoclose: true
+    route: pending
   - name: lint
     kind: scanner
     dir: .ard/scanners/lint
@@ -50,6 +52,7 @@ roles:
     every: 6h
     max_open: 5
     group_size: 10
+    route: none
   - name: architect
     kind: triage
     dir: .ard/triage/architect
