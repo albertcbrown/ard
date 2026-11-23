@@ -837,3 +837,25 @@ func (c *Closer) dropRawLog(rec Record) {
 		drop(extra, err == nil && committed[cp])
 	}
 }
+
+// TriageRoles returns the triage roles that ran to a closed, done close-out
+// for issue. Failed, open and needs-human jobs do not count.
+func TriageRoles(ctx context.Context, s interface {
+	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+}, issue int) (map[string]bool, error) {
+	jobs, err := s.CloseoutsOf(ctx, issue, StageTriage)
+	if err != nil {
+		return nil, fmt.Errorf("triage roles of issue %d: %w", issue, err)
+	}
+	out := map[string]bool{}
+	for _, sj := range jobs {
+		rec, err := decode(sj)
+		if err != nil {
+			return nil, err
+		}
+		if rec.Phase == PhaseClosed && rec.Plan.Outcome == OutcomeDone {
+			out[sj.Role] = true
+		}
+	}
+	return out, nil
+}

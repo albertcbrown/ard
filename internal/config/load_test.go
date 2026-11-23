@@ -798,3 +798,27 @@ func TestWorkerNamesWithDigits(t *testing.T) {
 		t.Errorf("triage role eng-12: %v", err)
 	}
 }
+
+func TestLoadWhenKeepsDirSlash(t *testing.T) {
+	res := mustLoad(t, withConfig(t, `overrides: {reviewers/license-review: {when: {paths: [web/, "**/*.lock"]}}}`))
+	r, _ := res.Role(KindReviewer, "license-review")
+	if got := strings.Join(r.When.Paths, ","); got != "web/,**/*.lock" {
+		t.Errorf("paths = %s", got)
+	}
+}
+
+func TestLoadWhenInvalidGlob(t *testing.T) {
+	errs := loadErrs(t, withConfig(t, `overrides: {reviewers/license-review: {when: {paths: [ok, "a[b"]}}}`))
+	assertErr(t, errs, wantErr{".ard/config.yaml", `overrides["reviewers/license-review"].when.paths[1]`, "invalid glob"})
+}
+
+func TestLoadWhenEmptyRejected(t *testing.T) {
+	for _, w := range []string{"{}", "{paths: []}"} {
+		errs := loadErrs(t, withConfig(t, "overrides: {reviewers/license-review: {when: "+w+"}}"))
+		assertErr(t, errs, wantErr{".ard/config.yaml", `overrides["reviewers/license-review"].when`, "when must set paths or triage"})
+	}
+	res := mustLoad(t, withConfig(t, `overrides: {reviewers/license-review: {when: null}}`))
+	if r, _ := res.Role(KindReviewer, "license-review"); r.When != nil {
+		t.Errorf("when: null = %+v, want nil", r.When)
+	}
+}

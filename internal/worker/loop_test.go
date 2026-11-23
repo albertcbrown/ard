@@ -874,3 +874,88 @@ func TestStepUsageRecordedForEveryAgentStep(t *testing.T) {
 		t.Errorf("re-record = %v, %v", rec, err)
 	}
 }
+
+// commitFiles makes a commit on top of the config commit that adds files and
+// returns its SHA, leaving the clone's HEAD where it was.
+func (h *harness) commitFiles(files map[string]string) string {
+	h.t.Helper()
+	for p, c := range files {
+		writeFile(h.t, h.clone, p, c)
+	}
+	gittest.Run(h.t, h.clone, "add", "-A")
+	gittest.Run(h.t, h.clone, "commit", "-m", "files")
+	sha := strings.TrimSpace(gittest.Run(h.t, h.clone, "rev-parse", "HEAD"))
+	gittest.Run(h.t, h.clone, "reset", "--hard", h.cfg.SHA)
+	return sha
+}
+
+func TestReviewersWhenRules(t *testing.T) {
+	goMod := &config.When{Paths: []string{"**/go.mod"}}
+	arch := &config.When{Triage: []string{"architect"}}
+	tests := []struct {
+		name   string
+		files  map[string]string
+		labels []string
+		list   []string // the worker's reviewers: list
+		when   map[string]*config.When
+		want   string
+	}{
+		{"gated reviewer skipped", map[string]string{"a.txt": "x"}, nil, nil,
+			map[string]*config.When{"license-review": goMod}, "eng-review,sec-review"},
+		{"gated reviewer included on path hit", map[string]string{"go.mod": "module x\n"}, nil, nil,
+			map[string]*config.When{"license-review": goMod}, "eng-review,license-review,sec-review"},
+		{"triage label counts", map[string]string{"a.txt": "x"}, []string{labels.Done(labels.StageTriage, "architect")}, nil,
+			map[string]*config.When{"license-review": arch}, "eng-review,license-review,sec-review"},
+		{"triage running does not count", map[string]string{"a.txt": "x"}, []string{labels.Running(labels.StageTriage, "architect")}, nil,
+			map[string]*config.When{"license-review": arch}, "eng-review,sec-review"},
+		{"worker list does not bypass when", map[string]string{"a.txt": "x"}, nil, []string{"eng-review", "license-review"},
+			map[string]*config.When{"license-review": goMod}, "eng-review"},
+		{"worker list narrows", map[string]string{"go.mod": "module x\n"}, nil, []string{"license-review"},
+			map[string]*config.When{"license-review": goMod}, "license-review"},
+		{"ard tree is not selectable", map[string]string{".ard/notes.md": "x", "a.txt": "x"}, nil, nil,
+			map[string]*config.When{"license-review": {Paths: []string{".ard/"}}}, "eng-review,sec-review"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, noTests)
+			h.cfg.Roles[0].Reviewers = tt.list
+			h.cfg.Roles = append(h.cfg.Roles, config.Role{Kind: config.KindTriage, Name: "architect", Dir: ".ard/triage/architect"})
+			for i := range h.cfg.Roles {
+				if w, ok := tt.when[h.cfg.Roles[i].Name]; ok {
+					h.cfg.Roles[i].When = w
+				}
+			}
+			h.code.shas[0] = h.commitFiles(tt.files)
+			h.issue("t", tt.labels...)
+			agent := map[string]string{}
+			for p, c := range tt.files {
+				if !strings.HasPrefix(p, ".ard/") { // the guard would hold a worker that writes there
+					agent[p] = c
+				}
+			}
+			h.agentWrites(agent, roleDone, nil)
+			h.mustTick()
+			if got := strings.Join(h.only().Opts.Worker.Reviewers, ","); got != tt.want {
+				t.Errorf("reviewers = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReviewersFailOpenWithoutKnownHead(t *testing.T) {
+	// With a pushed head git cannot resolve, MergeBase fails and path rules fail open.
+	h := newHarness(t, noTests)
+	h.cfg.Roles[0].Reviewers = nil
+	for i := range h.cfg.Roles {
+		if h.cfg.Roles[i].Name == "license-review" {
+			h.cfg.Roles[i].When = &config.When{Paths: []string{"**/go.mod"}}
+		}
+	}
+	h.code.shas[0] = strings.Repeat("1", 40) // a head git cannot resolve
+	h.issue("t")
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	if got := strings.Join(h.only().Opts.Worker.Reviewers, ","); got != "eng-review,license-review,sec-review" {
+		t.Errorf("reviewers = %q, want path rule to fail open", got)
+	}
+}

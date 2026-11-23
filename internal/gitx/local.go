@@ -259,8 +259,10 @@ func (g *Git) StagedChanges(ctx context.Context, dir string) ([]Change, error) {
 }
 
 // ChangedPaths lists the paths among paths that differ between from and to.
+// Renames are not detected: a rename lists both the old and the new path, and
+// a deletion is listed.
 func (g *Git) ChangedPaths(ctx context.Context, dir, from, to string, paths ...string) ([]string, error) {
-	args := append([]string{"--literal-pathspecs", "diff", "--name-only", "-z", from, to, "--"}, paths...)
+	args := append([]string{"--literal-pathspecs", "diff", "--name-only", "--no-renames", "-z", from, to, "--"}, paths...)
 	out, _, err := g.run(ctx, dir, nil, "", nil, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gitx: changed paths: %w", err)

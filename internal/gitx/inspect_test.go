@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -440,5 +441,31 @@ func TestMergeBaseAllCrissCross(t *testing.T) {
 	one, err := g.MergeBaseAll(ctx, dir, "a", "b")
 	if err != nil || len(one) != 1 || one[0] != root {
 		t.Errorf("simple case = %v, %v", one, err)
+	}
+}
+
+func TestChangedPathsRenames(t *testing.T) {
+	ctx := context.Background()
+	_, clone := gittest.NewRemote(t)
+	write(t, clone, "old/a.txt", "some content that is long enough to be detected as a rename\n")
+	write(t, clone, "gone.txt", "bye\n")
+	gittest.Run(t, clone, "add", ".")
+	gittest.Run(t, clone, "commit", "-m", "add")
+	from := strings.TrimSpace(gittest.Run(t, clone, "rev-parse", "HEAD"))
+	if err := os.MkdirAll(filepath.Join(clone, "new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, clone, "mv", "old/a.txt", "new/a.txt")
+	gittest.Run(t, clone, "rm", "gone.txt")
+	gittest.Run(t, clone, "commit", "-m", "move")
+	to := strings.TrimSpace(gittest.Run(t, clone, "rev-parse", "HEAD"))
+	got, err := New("").ChangedPaths(ctx, clone, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	want := []string{"gone.txt", "new/a.txt", "old/a.txt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("paths = %v, want %v", got, want)
 	}
 }

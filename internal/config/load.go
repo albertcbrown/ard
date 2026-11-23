@@ -404,8 +404,11 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 	}
 	if ov.when != nil {
 		when := &When{Triage: ov.when.triage}
+		if len(ov.when.paths) == 0 && len(ov.when.triage) == 0 {
+			*errs = append(*errs, &Error{File: cfgPath, Key: keyRef + ".when", Msg: "when must set paths or triage; remove when: to run on every PR"})
+		}
 		for i, p := range ov.when.paths {
-			norm, err := normaliseRelPath(p)
+			norm, err := normaliseProtectedPath(p)
 			if err != nil {
 				*errs = append(*errs, &Error{File: cfgPath, Key: fmt.Sprintf("%s.when.paths[%d]", keyRef, i), Msg: err.Error()})
 				continue

@@ -58,6 +58,7 @@ type job struct {
 	log  *slog.Logger
 	sj   state.Job
 
+	head     string // the latest commit pushed (or the base when nothing was)
 	branch   string
 	exists   bool // the branch is on the remote
 	pushed   bool // this job pushed to it
@@ -525,6 +526,7 @@ func (jb *job) round(ctx context.Context, s step) (head string, noCode, done boo
 		return "", false, true
 	}
 	if v.NoCode {
+		jb.head = s.h.BaseSHA
 		return s.h.BaseSHA, true, false
 	}
 	sha, ok := jb.push(ctx, s, v)
@@ -585,6 +587,7 @@ func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 		}
 	}
 	jb.log.Info("worker.push", "branch", jb.branch, "sha", res.SHA, "files", len(req.Files), "noop", res.NoOp)
+	jb.head = res.SHA
 	return res.SHA, true
 }
 
@@ -678,18 +681,33 @@ func (jb *job) testOutput(h executor.Handle, command string, exit int) []byte {
 		agentjob.UntrustedHeader, oneLine(command), exit, tail))
 }
 
-// reviewers lists the reviewer roles to request on the PR: the role's
-// reviewers, or every reviewer role when none are set, then the reviewers
-// triage deferred; only roles that exist, without duplicates.
+// reviewers lists the reviewer roles to request on the PR. The base set is
+// config's SelectReviewers: the role's reviewers (or every reviewer role)
+// whose when: rule matches the PR's changed paths (merge base to head) or the
+// triage roles that ran (closed done, or labelled done). Reviewers triage
+// deferred are then added unconditionally; the worker's own next requests are
+// added by close-out. Selection is monotonic: every run recomputes from the
+// whole PR diff and close-out only adds labels, so earlier requests stay and
+// newly matching reviewers are added. When the head is unknown or git fails,
+// path rules fail open. Only roles that exist, without duplicates.
 func (jb *job) reviewers(ctx context.Context) []string {
-	var names []string
-	if len(jb.role.Reviewers) > 0 {
-		names = append(names, jb.role.Reviewers...)
-	} else {
-		for _, r := range jb.cfg.RolesOf(config.KindReviewer) {
-			names = append(names, r.Name)
+	changed := jb.changedPaths(ctx)
+	ran := map[string]bool{}
+	tr, err := closeout.TriageRoles(ctx, jb.l.d.Store, jb.is.Number)
+	if err != nil {
+		jb.log.Warn("worker.reviewers_failed", "step", "triage", "error", err)
+	}
+	for k := range tr {
+		ran[k] = true
+	}
+	for _, r := range jb.cfg.RolesOf(config.KindTriage) {
+		for _, l := range jb.is.Labels {
+			if l == labels.Done(labels.StageTriage, r.Name) {
+				ran[r.Name] = true
+			}
 		}
 	}
+	names := jb.cfg.SelectReviewers(jb.role, changed, func(r string) bool { return ran[r] })
 	deferred, err := closeout.Deferred(ctx, jb.l.d.Store, jb.is.Number)
 	if err != nil {
 		jb.log.Warn("worker.deferred_failed", "error", err)
@@ -706,6 +724,38 @@ func (jb *job) reviewers(ctx context.Context) []string {
 			seen[nm] = true
 			out = append(out, nm)
 		}
+	}
+	if len(out) == 0 && len(jb.cfg.RolesOf(config.KindReviewer)) > 0 {
+		jb.log.Warn("worker.no_reviewers", "issue", jb.is.Number, "branch", jb.branch)
+	}
+	return out
+}
+
+// changedPaths lists the paths the PR changes (merge base of the config
+// commit and head, to head) without the .ard/ and .ard-input/ trees. A nil
+// result means the paths are unknown: path rules then fail open.
+func (jb *job) changedPaths(ctx context.Context) []string {
+	if jb.head == "" || strings.Trim(jb.head, "0") == "" {
+		return nil
+	}
+	g, dir := jb.l.d.Git, jb.l.d.RepoDir
+	base, err := g.MergeBase(ctx, dir, jb.cfg.SHA, jb.head)
+	step := "merge_base"
+	var ps []string
+	if err == nil {
+		step = "changed_paths"
+		ps, err = g.ChangedPaths(ctx, dir, base, jb.head)
+	}
+	if err != nil {
+		jb.log.Warn("worker.reviewers_failed", "step", step, "error", err)
+		return nil
+	}
+	out := []string{}
+	for _, p := range ps {
+		if p == ".ard" || p == ".ard-input" || strings.HasPrefix(p, ".ard/") || strings.HasPrefix(p, ".ard-input/") {
+			continue
+		}
+		out = append(out, p)
 	}
 	return out
 }
