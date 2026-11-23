@@ -462,6 +462,55 @@ func TestConcurrentRunAndResume(t *testing.T) {
 	}
 }
 
+// staleListStore finishes the job with a real Run while Resume is listing
+// open close-outs, so Resume receives a record that is already stale.
+type staleListStore struct {
+	Store
+	once  sync.Once
+	close func()
+}
+
+func (s *staleListStore) OpenCloseouts(ctx context.Context) ([]state.Job, error) {
+	jobs, err := s.Store.OpenCloseouts(ctx)
+	s.once.Do(s.close)
+	return jobs, err
+}
+
+func TestResumeRereadsAfterLock(t *testing.T) {
+	e := newEnv(t)
+	j := e.lead()
+	rec, err := Prepare(context.Background(), j, e.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := New(e.d)
+	if err := cl.save(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	st := &staleListStore{Store: e.d.Store}
+	st.close = func() {
+		if _, err := cl.Run(context.Background(), j); err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	}
+	e.d.Store = st
+	resumer := New(e.d)
+	resumer.busy = cl.busy // share the lock table, as one Closer would
+	if err := resumer.Resume(context.Background()); err != nil {
+		t.Fatalf("Resume on a record a Run already closed: %v", err)
+	}
+	if n := e.markerComments(7, j.ID); n != 1 {
+		t.Errorf("marker comments = %d, want 1", n)
+	}
+	sj, err := e.d.Store.Job(context.Background(), j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sj.CloseoutPhase != string(PhaseClosed) {
+		t.Errorf("closeout phase = %q, want %q (a stale record was saved over the closed one)", sj.CloseoutPhase, PhaseClosed)
+	}
+}
+
 func TestCommentsRequiredLive(t *testing.T) {
 	e := newEnv(t)
 	e.d.Comments = nil
