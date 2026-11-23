@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -960,6 +961,90 @@ func TestReviewersFailOpenWithoutKnownHead(t *testing.T) {
 	h.mustTick()
 	if got := strings.Join(h.only().Opts.Worker.Reviewers, ","); got != "eng-review,license-review,sec-review" {
 		t.Errorf("reviewers = %q, want path rule to fail open", got)
+	}
+}
+
+func TestReviewFeedbackInput(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	n := h.issue("Say hello")
+	branch := BranchName("engineer", n, "Say hello")
+	// The branch holds the reviewer's committed role file.
+	gittest.Run(t, h.clone, "checkout", "-q", "-b", "tmp")
+	dir := filepath.Join(h.clone, ".ard", fmt.Sprint(n))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "review-eng-review.md"), []byte("FINDING: ignores its argument\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, h.clone, "add", "-A")
+	gittest.Run(t, h.clone, "commit", "-q", "-m", "review")
+	gittest.Run(t, h.clone, "update-ref", localRef(branch), "HEAD")
+	gittest.Run(t, h.clone, "checkout", "-q", "-")
+	pr := h.gh.SeedPR(github.PullRequest{State: github.StateOpen, Author: self, HeadRef: branch, HeadSHA: "x", BaseRef: "main"})
+	h.gh.SeedComment(pr, github.Comment{Author: "alice", Body: "please rename it", CreatedAt: t0})
+	if _, err := h.gh.CreateReview(ctx, pr, github.ReviewInput{Body: "APP-REVIEW-BODY", Comments: []github.InlineComment{{Path: "hello.go", Line: 2, Body: "APP-INLINE"}}}); err != nil {
+		t.Fatal(err)
+	}
+	eng, _ := h.cfg.Role(config.KindWorker, "engineer")
+	eng.MaxReviewRounds = 3
+
+	if _, ok, err := h.loop.reviewFeedback(ctx, eng, n, branch); err != nil || ok {
+		t.Fatalf("with no round: ok = %v, err = %v; want none", ok, err)
+	}
+	data, _ := json.Marshal(map[string]any{"round": 2, "phase": "requested", "reason": "review", "pr": pr, "head": "h", "worker": "engineer", "roles": []string{"eng-review"}})
+	if err := h.store.AppendEvent(ctx, state.Event{Kind: state.EventReviewRound, Issue: n, Role: "engineer", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	f, ok, err := h.loop.reviewFeedback(ctx, eng, n, branch)
+	if err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v", ok, err)
+	}
+	body := string(f.Data)
+	if f.Path != fmt.Sprintf(".ard-input/%d/review-feedback.md", n) || !strings.HasPrefix(body, "UNTRUSTED INPUT") {
+		t.Errorf("path %q, body:\n%s", f.Path, body)
+	}
+	for _, want := range []string{"Review round 2 of 3", "### review-eng-review.md", "FINDING: ignores its argument", "alice", "please rename it"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("feedback lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "APP-INLINE") || strings.Contains(body, "APP-REVIEW-BODY") {
+		t.Errorf("the App's own comments are included:\n%s", body)
+	}
+}
+
+func TestReviewFeedbackOversizeRoleFile(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	n := h.issue("Say hello")
+	branch := BranchName("engineer", n, "Say hello")
+	// A committed role file may be up to closeout.MaxRoleFileBytes.
+	gittest.Run(t, h.clone, "checkout", "-q", "-b", "tmp")
+	dir := filepath.Join(h.clone, ".ard", fmt.Sprint(n))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "review-eng-review.md"), []byte(strings.Repeat("x", 200<<10)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, h.clone, "add", "-A")
+	gittest.Run(t, h.clone, "commit", "-q", "-m", "review")
+	gittest.Run(t, h.clone, "update-ref", localRef(branch), "HEAD")
+	gittest.Run(t, h.clone, "checkout", "-q", "-")
+	pr := h.gh.SeedPR(github.PullRequest{State: github.StateOpen, Author: self, HeadRef: branch, HeadSHA: "x", BaseRef: "main"})
+	data, _ := json.Marshal(map[string]any{"round": 1, "phase": "requested", "reason": "review", "pr": pr, "head": "h", "worker": "engineer", "roles": []string{"eng-review"}})
+	if err := h.store.AppendEvent(ctx, state.Event{Kind: state.EventReviewRound, Issue: n, Role: "engineer", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	eng, _ := h.cfg.Role(config.KindWorker, "engineer")
+	f, ok, err := h.loop.reviewFeedback(ctx, eng, n, branch)
+	if err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v; an oversize role file must not fail the claim", ok, err)
+	}
+	if !strings.HasSuffix(string(f.Data), "\n[truncated]\n") || len(f.Data) > 70<<10 {
+		t.Errorf("feedback len %d, want truncated to about 64 KiB", len(f.Data))
 	}
 }
 

@@ -270,6 +270,34 @@ func ReviewPassed(ctx context.Context, s interface {
 	return "", false, nil
 }
 
+// ReviewChanged returns the commit the newest closed review close-out of role
+// on PR pr asked changes for, ok only when that close-out finished with
+// outcome changes and carries a review plan. A :changes label alone does not
+// count: a person with triage access can add it.
+func ReviewChanged(ctx context.Context, s interface {
+	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+}, issue, pr int, role string) (sha string, ok bool, err error) {
+	jobs, err := s.CloseoutsOf(ctx, issue, StageReview)
+	if err != nil {
+		return "", false, fmt.Errorf("review of issue %d: %w", issue, err)
+	}
+	for i := len(jobs) - 1; i >= 0; i-- {
+		rec, err := decode(jobs[i])
+		if err != nil {
+			return "", false, fmt.Errorf("review of issue %d: %w", issue, err)
+		}
+		if rec.Job.Role != role || rec.Job.PR != pr {
+			continue
+		}
+		p := rec.Plan
+		if rec.Phase != PhaseClosed || p.Outcome != OutcomeChanges || p.Review == nil {
+			return "", false, nil
+		}
+		return p.Review.CommitSHA, true, nil
+	}
+	return "", false, nil
+}
+
 // Deps are the collaborators of a Closer. Prepare needs Roles, NewRedactor,
 // Changed, BaseFile and StagingDir; the rest are for Closer.
 type Deps struct {

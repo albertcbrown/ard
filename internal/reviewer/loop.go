@@ -74,6 +74,7 @@ type Git interface {
 	Diff(ctx context.Context, repoDir, from, to string, maxBytes int64, exclude ...string) ([]byte, bool, error)
 	AddedLinesBetween(ctx context.Context, repoDir, from, to string, exclude ...string) (map[string][]gitx.LineRange, error)
 	CodeChanged(ctx context.Context, repoDir, from, to string, exclude ...string) ([]string, error)
+	FileAt(ctx context.Context, dir, rev, path string, maxBytes int64) ([]byte, bool, error)
 }
 
 // Offerer is *pool.Pool.

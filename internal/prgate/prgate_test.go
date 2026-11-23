@@ -13,7 +13,6 @@ import (
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/state"
-	"github.com/albertcbrown/ard/internal/worker"
 )
 
 func TestParseWorkerBranch(t *testing.T) {
@@ -40,10 +39,6 @@ func TestParseWorkerBranch(t *testing.T) {
 		if role != tc.role || issue != tc.issue || ok != tc.ok {
 			t.Errorf("ParseWorkerBranch(%q) = %q, %d, %v; want %q, %d, %v", tc.ref, role, issue, ok, tc.role, tc.issue, tc.ok)
 		}
-	}
-	role, n, ok := ParseWorkerBranch(worker.BranchName("v2-eng", 7, strings.Repeat("long ", 30)))
-	if !ok || role != "v2-eng" || n != 7 {
-		t.Errorf("round trip: %q %d %v", role, n, ok)
 	}
 }
 

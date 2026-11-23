@@ -246,3 +246,63 @@ func TestShutdownLeavesTheJobRunning(t *testing.T) {
 		t.Errorf("shutdown finished the job: %+v", h.fin.got())
 	}
 }
+
+func TestPreviousReviewInput(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file bool
+	}{{"first review", false}, {"later round", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			_, issue := h.scenario(func(s *scenario) { s.pr.Labels = []string{labels.Request(labels.StageReview, reviewer)} })
+			path := fmt.Sprintf(".ard/%d/review-%s.md", issue, reviewer)
+			if tc.file {
+				// Read at the pinned tip, which holds the earlier close-out commit.
+				h.git.files = map[string]string{tipSHA + ":" + path: "EARLIER FINDING"}
+			}
+			h.mustTick()
+			if len(h.ex.prepared) != 1 {
+				t.Fatalf("prepared = %d", len(h.ex.prepared))
+			}
+			var got string
+			for _, f := range h.ex.prepared[0].Inputs {
+				if f.Path == fmt.Sprintf(".ard-input/%d/previous-review.md", issue) {
+					got = string(f.Data)
+				}
+			}
+			if !tc.file {
+				if got != "" {
+					t.Errorf("a first review got previous-review.md:\n%s", got)
+				}
+				return
+			}
+			if !strings.HasPrefix(got, "UNTRUSTED INPUT") || !strings.Contains(got, "EARLIER FINDING") {
+				t.Errorf("previous-review.md = %q", got)
+			}
+			if argv := strings.Join(h.ex.started[0].Args, " "); !strings.Contains(argv, "previous-review.md") {
+				t.Errorf("previous-review.md is not named untrusted:\n%s", argv)
+			}
+		})
+	}
+}
+
+func TestPreviousReviewOversize(t *testing.T) {
+	h := newHarness(t)
+	_, issue := h.scenario(func(s *scenario) { s.pr.Labels = []string{labels.Request(labels.StageReview, reviewer)} })
+	path := fmt.Sprintf(".ard/%d/review-%s.md", issue, reviewer)
+	// A committed role file may be up to MaxRoleFileBytes; the input is cut to 64 KiB.
+	h.git.files = map[string]string{tipSHA + ":" + path: strings.Repeat("x", 200<<10)}
+	h.mustTick()
+	if len(h.ex.prepared) != 1 {
+		t.Fatalf("prepared = %d, want the review to run", len(h.ex.prepared))
+	}
+	var got string
+	for _, f := range h.ex.prepared[0].Inputs {
+		if f.Path == fmt.Sprintf(".ard-input/%d/previous-review.md", issue) {
+			got = string(f.Data)
+		}
+	}
+	if !strings.HasSuffix(got, "\n[truncated]\n") || len(got) > 70<<10 {
+		t.Errorf("previous-review.md: len %d, want truncated to about 64 KiB", len(got))
+	}
+}
