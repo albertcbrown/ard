@@ -177,7 +177,7 @@ func walk(root string, pats []string) (map[string]*pkg, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") || !d.Type().IsRegular() {
+		if strings.HasPrefix(d.Name(), "_") || strings.HasPrefix(d.Name(), ".") || !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") || !d.Type().IsRegular() {
 			return nil
 		}
 		r, err := filepath.Rel(root, p)
@@ -336,6 +336,9 @@ func cutTitle(s string) string {
 	return string(r[:maxTitleRunes-1]) + "…"
 }
 
+// code renders s as a Markdown code span; a backtick cannot appear inside.
+func code(s string) string { return "`" + strings.ReplaceAll(s, "`", "'") + "`" }
+
 func uniq(in []string) []string {
 	sort.Strings(in)
 	out := in[:0]
@@ -379,7 +382,7 @@ func build(pkgs map[string]*pkg) ([]finding, error) {
 				Severity:    "low",
 				Group:       group,
 				Files:       []string{file},
-				Body:        fmt.Sprintf("Package without a package comment.\n\n- `%s`\n\nAdd a comment directly above the package clause that starts with \"Package %s\" (https://go.dev/doc/comment).", pk.firstPos, pk.name),
+				Body:        fmt.Sprintf("Package without a package comment.\n\n- %s\n\nAdd a comment directly above the package clause that starts with \"Package %s\" (https://go.dev/doc/comment).", code(pk.firstPos), pk.name),
 			})
 		}
 		// Merge same-symbol declarations (build-tagged twins).
@@ -420,7 +423,7 @@ func build(pkgs map[string]*pkg) ([]finding, error) {
 			fmt.Fprintf(&body, "Undocumented exported %s `%s`.\n\n", kind, sym)
 			for _, d := range bad {
 				files = append(files, d.file)
-				fmt.Fprintf(&body, "- `%s:%d`\n", d.file, d.line)
+				fmt.Fprintf(&body, "- %s\n", code(fmt.Sprintf("%s:%d", d.file, d.line)))
 			}
 			body.WriteString("\n" + hint)
 			out = append(out, finding{

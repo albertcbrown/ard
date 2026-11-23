@@ -7,7 +7,7 @@ type Exp struct{}
 
 type hidden struct{}
 
-// Exp is documented.
+// Ptr is documented.
 func (e *Exp) Ptr() {}
 
 func (e *Exp) PtrUndoc() {}

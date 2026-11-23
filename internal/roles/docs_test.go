@@ -311,10 +311,10 @@ func TestDocsScanOnThisRepo(t *testing.T) {
 	}
 }
 
-// TestDocscanZZCleanup removes the shared binary dir. It sorts last in this
-// file; tests in other files do not use the binary.
-func TestDocscanZZCleanup(t *testing.T) {
+func TestMain(m *testing.M) {
+	code := m.Run()
 	if docscanDir != "" {
 		os.RemoveAll(docscanDir)
 	}
+	os.Exit(code)
 }
