@@ -340,3 +340,34 @@ func TestCheckRefusesOldGit(t *testing.T) {
 		t.Errorf("stdout = %q", stdout.String())
 	}
 }
+
+func TestCheckWarnsWhenEveryReviewerIsGated(t *testing.T) {
+	const warn = "every reviewer has a when: rule"
+	for _, tt := range []struct {
+		name, cfg string
+		want      bool
+	}{
+		{"all gated", "overrides: {reviewers/a: {when: {paths: [go.mod]}}, reviewers/b: {when: {paths: [web/]}}}\n", true},
+		{"one ungated", "overrides: {reviewers/a: {when: {paths: [go.mod]}}}\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := writeRepo(t, tt.cfg)
+			for _, n := range []string{"a", "b"} {
+				p := filepath.Join(root, ".ard", "reviewers", n, "prompt.txt")
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte("review"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+			if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			if got := strings.Contains(stderr.String(), warn); got != tt.want {
+				t.Errorf("warning present = %v, want %v; stderr: %s", got, tt.want, stderr.String())
+			}
+		})
+	}
+}

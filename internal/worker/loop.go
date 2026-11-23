@@ -85,6 +85,7 @@ type Git interface {
 	LsRemote(ctx context.Context, dir, url, pattern string, token gitx.TokenFunc) (map[string]string, error)
 	Snapshot(ctx context.Context, repoDir, wt, base string, opts ...gitx.SnapshotOptions) (*gitx.Snapshot, error)
 	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
+	ChangedPaths(ctx context.Context, dir, from, to string, paths ...string) ([]string, error)
 }
 
 // Offerer is *pool.Pool.

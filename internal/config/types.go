@@ -7,7 +7,10 @@ package config
 
 import (
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // Kind is the type of a role directory.
@@ -85,7 +88,7 @@ type Sidecar struct {
 }
 
 // When gates a reviewer: a nil When means the reviewer runs on every PR.
-// Semantics are owned by #15; config only validates and exposes the shape.
+// See Matches for the semantics.
 type When struct {
 	Paths  []string // run only when the diff touches one of these paths
 	Triage []string // run only when one of these triage roles ran
@@ -235,4 +238,45 @@ func kindRank(k Kind) int {
 		}
 	}
 	return len(kindOrder)
+}
+
+// Matches reports whether the reviewer runs: a nil When always does;
+// otherwise it does when any changed path matches any Paths entry, or any
+// Triage role has run (triageRan). Matching is case-sensitive and anchored at
+// the repo root. An entry ending in "/" is a directory, matched on a segment
+// boundary; any other entry is a doublestar glob where "*" stays within a
+// segment and "**" crosses them ("**/go.mod" matches a root go.mod, while a
+// slash-free glob such as "go.mod" matches only at the root). A nil changed
+// means the changed paths are unknown: a rule with Paths then matches (fail
+// open); an empty non-nil slice means nothing changed.
+func (w *When) Matches(changed []string, triageRan func(role string) bool) bool {
+	if w == nil {
+		return true
+	}
+	if changed == nil && len(w.Paths) > 0 {
+		return true
+	}
+	for _, e := range w.Paths {
+		for _, p := range changed {
+			if matchWhen(e, p) {
+				return true
+			}
+		}
+	}
+	if triageRan != nil {
+		for _, t := range w.Triage {
+			if triageRan(t) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchWhen(entry, p string) bool {
+	if strings.HasSuffix(entry, "/") {
+		return strings.HasPrefix(p, entry) || p == strings.TrimSuffix(entry, "/")
+	}
+	m, err := doublestar.Match(entry, p)
+	return err == nil && m
 }

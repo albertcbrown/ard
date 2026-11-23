@@ -49,11 +49,26 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 			// Loud: also straight to stderr, whatever --log-level says.
 			fmt.Fprint(e.Stderr, local.HostRoleText(string(r.Kind), r.Name))
 		}
+		if allReviewersGated(res) {
+			fmt.Fprintln(e.Stderr, "ard config check: warning: every reviewer has a when: rule, so a PR that matches none of them gets no review and stays a draft")
+		}
 		if yamlErr := res.WriteYAML(e.Stdout); yamlErr != nil {
 			fmt.Fprintf(e.Stderr, "ard config check: rendering resolved config: %v\n", yamlErr)
 		}
 	}
 	return loadErr
+}
+
+// allReviewersGated reports whether reviewer roles exist and each has a when:
+// rule.
+func allReviewersGated(res *config.Resolved) bool {
+	rs := res.RolesOf(config.KindReviewer)
+	for _, r := range rs {
+		if r.When == nil {
+			return false
+		}
+	}
+	return len(rs) > 0
 }
 
 // intakeErr rejects an intake label that is one of ard's own label names.

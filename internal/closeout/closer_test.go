@@ -638,3 +638,22 @@ func TestCommitKeepsNewerSectionOnMain(t *testing.T) {
 		t.Errorf("job's Implementation section missing:\n%s", got)
 	}
 }
+
+func TestTriageRolesOnlyClosedDone(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	j := e.lead()
+	if got, err := TriageRoles(ctx, e.store, 7); err != nil || len(got) != 0 {
+		t.Fatalf("before close-out = %v, %v; want none", got, err)
+	}
+	if out, err := New(e.d).Run(ctx, j); err != nil || out != OutcomeDone {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	got, err := TriageRoles(ctx, e.store, 7)
+	if err != nil || len(got) != 1 || !got["lead"] {
+		t.Errorf("after done close-out = %v, %v; want {lead}", got, err)
+	}
+	if got, err := TriageRoles(ctx, e.store, 8); err != nil || len(got) != 0 {
+		t.Errorf("other issue = %v, %v; want none", got, err)
+	}
+}
