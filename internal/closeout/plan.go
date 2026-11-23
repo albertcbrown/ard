@@ -17,7 +17,10 @@ const (
 	OutcomeFailed     Outcome = "failed"
 	// OutcomeStale is a review whose verdict was approve but whose PR gained
 	// code after the reviewed commit. The review is posted, no pass label is
-	// set and the request label stays, so the review runs again.
+	// set and the request label stays, so the review runs again. It is also a
+	// review whose PR was merged or closed, or whose branch was deleted, before
+	// close-out: nothing is committed, no failure is recorded, and the request
+	// label comes off with :running (ReviewPlan.PRGone says why).
 	OutcomeStale Outcome = "stale"
 	// OutcomeRetry is a failure with a named transient cause. The job hands
 	// off to one automatic retry: it gets no ard:executor:failed and keeps its
@@ -147,6 +150,17 @@ func failedPlan(j Job, reason string, logWithheld bool) Plan {
 		p.Terminal = append(p.Terminal, Label{n, labels.NeedsHuman})
 	}
 	return p
+}
+
+// stalePRPlan is the plan for a review whose PR is gone (merged, closed, or its
+// branch deleted). It keeps the review so it is still posted best-effort, but
+// commits nothing and sets no label but removing :running.
+func stalePRPlan(p Plan, j Job, why string) Plan {
+	rp := *p.Review
+	rp.PRGone = why
+	return Plan{Outcome: OutcomeStale, Status: p.Status, Reason: "pr gone: " + why, Summary: p.Summary,
+		Review: &rp, Tail: p.Tail, TailWithheld: p.TailWithheld, KeepUntil: p.KeepUntil,
+		Remove: []Label{{j.target(), labels.Running(labels.Stage(j.Stage), j.Role)}}}
 }
 
 // retryPlan is the plan for a job that failed for a transient cause and hands

@@ -50,6 +50,9 @@ type ReviewPlan struct {
 	// NoLines: the added lines were not known (a Reaper close-out after a
 	// restart), so every finding is in Other.
 	NoLines bool
+	// PRGone is set (merged, closed or branch gone) when the PR was gone at
+	// close-out: nothing was committed and the job is stale.
+	PRGone string `json:",omitempty"`
 }
 
 // reviewPlan splits the findings of a review by whether their line is one the
@@ -135,8 +138,11 @@ func RenderReview(r Record, repo github.Repo, dryRun, allInBody bool) string {
 	if rp.Downgraded {
 		notes = append(notes, "The review approved but listed a blocking finding, so ard treats it as changes requested.")
 	}
-	if rp.HeadMoved {
+	if rp.HeadMoved && rp.PRGone == "" {
 		notes = append(notes, "The branch gained code after this commit was reviewed. The review stays requested and runs again on the new head.")
+	}
+	if rp.PRGone != "" {
+		notes = append(notes, "The pull request was merged or closed before this review finished, so nothing was committed and the job is recorded as stale.")
 	}
 	if len(notes) > 0 {
 		b.WriteString("\n" + strings.Join(notes, "\n") + "\n")

@@ -255,7 +255,11 @@ type Deps struct {
 	// BaseFile reads one file at a commit (gitx.Git.FileAt): ok is false when
 	// the path does not exist there. Prepare uses it to compare plan.md with
 	// its base.
-	BaseFile   func(ctx context.Context, worktree, rev, path string, maxBytes int64) (data []byte, ok bool, err error)
+	BaseFile func(ctx context.Context, worktree, rev, path string, maxBytes int64) (data []byte, ok bool, err error)
+	// PR reads a pull request (github.Reader.GetPR). Optional: a review's
+	// close-out uses it to notice a PR merged or closed mid-review. nil skips
+	// the check.
+	PR         func(ctx context.Context, n int) (github.PullRequest, error)
 	Repo       github.Repo
 	StagingDir string
 	Log        *slog.Logger
@@ -497,6 +501,21 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 	if len(p.Files) == 0 {
 		return nil
 	}
+	isReview := rec.Job.Stage == StageReview && p.Review != nil
+	if isReview && rec.Job.PR > 0 && c.d.PR != nil {
+		pr, err := c.d.PR(ctx, rec.Job.PR)
+		switch {
+		case err != nil:
+			c.d.log().Warn("closeout: read PR before commit", "job", rec.Job.ID, "pr", rec.Job.PR, "error", err)
+		case pr.Merged || pr.State != github.StateOpen:
+			why := "closed"
+			if pr.Merged {
+				why = "merged"
+			}
+			c.prGone(rec, why, why)
+			return nil
+		}
+	}
 	req := committer.Request{Issue: rec.Job.Issue, Stage: rec.Job.Stage, Role: rec.Job.Role,
 		Summary: commitSummary(*p), JobID: rec.Job.ID}
 	sec := sectionOf(c.d.Roles, rec.Job.Stage, rec.Job.Role)
@@ -529,6 +548,10 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 		return nil
 	}
 	tail, tailWithheld, keep := p.Tail, p.TailWithheld, p.KeepUntil
+	if isReview && errors.Is(err, committer.ErrBranchGone) {
+		c.prGone(rec, "branch gone", "branch_gone")
+		return nil
+	}
 	if errors.Is(err, committer.ErrMerge) {
 		*p = needsHumanPlan(rec.Job, p.Status, "plan.md conflict: "+err.Error())
 	} else {
@@ -536,6 +559,14 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 	}
 	p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
 	return nil
+}
+
+// prGone turns a review's plan into a stale one: its PR was merged or closed,
+// or its branch deleted, so there is nothing to commit to and nothing failed.
+func (c *Closer) prGone(rec *Record, why, state string) {
+	c.d.log().Warn("review.pr_gone", "job", rec.Job.ID, "pr", rec.Job.PR, "issue", rec.Job.Issue,
+		"role", rec.Job.Role, "state", state)
+	rec.Plan = stalePRPlan(rec.Plan, rec.Job, why)
 }
 
 func commitSummary(p Plan) string {
@@ -640,7 +671,7 @@ func (c *Closer) postReview(ctx context.Context, rec *Record) error {
 			return nil
 		}
 		if !rejected(err) {
-			return fmt.Errorf("review on #%d: %w", n, err)
+			return c.postFailed(rec, fmt.Errorf("review on #%d: %w", n, err))
 		}
 		c.d.log().Warn("closeout.review_inline_rejected", "job", j.ID, "pr", n, "error", err)
 	}
@@ -651,15 +682,25 @@ func (c *Closer) postReview(ctx context.Context, rec *Record) error {
 		return nil
 	}
 	if !rejected(err) {
-		return fmt.Errorf("review on #%d: %w", n, err)
+		return c.postFailed(rec, fmt.Errorf("review on #%d: %w", n, err))
 	}
 	c.d.log().Warn("closeout.review_rejected", "job", j.ID, "pr", n, "error", err)
 	cm, err := c.d.Effects.CreateComment(ctx, n, body)
 	if err != nil {
-		return fmt.Errorf("comment on #%d: %w", n, err)
+		return c.postFailed(rec, fmt.Errorf("comment on #%d: %w", n, err))
 	}
 	rec.CommentID, rec.ReviewMode = cm.ID, ReviewComment
 	return nil
+}
+
+// postFailed passes a review-post error on, except for a stale review of a
+// gone PR: posting there is best-effort, so the error is logged and dropped.
+func (c *Closer) postFailed(rec *Record, err error) error {
+	if rp := rec.Plan.Review; rp != nil && rp.PRGone != "" {
+		c.d.log().Warn("closeout: review not posted on gone PR", "job", rec.Job.ID, "pr", rec.Job.PR, "error", err)
+		return nil
+	}
+	return err
 }
 
 // finish swaps the labels (":running" is removed last, so it marks the commit
