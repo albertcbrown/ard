@@ -553,10 +553,9 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 		return nil
 	}
 	if errors.Is(err, committer.ErrMerge) {
-		*p = needsHumanPlan(rec.Job, p.Status, "plan.md conflict: "+err.Error())
-	} else {
-		*p = failedPlan(rec.Job, "commit failed: "+err.Error(), p.LogWithheld)
+		return c.commitConflict(ctx, rec, err, tail, tailWithheld, keep)
 	}
+	*p = failedPlan(rec.Job, "commit failed: "+err.Error(), p.LogWithheld)
 	p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
 	return nil
 }
@@ -567,6 +566,43 @@ func (c *Closer) prGone(rec *Record, why, state string) {
 	c.d.log().Warn("review.pr_gone", "job", rec.Job.ID, "pr", rec.Job.PR, "issue", rec.Job.Issue,
 		"role", rec.Job.Role, "state", state)
 	rec.Plan = stalePRPlan(rec.Plan, rec.Job, why)
+}
+
+// commitConflict turns a plan.md merge conflict into needs-human. Like an
+// allowlist denial it still commits the redacted log and the controller's usage
+// record, and nothing else: neither carries no Merge func, so it cannot hit the conflict again.
+func (c *Closer) commitConflict(ctx context.Context, rec *Record, cause error, tail string, tailWithheld bool, keep time.Time) error {
+	p := &rec.Plan
+	logPath := p.LogPath
+	usagePath := fmt.Sprintf(".ard/%d/costs/%s.json", rec.Job.Issue, rec.Job.ID)
+	var logFiles []FileRef
+	for _, f := range p.Files {
+		if (logPath != "" && f.Path == logPath) || f.Path == usagePath {
+			logFiles = append(logFiles, f)
+		}
+	}
+	*p = needsHumanPlan(rec.Job, p.Status, "plan.md conflict: "+cause.Error())
+	p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
+	if len(logFiles) == 0 {
+		return nil
+	}
+	req := committer.Request{Issue: rec.Job.Issue, Stage: rec.Job.Stage, Role: rec.Job.Role,
+		Summary: commitSummary(*p), JobID: rec.Job.ID}
+	for _, f := range logFiles {
+		req.Files = append(req.Files, committer.File{Path: f.Path, Src: f.Staged})
+	}
+	res, err := c.d.Committer.Commit(ctx, rec.Job.Branch, req)
+	switch {
+	case err == nil:
+		p.Files, p.LogPath = logFiles, logPath
+		rec.SHA, rec.Synthetic = res.SHA, res.Synthetic
+		return nil
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return err
+	}
+	c.d.log().Warn("closeout: commit log after plan conflict failed", "job", rec.Job.ID, "error", err)
+	p.Reason += "; log not committed: " + err.Error()
+	return nil
 }
 
 func commitSummary(p Plan) string {
