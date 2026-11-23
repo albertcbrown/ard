@@ -1,6 +1,7 @@
 package roles
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestEmbeddedEngineerLoadsAsTriage(t *testing.T) {
 	if !ok {
 		t.Fatalf("no triage role engineer in %+v", res.Roles)
 	}
-	if r.PromptPath != ".ard/triage/engineer/prompt.txt" || r.Dockerfile != "" || r.Extra != nil || r.ScanPath != "" || len(r.After) != 0 {
+	if r.PromptPath != ".ard/triage/engineer/prompt.txt" || r.Dockerfile != "" || r.Extra != nil || r.ScanPath != "" || !slices.Equal(r.After, []string{"architect", "documentation-planner"}) {
 		t.Errorf("unexpected role: %+v", r)
 	}
 	if r.Model != "claude-sonnet-5-5" || r.Timeout != 30*time.Minute || r.Agent != "claude" {
