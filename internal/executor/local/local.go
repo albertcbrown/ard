@@ -199,12 +199,11 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 			if rerr := l.git.WorktreeRemove(context.WithoutCancel(ctx), j.RepoDir, wt, true); rerr != nil {
 				err = errors.Join(err, rerr)
 			}
-			os.RemoveAll(wt)
+			removeAllWritable(wt)
 			l.git.WorktreePrune(context.WithoutCancel(ctx), j.RepoDir)
 		}
 		for _, p := range created {
-			chmodWritable(p) // a sidecar tree under home is a-w
-			os.RemoveAll(p)
+			removeAllWritable(p) // a sidecar tree under home is a-w
 		}
 		h = executor.Handle{}
 	}()
@@ -318,21 +317,34 @@ func chmodReadOnly(root string) error {
 }
 
 // chmodWritable restores owner write permission so the tree can be removed.
+// Directories are made writable and searchable before they are read, so a
+// 0000 or 0555 directory (the Go module cache) is handled. Symlinks are
+// never followed or chmodded.
 func chmodWritable(root string) {
-	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if d == nil || d.Type()&fs.ModeSymlink != 0 {
-			return nil
+	st, err := os.Lstat(root)
+	if err != nil || st.Mode()&fs.ModeSymlink != 0 {
+		return
+	}
+	if !st.IsDir() {
+		if st.Mode().IsRegular() {
+			os.Chmod(root, st.Mode().Perm()|0o200)
 		}
-		if st, e := d.Info(); e == nil {
-			os.Chmod(p, st.Mode().Perm()|0o200|func() fs.FileMode {
-				if d.IsDir() {
-					return 0o100
-				}
-				return 0
-			}())
-		}
-		return nil
-	})
+		return
+	}
+	os.Chmod(root, st.Mode().Perm()|0o700)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		chmodWritable(filepath.Join(root, e.Name()))
+	}
+}
+
+// removeAllWritable removes path even when it holds read-only trees.
+func removeAllWritable(path string) error {
+	chmodWritable(path)
+	return os.RemoveAll(path)
 }
 
 // Logs opens the selected log file.

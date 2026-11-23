@@ -33,6 +33,7 @@ type runner struct {
 	clamped   bool
 	n         int // tick counter
 	errs      int // consecutive tick errors
+	wake      chan struct{}
 }
 
 // jitter maps r in [0,1) to a factor in [0.9, 1.1).
@@ -64,6 +65,8 @@ func (r *runner) run(workCtx context.Context, stopping <-chan struct{}) {
 			t.Stop()
 			return
 		case <-t.C:
+		case <-r.wake:
+			t.Stop()
 		}
 		select { // a tick must not start once shutdown has begun
 		case <-stopping:

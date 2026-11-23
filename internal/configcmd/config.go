@@ -17,12 +17,18 @@ import (
 	"github.com/albertcbrown/ard/internal/labels"
 )
 
+// gitBin is the git binary the version check runs; empty means "git". Tests override it.
+var gitBin = ""
+
 // Check is the handler behind `ard config check`. It prints the resolved
 // configuration to stdout even when validation fails; the load error (all
 // collected errors, one per line) is returned so the CLI layer prints it
 // to stderr and exits non-zero. With o.Ref set it validates that commit
 // instead of the working tree; it does not fetch, so authoring stays offline.
 func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
+	if err := gitx.New(gitBin).CheckVersion(ctx); err != nil {
+		return fmt.Errorf("ard config check: %w", err)
+	}
 	root, err := config.RepoRoot(e.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("ard config check: %w", err)

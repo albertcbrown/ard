@@ -286,3 +286,86 @@ func TestTickTimeoutOverride(t *testing.T) {
 type timeoutLoop struct{ testLoop }
 
 func (*timeoutLoop) TickTimeout(*config.Resolved) time.Duration { return 90 * time.Second }
+
+func TestWakeRunsTickNow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		log, buf := newLog()
+		wake := make(chan struct{})
+		l := &testLoop{name: "a", claims: true}
+		stop := start(t, mustNew(t, Deps{Log: log, Rand: fixedRand(0.5), Wake: wake}, l))
+		time.Sleep(iv / 2)
+		wake <- struct{}{}
+		time.Sleep(time.Second)
+		if got := l.ticks(); got != 2 {
+			t.Errorf("ticks = %d, want 2", got)
+		}
+		_ = stop()
+		if n := buf.count("controller.wake"); n != 1 {
+			t.Errorf("controller.wake lines = %d, want 1", n)
+		}
+	})
+}
+
+func TestWakeRespectsKillSwitch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		log, buf := newLog()
+		wake := make(chan struct{})
+		l := &testLoop{name: "a", claims: true}
+		paused := pauseFunc(func() PauseState { return PauseState{Paused: true, Reason: ReasonConfigInvalid} })
+		stop := start(t, mustNew(t, Deps{Log: log, Rand: fixedRand(0.5), Wake: wake, Pause: paused}, l))
+		time.Sleep(iv / 2)
+		wake <- struct{}{}
+		time.Sleep(time.Second)
+		_ = stop()
+		if l.ticks() != 0 {
+			t.Errorf("ticks = %d, want 0", l.ticks())
+		}
+		if buf.count("loop.paused") != 1 {
+			t.Errorf("want one loop.paused line:\n%s", buf.String())
+		}
+	})
+}
+
+func TestWakeDuringTickCoalesces(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		log, _ := newLog()
+		wake := make(chan struct{})
+		l := &testLoop{name: "slow", tick: func(ctx context.Context, _ Env) error {
+			time.Sleep(time.Minute)
+			return nil
+		}, interval: func(*config.Resolved) time.Duration { return time.Hour }}
+		stop := start(t, mustNew(t, Deps{Log: log, Rand: fixedRand(0.5), Wake: wake}, l))
+		time.Sleep(time.Second) // first tick is running
+		for range 3 {
+			wake <- struct{}{}
+		}
+		time.Sleep(10 * time.Minute)
+		_ = stop()
+		if l.maxCur != 1 {
+			t.Errorf("max concurrent ticks = %d", l.maxCur)
+		}
+		if got := l.ticks(); got != 2 {
+			t.Errorf("ticks = %d, want 2", got)
+		}
+	})
+}
+
+func TestWakeAfterStopIgnored(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		log, _ := newLog()
+		wake := make(chan struct{}, 1)
+		l := &testLoop{name: "a", claims: true}
+		stop := start(t, mustNew(t, Deps{Log: log, Rand: fixedRand(0.5), Wake: wake}, l))
+		time.Sleep(time.Second)
+		before := l.ticks()
+		err := stop()
+		wake <- struct{}{}
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		if l.ticks() != before {
+			t.Errorf("tick started after stop")
+		}
+	})
+}

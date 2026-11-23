@@ -84,9 +84,10 @@ eng-review, and a human merges it. About an hour and a few dollars.
    between jobs.
 
 **Moving faster than the poll.** Each loop ticks once at startup, then every
-interval (triage 15 min, workers and reviewers 5 min). Until #161 adds a wake
-signal, restarting `serve` when no job is running (`SELECT COUNT(*) FROM jobs
-WHERE status = 'running'` is 0) makes the next stage start within seconds.
+interval (triage 15 min, workers and reviewers 5 min). To act now, send
+`SIGUSR1` to `serve` (`kill -USR1 <pid of ard serve>`): every loop runs one tick
+immediately, still behind the kill switch and the job pool, and logs
+`controller.wake`. No restart is needed.
 `ard:approved` counts as soon as triage has finished, so there is no need to
 wait for the "ready for approval" comment.
 

@@ -41,6 +41,7 @@ func (l *Local) hostEnv(h executor.Handle) []string {
 		"PATH=" + l.pathEnv,
 		"HOME=" + h.Home,
 		"LANG=C.UTF-8",
+		"GOFLAGS=-modcacherw",
 		"TMPDIR=" + h.Home + "/tmp",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",

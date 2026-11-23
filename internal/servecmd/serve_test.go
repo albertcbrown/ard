@@ -849,3 +849,22 @@ func TestServeRefusesForeignClonePath(t *testing.T) {
 	}
 	l.Release()
 }
+
+func TestServeRefusesOldGit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	shim := filepath.Join(t.TempDir(), "git")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\necho 'git version 2.39.5'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitBin = shim
+	t.Cleanup(func() { gitBin = "" })
+	err := serve(context.Background(), env(t, "o/r", repoDir(t), true), fakeBuilder(fake.New(), true))
+	var ee *cli.ExitError
+	if err == nil || !errors.As(err, &ee) || ee.Code != 1 || !strings.Contains(err.Error(), "ard serve:") || !strings.Contains(err.Error(), "2.39.5") {
+		t.Fatalf("err = %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	if _, statErr := os.Stat(filepath.Join(home, ".ard")); !os.IsNotExist(statErr) {
+		t.Errorf("a refused start created state: %v", statErr)
+	}
+}
