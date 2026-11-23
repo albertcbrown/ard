@@ -62,7 +62,20 @@ type Redact struct {
 type Gitleaks struct {
 	Enabled bool   // default false
 	Path    string // default "gitleaks"; absolute path or a name on PATH
+
+	// BlockAutocloseWhenMissing: default false. When gitleaks is enabled but
+	// cannot run, also stop scanner autoclose for that run.
+	BlockAutocloseWhenMissing bool
 }
+
+// Route says where a scanner's issues go.
+type Route string
+
+const (
+	RoutePending    Route = "pending"
+	RouteNone       Route = "none"
+	RouteNeedsHuman Route = "needs-human"
+)
 
 // IntakeMode says which human-filed issues may enter triage (decided, #2).
 type IntakeMode string
@@ -115,6 +128,7 @@ type Role struct {
 	MaxOpen   int           // default 5; 0 is never valid
 	GroupSize int           // default 10; 0 is never valid
 	Autoclose bool          // default true iff ScanPath != ""
+	Route     Route         // default pending for executable scanners, none for LLM scanners
 
 	// Triage only: hold this role's request until these triage roles, if
 	// requested, are done. Ordering is owned by #15.

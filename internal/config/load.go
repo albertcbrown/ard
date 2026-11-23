@@ -53,6 +53,7 @@ type rawOverride struct {
 	maxOpen, groupSize           *int
 	maxTestFixes, maxRounds      *int
 	autoclose                    *bool
+	route                        *string
 	after, reviewers             *[]string
 	when                         *rawWhen
 	maxBudgetUSD, budgetPerDay   *float64
@@ -71,7 +72,7 @@ var commonOverrideKeys = map[string]bool{
 }
 
 var kindOverrideKeys = map[Kind]map[string]bool{
-	KindScanner:  {"every": true, "max_open": true, "group_size": true, "autoclose": true},
+	KindScanner:  {"every": true, "max_open": true, "group_size": true, "autoclose": true, "route": true},
 	KindTriage:   {"after": true, "plan_section": true},
 	KindWorker:   {"tests": true, "max_test_fixes": true, "max_review_rounds": true, "reviewers": true},
 	KindReviewer: {"when": true},
@@ -179,6 +180,11 @@ func applyRoleDefaults(res *Resolved, role *Role) {
 		role.MaxOpen = defaultScannerMaxOpen
 		role.GroupSize = defaultScannerGroupSize
 		role.Autoclose = role.ScanPath != ""
+		if role.ScanPath != "" {
+			role.Route = RoutePending
+		} else {
+			role.Route = RouteNone
+		}
 	case KindTriage:
 		role.PlanSection = BuiltinPlanSections[role.Name]
 	case KindWorker:
@@ -260,6 +266,8 @@ func parseOverride(ref rawOverrideRef, kind Kind, cfgPath string) (rawOverride, 
 			}
 		case "autoclose":
 			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.autoclose)...)
+		case "route":
+			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.route)...)
 		case "after", "reviewers":
 			list, listErrs := decodeStringList(value, cfgPath, fkey)
 			errs = append(errs, listErrs...)
@@ -373,6 +381,19 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 	}
 	if ov.autoclose != nil {
 		role.Autoclose = *ov.autoclose
+	}
+	if ov.route != nil {
+		switch r := Route(*ov.route); r {
+		case RoutePending:
+			if role.ScanPath == "" {
+				*errs = append(*errs, &Error{File: cfgPath, Key: keyRef + ".route", Msg: "LLM scanners may not use pending (a human adds ard:pending to one issue); use none or needs-human"})
+			}
+			role.Route = r
+		case RouteNone, RouteNeedsHuman:
+			role.Route = r
+		default:
+			*errs = append(*errs, &Error{File: cfgPath, Key: keyRef + ".route", Msg: "must be pending, none or needs-human"})
+		}
 	}
 	if ov.planSection != nil {
 		role.PlanSection = *ov.planSection

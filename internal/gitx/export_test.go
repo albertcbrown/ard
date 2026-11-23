@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
@@ -257,5 +258,36 @@ func TestFileAt(t *testing.T) {
 				t.Errorf("got (%q, %v), want (%q, %v)", b, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+func TestListTree(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	sha := commitFiles(t, clone, map[string]fileSpec{
+		".ard/7/plan.md":    {"a", 0o644},
+		".ard/7/logs/x.log": {"b", 0o644},
+		".ard/70/plan.md":   {"c", 0o644},
+		".ard/config.yaml":  {"d", 0o644},
+	})
+	got, err := g.ListTree(ctx, clone, sha, ".ard/7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".ard/7/logs/x.log", ".ard/7/plan.md"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, err := g.ListTree(ctx, clone, sha, ".ard/9"); err != nil || len(got) != 0 {
+		t.Errorf("missing prefix: got %v, %v", got, err)
+	}
+	all, err := g.ListTree(ctx, clone, sha, ".ard")
+	if err != nil || len(all) != 4 {
+		t.Errorf(".ard: got %v, %v", all, err)
+	}
+	for _, bad := range []string{"", "/x", "../x"} {
+		if _, err := g.ListTree(ctx, clone, sha, bad); err == nil {
+			t.Errorf("%q: want error", bad)
+		}
 	}
 }
