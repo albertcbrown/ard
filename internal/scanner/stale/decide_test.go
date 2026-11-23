@@ -36,7 +36,16 @@ func TestDecide(t *testing.T) {
 		{"running, unparsed label", old(labels.Prefix + "merger:x:" + string(labels.StateRunning)), nil, nil, reasonRunning},
 		{"human author", mod(func(i *github.Issue) { i.Author = "alice" }), nil, nil, reasonHumanAuthor},
 		{"other bot author", mod(func(i *github.Issue) { i.Author = "dependabot[bot]" }), nil, nil, reasonHumanAuthor},
-		{"not pending", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve")} }), nil, nil, reasonNotCand},
+		{"scanner label only", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve")} }), nil, nil, reasonClose},
+		{"scanner label only, human author", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve")}; i.Author = "alice" }), nil, nil, reasonHumanAuthor},
+		{"scanner label only, needs-human", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve"), labels.NeedsHuman} }), nil, nil, reasonNotCand},
+		{"scanner label only, hold", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve"), labels.Hold} }), nil, nil, reasonNotCand},
+		{"scanner label only, running", mod(func(i *github.Issue) {
+			i.Labels = []string{labels.Scanner("cve"), labels.Running(labels.StageTriage, "lead")}
+		}), nil, nil, reasonNotCand},
+		{"scanner label plus other ard label", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve"), labels.Prefix + "other"} }), nil, nil, reasonNotCand},
+		{"scanner label plus non-ard label", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve"), "bug"} }), nil, nil, reasonClose},
+		{"no ard label at all", mod(func(i *github.Issue) { i.Labels = []string{"bug"} }), nil, nil, reasonNotCand},
 		{"no scanner label", mod(func(i *github.Issue) { i.Labels = []string{labels.Pending} }), nil, nil, reasonNotCand},
 		{"undiscovered scanner", mod(func(i *github.Issue) { i.Labels = []string{labels.Pending, labels.Scanner("gone")} }), nil, nil, reasonNotCand},
 		{"pull request", mod(func(i *github.Issue) { i.IsPR = true }), nil, nil, reasonNotCand},

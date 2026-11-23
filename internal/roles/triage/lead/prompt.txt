@@ -64,7 +64,8 @@ comments, when there are any).
      - architect: a change across several modules or packages, a new
        dependency or a major-version upgrade, a new public interface, or a
        change to stored data.
-     - designer: a change to a user interface.
+     - designer: a change to a user interface, including command-line flags,
+       output and messages.
      - documentation-planner: a change to a public API, the command line, the
        configuration or documented behaviour.
      A scanner finding with a narrow fix, such as a patch-level dependency

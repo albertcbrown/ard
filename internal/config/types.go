@@ -161,7 +161,11 @@ type Role struct {
 // bodies, comments, PR text, diffs): every triage, worker and reviewer role,
 // and an LLM scanner. Only a deterministic scanner (an executable `scan`)
 // does not. A scanner without ScanPath counts as LLM, so the check fails closed.
-func (r Role) ReadsUntrusted() bool { return r.Kind != KindScanner || r.ScanPath == "" }
+func (r Role) ReadsUntrusted() bool { return r.Kind != KindScanner || r.LLMScanner() }
+
+// LLMScanner reports whether the role is a scanner run by an agent from
+// prompt.txt rather than by a scan executable.
+func (r Role) LLMScanner() bool { return r.Kind == KindScanner && r.ScanPath == "" }
 
 // Resolved is the fully merged configuration: built-in defaults, then the
 // global config, then per-role overrides.
