@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"strings"
 	"testing"
 
@@ -37,6 +38,13 @@ func TestStepUsageOf(t *testing.T) {
 	res := usageResult(0.4, 1, 2, 3, 4, "claude-opus-5-5")
 	res.ModelUsage["claude-haiku-4-5"] = agent.Usage{Input: 1}
 	res.ModelUsage["bad model"] = agent.Usage{}
+	for _, bad := range []float64{-1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		r := usageResult(bad, 1, 2, 3, 4, "claude-opus-5-5")
+		u, ok := StepUsageOf(r)
+		if !ok || u.CostUSD != nil || u.Tokens == nil || len(u.Models) != 1 {
+			t.Errorf("cost %v: usage = %+v ok=%v", bad, u, ok)
+		}
+	}
 	u, ok := StepUsageOf(res)
 	if !ok || *u.CostUSD != 0.4 || *u.Tokens != (state.Tokens{Input: 1, Output: 2, CacheWrite: 3, CacheRead: 4}) ||
 		strings.Join(u.Models, ",") != "claude-haiku-4-5,claude-opus-5-5" {
@@ -154,5 +162,21 @@ func TestFinishWithDoesNotDoubleCount(t *testing.T) {
 	j := cc.got[0]
 	if j.Usage.Steps != 2 || j.Usage.Tokens.Input != 30 || *j.Usage.CostUSD != 3 || j.CostUSD != 3 {
 		t.Errorf("usage = %+v tokens=%+v cost=%v", j.Usage, j.Usage.Tokens, j.CostUSD)
+	}
+}
+
+// A test step runs agent-written code: its output never becomes usage.
+func TestFinishWithIgnoresTestStep(t *testing.T) {
+	st, ctx := newUsageStore(t)
+	sj, _ := st.CreateJob(ctx, state.NewJob{Stage: "worker", Role: "engineer", Issue: 4})
+	cc := &captureCloser{}
+	f := &Finisher{Closer: cc, Store: st, Log: quiet}
+	h := executor.Handle{JobID: sj.ID + "t1"}
+	if _, err := f.Finish(ctx, sj.ID, h, executor.Status{State: executor.Exited}, usageResult(99, 1, 2, 3, 4, "claude-opus-5-5"), closeout.Cause{}); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := st.JobUsage(ctx, sj.ID)
+	if u.Steps != 0 || cc.got[0].Usage.CostUSD != nil || cc.got[0].CostUSD != 0 {
+		t.Errorf("usage = %+v closeout = %+v", u, cc.got[0].Usage)
 	}
 }

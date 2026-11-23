@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -257,8 +258,11 @@ func TestWorkerEndToEndDraftPR(t *testing.T) {
 		t.Errorf("hello.txt = %q", got)
 	}
 	var logs int
+	var costFiles []string
 	for _, f := range strings.Fields(gittest.Run(t, e.bare, "ls-tree", "-r", "--name-only", branch)) {
 		switch {
+		case strings.HasPrefix(f, ".ard/"+itoa(n)+"/costs/"):
+			costFiles = append(costFiles, f)
 		case strings.Contains(f, ".ard-input"):
 			t.Errorf("untrusted input committed: %s", f)
 		case strings.HasPrefix(f, ".ard/"+itoa(n)+"/logs/"):
@@ -270,6 +274,18 @@ func TestWorkerEndToEndDraftPR(t *testing.T) {
 	}
 	if logs != 2 {
 		t.Errorf("logs committed = %d, want the two agent logs", logs)
+	}
+	if len(costFiles) != 1 {
+		t.Fatalf("usage records = %v, want exactly one", costFiles)
+	}
+	var rec struct {
+		CostUSD float64 `json:"cost_usd"`
+		Steps   int     `json:"steps"`
+		Outcome string  `json:"outcome"`
+	}
+	if err := json.Unmarshal([]byte(gittest.Run(t, e.bare, "show", branch+":"+costFiles[0])), &rec); err != nil ||
+		math.Abs(rec.CostUSD-0.02) > 1e-9 || rec.Steps != 2 || rec.Outcome != "done" {
+		t.Errorf("usage record = %+v, %v", rec, err)
 	}
 	if got := gittest.Run(t, e.bare, "show", branch+":.ard/"+itoa(n)+"/worker-engineer.md"); !strings.Contains(got, "status: done") {
 		t.Errorf("role file = %s", got)

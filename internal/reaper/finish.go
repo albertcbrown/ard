@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
@@ -205,7 +207,10 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	cost := res.CostUSD
 	var totals state.JobUsage
 	recorded := true
-	if u, ok := StepUsageOf(res); ok && h.JobID != "" {
+	// Only agent steps are recorded: the job's own id or <id>f<k> (a fix step).
+	// A test step (<id>t<k>) runs agent-written code, so its output is never
+	// parsed into usage.
+	if u, ok := StepUsageOf(res); ok && agentStep(jobID, h.JobID) {
 		if _, err := f.Store.RecordStepUsage(ctx, jobID, h.JobID, u); err != nil {
 			f.log().Warn("reaper.usage_record_failed", "job", jobID, "step", h.JobID, "error", err)
 			recorded = false
@@ -288,6 +293,23 @@ func usageOf(u state.JobUsage) closeout.Usage {
 	return out
 }
 
+// agentStep reports whether step is an agent or fix step of the job.
+func agentStep(jobID, step string) bool {
+	if step == jobID {
+		return true
+	}
+	rest, ok := strings.CutPrefix(step, jobID+"f")
+	if !ok || rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // StepUsageOf maps what one agent run reported to a state record. ok is false
 // when the result reported nothing: no cost, no usage and no model. Models are
 // the keys of res.ModelUsage plus res.Model, de-duplicated, sorted and limited
@@ -295,8 +317,9 @@ func usageOf(u state.JobUsage) closeout.Usage {
 func StepUsageOf(res agent.Result) (state.StepUsage, bool) {
 	var u state.StepUsage
 	if res.CostUSD != nil {
-		c := *res.CostUSD
-		u.CostUSD = &c
+		if c := *res.CostUSD; !math.IsNaN(c) && !math.IsInf(c, 0) && c >= 0 {
+			u.CostUSD = &c
+		}
 	}
 	if res.Usage != nil {
 		u.Tokens = &state.Tokens{Input: res.Usage.Input, Output: res.Usage.Output, CacheWrite: res.Usage.CacheWrite, CacheRead: res.Usage.CacheRead}
