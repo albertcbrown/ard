@@ -838,18 +838,19 @@ func (f *Fake) MarkReady(ctx context.Context, n int) error {
 	return nil
 }
 
-func (f *Fake) CreateReview(ctx context.Context, n int, in github.ReviewInput) error {
+func (f *Fake) CreateReview(ctx context.Context, n int, in github.ReviewInput) (int64, error) {
 	unlock, err := f.begin("CreateReview", n, in)
 	defer unlock()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	it, err := f.s.get(n)
 	if err != nil || !it.isPR {
-		return fmt.Errorf("github: create review %d: %w", n, github.ErrNotFound)
+		return 0, fmt.Errorf("github: create review %d: %w", n, github.ErrNotFound)
 	}
+	rid := f.s.id()
 	it.reviewList = append(it.reviewList, github.Review{
-		ID: f.s.id(), Author: f.actor.Login, Body: in.Body, State: "COMMENTED",
+		ID: rid, Author: f.actor.Login, Body: in.Body, State: "COMMENTED",
 		CommitSHA: in.CommitSHA, SubmittedAt: f.s.now(),
 	})
 	for _, c := range in.Comments {
@@ -859,7 +860,7 @@ func (f *Fake) CreateReview(ctx context.Context, n int, in github.ReviewInput) e
 		})
 	}
 	it.issue.UpdatedAt = f.s.now()
-	return nil
+	return rid, nil
 }
 
 func (f *Fake) UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) error {

@@ -327,7 +327,31 @@ func (s *Store) SetCloseout(ctx context.Context, id, phase string, plan json.Raw
 	if err != nil {
 		return fmt.Errorf("set closeout %s: %w", id, err)
 	}
-	return s.update(ctx, "set closeout", id, `closeout_phase = ?, closeout_plan = COALESCE(?, closeout_plan)`, phase, v)
+	if phase != "closed" {
+		return s.update(ctx, "set closeout", id, `closeout_phase = ?, closeout_plan = COALESCE(?, closeout_plan)`, phase, v)
+	}
+	// Reaching "closed" marks the issue's cost table dirty in the same
+	// transaction, so a closed job always leaves its table to be written.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set closeout %s: begin: %w", id, err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	now := s.now().Unix()
+	res, err := tx.ExecContext(ctx, `UPDATE jobs SET closeout_phase = ?, closeout_plan = COALESCE(?, closeout_plan), updated_at = ? WHERE id = ?`, phase, v, now, id)
+	if err != nil {
+		return fmt.Errorf("set closeout %s: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set closeout %s: %w", id, ErrNotFound)
+	}
+	if _, err := tx.ExecContext(ctx, markCostTable, now, id); err != nil {
+		return fmt.Errorf("set closeout %s: mark cost table: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set closeout %s: commit: %w", id, err)
+	}
+	return nil
 }
 
 // OpenCloseouts returns the jobs whose close-out has started but not finished

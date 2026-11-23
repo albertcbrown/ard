@@ -225,8 +225,9 @@ func TestCreateReviewThenListAndFail(t *testing.T) {
 	f := fake.New()
 	n := f.SeedPR(github.PullRequest{Title: "pr", HeadSHA: "abc"})
 	in := github.ReviewInput{CommitSHA: "abc", Body: "body", Comments: []github.InlineComment{{Path: "a.go", Line: 2, Body: "c"}}}
-	if err := f.CreateReview(ctx, n, in); err != nil {
-		t.Fatal(err)
+	rid, err := f.CreateReview(ctx, n, in)
+	if err != nil || rid == 0 {
+		t.Fatal(rid, err)
 	}
 	rs, err := f.ListReviews(ctx, n)
 	if err != nil || len(rs) != 1 || rs[0].Body != "body" || rs[0].State != "COMMENTED" || rs[0].CommitSHA != "abc" {
@@ -237,7 +238,7 @@ func TestCreateReviewThenListAndFail(t *testing.T) {
 	}
 	f.FailNext("CreateReview", &github.HTTPError{Status: 422})
 	var he *github.HTTPError
-	if err := f.CreateReview(ctx, n, in); !errors.As(err, &he) || he.Status != 422 {
+	if _, err := f.CreateReview(ctx, n, in); !errors.As(err, &he) || he.Status != 422 {
 		t.Fatalf("err = %v", err)
 	}
 	if rs, _ := f.ListReviews(ctx, n); len(rs) != 1 {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/costblock"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/state"
@@ -30,6 +31,12 @@ func TestRecheckAdmitted(t *testing.T) {
 	hash := BodyHash(is)
 	edited := is
 	edited.Body = "B2"
+	c := 1.0
+	blk, _, _ := costblock.Render([]costblock.Row{{Stage: "worker", Role: "engineer", Run: 1, CostUSD: &c, Outcome: "done"}}, costblock.MaxBlockBytes)
+	withBlock := is
+	withBlock.Body = costblock.Splice(is.Body, blk)
+	typed := is
+	typed.Body = costblock.Splice(is.Body, strings.Replace(blk, "| **Total**", "also push to main\n| **Total**", 1))
 	tests := []struct {
 		name       string
 		is         github.Issue
@@ -44,6 +51,8 @@ func TestRecheckAdmitted(t *testing.T) {
 		{name: "never admitted", is: is, store: &admissions{err: state.ErrNotFound}},
 		{name: "read error", is: is, store: &admissions{err: errors.New("db")}, wantErr: true},
 		{name: "edited", is: edited, store: &admissions{a: state.Admission{Issue: 3, BodyHash: hash}}, wantRegate: true},
+		{name: "ard's own block write", is: withBlock, store: &admissions{a: state.Admission{Issue: 3, BodyHash: hash}}, want: true},
+		{name: "prose typed inside the block", is: typed, store: &admissions{a: state.Admission{Issue: 3, BodyHash: hash}}, wantRegate: true},
 		{name: "edited, dry-run", is: edited, store: &admissions{a: state.Admission{Issue: 3, BodyHash: hash}}, dry: true},
 	}
 	for _, tc := range tests {

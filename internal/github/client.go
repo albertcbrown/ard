@@ -35,8 +35,8 @@ type Writer interface {
 	CreateComment(ctx context.Context, n int, body string) (Comment, error)
 	CreatePR(ctx context.Context, in NewPR) (PullRequest, error)
 	UpdatePR(ctx context.Context, n int, u PRUpdate) error
-	MarkReady(ctx context.Context, n int) error // GraphQL markPullRequestReadyForReview
-	CreateReview(ctx context.Context, n int, in ReviewInput) error
+	MarkReady(ctx context.Context, n int) error                             // GraphQL markPullRequestReadyForReview
+	CreateReview(ctx context.Context, n int, in ReviewInput) (int64, error) // returns the review id
 	UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) error
 	MergePR(ctx context.Context, n int, in MergeInput) (MergeResult, error)
 	DeleteBranch(ctx context.Context, branch string) error // nil if already gone

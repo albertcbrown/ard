@@ -189,9 +189,9 @@ func TestDefaultLoopsIncludeTheScannersLoop(t *testing.T) {
 	}
 	defer w.Scanners.Close()
 	loops := registerLoops(w)
-	if len(loops) != 6 || loops[0].Name() != "scanners" || loops[1].Name() != "stale" || loops[2].Name() != "triage" || loops[3].Name() != "workers" || loops[4].Name() != "reviewers" || loops[5].Name() != "reaper" ||
-		!loops[0].Claims() || !loops[1].Claims() || !loops[2].Claims() || !loops[3].Claims() || !loops[4].Claims() || loops[5].Claims() {
-		t.Fatalf("loops = %v: the scanners, stale, triage, workers and reviewers loops must exist and be skipped while paused, and the Reaper must keep running", loops)
+	if len(loops) != 7 || loops[0].Name() != "scanners" || loops[1].Name() != "stale" || loops[2].Name() != "triage" || loops[3].Name() != "workers" || loops[4].Name() != "reviewers" || loops[5].Name() != "reaper" || loops[6].Name() != "costs" ||
+		!loops[0].Claims() || !loops[1].Claims() || !loops[2].Claims() || !loops[3].Claims() || !loops[4].Claims() || loops[5].Claims() || loops[6].Claims() {
+		t.Fatalf("loops = %v: the scanners, stale, triage, workers and reviewers loops must exist and be skipped while paused, and the Reaper and the costs loop must keep running", loops)
 	}
 	if _, ok := loops[0].(controller.TickTimeouter); !ok {
 		t.Error("the scanners loop must set its own tick timeout")

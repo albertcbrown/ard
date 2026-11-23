@@ -1,0 +1,7 @@
+CREATE TABLE cost_tables(
+  issue INTEGER PRIMARY KEY,
+  dirty INTEGER NOT NULL DEFAULT 1,
+  gen INTEGER NOT NULL DEFAULT 0,
+  marked_at INTEGER NOT NULL,
+  written_at INTEGER,
+  failures INTEGER NOT NULL DEFAULT 0);
