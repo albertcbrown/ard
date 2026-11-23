@@ -54,6 +54,7 @@ type Reason string
 const (
 	ReasonAllMode      Reason = "all-mode"
 	ReasonAppAuthored  Reason = "app-authored" // scanner-filed: unaffected by intake
+	ReasonAdmitted     Reason = "admitted"     // stored admission, body unchanged
 	ReasonAppLabeled   Reason = "app-labeled"
 	ReasonAuthorised   Reason = "authorised-labeler"
 	ReasonPR           Reason = "pull-request"

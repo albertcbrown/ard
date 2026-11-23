@@ -15,6 +15,7 @@ import (
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/intake"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/reaper"
@@ -133,6 +134,27 @@ func TestCandidates(t *testing.T) {
 		h.mustTick()
 		if len(h.ex.prepared) != 0 || h.pool.offers != 1 || len(h.pool.last) != 0 {
 			t.Errorf("prepared %d, offers %d, last %v", len(h.ex.prepared), h.pool.offers, h.pool.last)
+		}
+	})
+	t.Run("a non-lead request on an admitted human issue claims with reason admitted", func(t *testing.T) {
+		h := newHarness(t)
+		n := h.human("t", "body", labels.Request(labels.StageTriage, "architect"))
+		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: agentjob.BodyHash(h.issue(n)), LabeledAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		tk := &tick{l: h.loop, cfg: h.cfg, log: quiet, self: self}
+		c, ok, err := tk.consider(context.Background(), config.Role{Kind: config.KindTriage, Name: "architect"}, n)
+		if err != nil || !ok || c.reason != intake.ReasonAdmitted {
+			t.Errorf("candidate %+v ok=%v err=%v", c, ok, err)
+		}
+	})
+	t.Run("an App-authored issue claims with reason app-authored", func(t *testing.T) {
+		h := newHarness(t)
+		n := h.gh.SeedIssue(github.Issue{Title: "t", Author: self, Labels: []string{labels.Request(labels.StageTriage, "architect")}, CreatedAt: t0})
+		tk := &tick{l: h.loop, cfg: h.cfg, log: quiet, self: self}
+		c, ok, err := tk.consider(context.Background(), config.Role{Kind: config.KindTriage, Name: "architect"}, n)
+		if err != nil || !ok || c.reason != intake.ReasonAppAuthored {
+			t.Errorf("candidate %+v ok=%v err=%v", c, ok, err)
 		}
 	})
 	t.Run("two roles on one issue claim one, the lead first", func(t *testing.T) {
