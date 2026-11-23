@@ -9,11 +9,14 @@ findings:
     severity: low
     blocking: false
     message: |
-      The Docker test checks structure and leaks but not `redact.Builtin()` on stdout, which the host test does.
-      The issue asks for "the same assertions". This is cheap to add, and it does not block the merge.
+      The Docker test still does not run `redact.Builtin()` on stdout, which the host test does (trufflehog_integration_test.go:428).
+      The issue asks for "the same assertions". Add the same check after `thiCheckFindings`. It does not block the merge.
 ---
-The change adds the host and Docker integration tests and the proposal paragraph the plan asks for. The tests are integration-tagged, compile and vet cleanly, and keep planted values out of failure messages. Approved. A maintainer still has to run the Docker test by hand.
+The change adds the host and Docker integration tests and the proposal paragraph, as plan.md describes. The tests are integration-tagged and keep planted values out of failure messages. Approved; one low finding from the previous round is still open.
 
 ## Checks
-- Lint: `make lint` runs `go vet ./...` and `gofmt -l .`, and neither covers the integration tag. I ran `go vet -tags integration ./internal/roles/` instead, and it reported nothing. `gofmt -l internal/roles` reported only a parse error in `testdata/docs/skips/src/_x.go`, which this change did not touch.
-- Diff coverage: skipped. The added code is behind the `integration` build tag, and the Docker test needs Docker, network and the pinned binary. I did not run the integration tests.
+- Lint: `make lint` does not cover the `integration` tag. I tried `go vet -tags integration ./internal/roles/`, but it stopped while downloading modules in this sandbox, so I have no vet result for this round. The previous round's vet run was clean.
+- Diff coverage: skipped. The added code is behind the `integration` tag, and the Docker test needs Docker, network and the pinned binary. I did not run the integration tests.
+
+## Previous findings
+- internal/roles/trufflehog_docker_integration_test.go (missing `redact.Builtin` check in the Docker test): still present, low and non-blocking.
