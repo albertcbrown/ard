@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/config"
@@ -68,7 +70,7 @@ func streakRecovery(scanner string) string {
 func (p *Pipeline) noteRun(ctx context.Context, store Store, role config.Role, res RunResult) {
 	log := p.Log
 	if log == nil {
-		return
+		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	log = log.With("scanner", role.Name)
 	class, failing, ok := classOf(res)
