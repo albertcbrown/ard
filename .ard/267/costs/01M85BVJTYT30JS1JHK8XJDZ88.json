@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "job": "01M85BVJTYT30JS1JHK8XJDZ88",
+  "issue": 267,
+  "stage": "triage",
+  "role": "engineer",
+  "attempt": 1,
+  "outcome": "done",
+  "models": [
+    "claude-sonnet-5-5"
+  ],
+  "tokens": {
+    "input": 14,
+    "output": 5919,
+    "cache_write": 21332,
+    "cache_read": 118248
+  },
+  "cost_usd": 0.15637079999999998,
+  "steps": 1,
+  "started_at": "2026-11-23T23:29:00Z",
+  "ended_at": "2026-11-23T23:29:48Z"
+}
