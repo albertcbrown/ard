@@ -14,7 +14,6 @@ None.
 
 - #40 Roles: triage/product-manager, architect, designer, documentation-planner
 - #43 Role: reviewers/security-review
-- #44 Role: reviewers/license-review
 - #45 Role: reviewers/product-manager-review
 - #47 Scanner: lts
 - #48 Scanner: lint
@@ -25,14 +24,15 @@ None.
 - #204 LLM scanner engine: run prompt.txt scanners as agent jobs
 - #212 Scanner: missing-tests, part 1: the Go helper
 - #213 Scanner: missing-tests, part 2: scan, Dockerfile and starter wiring
-- #215 Scanner pipeline: route key and pre-filing secret guard (#203 part 1)
 - #216 Scanner: trufflehog role (#203 part 2)
 - #217 Scanner: trufflehog starter wiring and image pin (#203 part 3)
 - #221 Scanner failure streaks are visible on the status issue
-- #222 Build the three URI test literals at run time
 - #223 Triage approval gate posts 'ready for approval' for an issue with no plan.md
 - #227 Neutralise markup and mentions in scanner titles and bodies
 - #231 Scanner decode errors must not echo scanner output into logs
+- #252 Re-request reviews when a reviewed PR's head moves with code changes
+- #254 Log secret scan: generic-assignment flags token counts and Token fields
+- #255 Conflict rounds: the worker resolves merge conflicts with main
 
 ## Phase 3: Scale
 
@@ -43,15 +43,12 @@ None.
 - #58 Status issue daily digest
 - #59 Shared roles repo
 - #60 Onboard a second repository
-- #61 Janitor: prune old .ard/<issue#>/ directories
 - #63 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit
 - #64 Token caps per role, alongside #57's dollar caps
 - #183 Version every PR merge to main as vX.Y.Z
 - #205 Reviewer aid step: run pinned deterministic tools before a reviewer agent
 - #224 Scanner: trufflehog history scan
-- #236 Budgets: daily dollar caps per role and repo, part A: enforcement
 - #237 Budgets: daily dollar caps per role and repo, part B: status-issue notice
-- #238 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part A: readings
 - #239 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part B: thresholds and the one-job rule
 - #240 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part C: notices
 - #241 Token caps per role, alongside #57's dollar caps, part A: token ledger
