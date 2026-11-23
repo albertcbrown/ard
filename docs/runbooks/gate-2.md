@@ -87,6 +87,7 @@ eng-review, and a human merges it. About an hour and a few dollars.
    - a "ready for approval" comment. **Read `.ard/<n>/plan.md`**, then add
      `ard:approved` yourself (it counts only from a human with triage
      permission, added after triage finished)
+   - instead of that comment, a needs-a-human comment when `plan.md` is missing
    - `ard:worker:engineer:running`, a `worker/<n>-…` branch and a draft PR
    - `ard:review:eng-review` on the PR, then a PR review and
      `ard:review:eng-review:done` or `:changes`

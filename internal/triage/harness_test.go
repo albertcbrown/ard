@@ -176,6 +176,9 @@ type harness struct {
 	ledger string
 	// noCred leaves the model credential unset.
 	noCred bool
+	// noPlan holds issues without a plan.md; planErr fails the check.
+	noPlan  map[int]bool
+	planErr error
 }
 
 type option func(*harness)
@@ -238,6 +241,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		Reader: h.gh, Effects: h.fx, Store: h.store, Executor: h.ex, Finisher: h.fin,
 		Pool: func() Offerer { return h.pool }, Agents: reg, Model: cred,
 		Repo: "o/r", RepoDir: t.TempDir(), Poll: 5 * time.Millisecond, Log: quiet,
+		PlanExists: func(_ context.Context, n int) (bool, error) { return !h.noPlan[n], h.planErr },
 	})
 	return h
 }
