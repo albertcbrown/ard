@@ -150,7 +150,11 @@ func serve(ctx context.Context, e *cli.Env, build builder) error {
 		StateDir: stateDir, Started: time.Now(),
 	}
 	defer w.closeAll()
-	loader := &cfgLoader{src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
+	paths, perr := newPathRedactor(w.hostPaths())
+	if perr != nil {
+		log.Error("serve.config_error_paths", "error", perr)
+	}
+	loader := &cfgLoader{paths: paths, src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
 
 	// An origin/main whose config cannot be loaded does not abort startup:
 	// serve starts paused, tells the status issue, and retries every tick.
@@ -303,6 +307,15 @@ func (w *wiring) closeAll() {
 	}
 }
 
+// ardRoot is the executor root, ~/.ard. The executor and the redactor's path
+// rules both use it, so they cannot disagree.
+func (w *wiring) ardRoot() string { return filepath.Join(w.Home, ".ard") }
+
+// hostPaths are the controller host paths close-out replaces in committed text.
+func (w *wiring) hostPaths() closeout.HostPaths {
+	return closeout.HostPaths{Home: w.Home, ArdRoot: w.ardRoot(), TempDir: os.TempDir()}
+}
+
 // newExecutor builds the local executor every loop uses; its host-mode hook
 // appends a state.EventHostUntrusted row to the controller database. Every
 // loop that runs jobs (scanners, and later triage, workers and reviewers)
@@ -318,7 +331,7 @@ func (w *wiring) newExecutor() (*local.Local, error) {
 		return w.exec, nil
 	}
 	ex, err := local.New(local.Options{
-		Root: filepath.Join(w.Home, ".ard"), Log: w.Log, SidecarToken: w.Token, CloneDir: w.Root,
+		Root: w.ardRoot(), Log: w.Log, SidecarToken: w.Token, CloneDir: w.Root,
 		OnHostUntrusted: recordHostUntrusted(w.Store),
 	})
 	if err != nil {

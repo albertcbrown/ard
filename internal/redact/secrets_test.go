@@ -157,6 +157,13 @@ func TestFromEnvironAndAddEnvAndMerge(t *testing.T) {
 	if err := e.AddEnv(map[string]string{"bad name": model}); !errors.Is(err, ErrBadName) {
 		t.Errorf("err = %v", err)
 	}
+	pm, err := m.WithPaths(PathRule{Name: "path.home", From: "/Users/al", To: "~"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pm.Merge(nil).Merge(e).String("/Users/al/x " + model); got != "~/x [REDACTED:ANYTHING]" {
+		t.Errorf("merge dropped a path rule: %q", got)
+	}
 }
 
 func TestOverlappingSecretsRedactedAsOneSpan(t *testing.T) {
@@ -245,6 +252,13 @@ func TestSecretsNames(t *testing.T) {
 				}
 			}
 		})
+	}
+	ps, err := s.WithPaths(PathRule{Name: "path.home", From: "/Users/al", To: "~"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ps.Names([]byte("/Users/al/x " + a)); strings.Join(got, ",") != "TOKEN_A" {
+		t.Errorf("Names with a path rule = %v, want only the secret", got)
 	}
 	if got := (*Secrets)(nil).Names([]byte("x")); got != nil {
 		t.Errorf("nil Secrets: %v", got)

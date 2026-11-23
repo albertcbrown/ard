@@ -18,7 +18,6 @@ import (
 	"github.com/albertcbrown/ard/internal/limits"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/reaper"
-	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -44,15 +43,14 @@ func (w *wiring) closer() *closeout.Closer {
 	}
 	staging := filepath.Join(w.StateDir, "closeout")
 	if w.StateDir == "" {
-		staging = filepath.Join(w.Home, ".ard", "closeout")
+		staging = filepath.Join(w.ardRoot(), "closeout")
 	}
 	w.cl = closeout.New(closeout.Deps{
 		Effects: w.Effects, Comments: w.Reader, Committer: closeoutCommitter{w}, Store: w.Store,
 		Roles: cfgRoles{w},
 		// The job's model credentials are in the controller's environment.
-		NewRedactor: func(closeout.Job) (closeout.Redactor, error) {
-			return redact.New(redact.FromEnviron(os.Environ()), redact.Options{})
-		},
+		// Host paths are replaced by placeholders in the same pass.
+		NewRedactor: closeout.JobRedactor(os.Environ, w.hostPaths()),
 		// Job worktrees belong to the agent: git runs in the controller's own
 		// clone (w.Root) and never trusts a worktree's .git, index or config.
 		Changed: func(ctx context.Context, worktree, base string, paths ...string) ([]gitx.PathChange, error) {

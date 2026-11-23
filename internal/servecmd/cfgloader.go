@@ -8,11 +8,13 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/configsrc"
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
+	"github.com/albertcbrown/ard/internal/redact"
 )
 
 // maxConfigErrorBytes caps the error text posted to the status issue.
@@ -34,6 +36,9 @@ type cfgLoader struct {
 	// --log-level. nil = log only.
 	stderr io.Writer
 	issue  func() int // the status issue number; <= 0 when unknown or synthetic
+	// paths replaces the controller host's paths in the error text posted to
+	// the status issue. nil = post a fixed message, never the error.
+	paths *redact.Secrets
 
 	mu   sync.Mutex
 	last string // the last error text posted
@@ -101,11 +106,20 @@ func (c *cfgLoader) warnIntake(res *config.Resolved) {
 	c.log.Error("config.intake_invalid", "key", "intake.label", "label", res.Intake.Label, "error", err)
 }
 
+// newPathRedactor builds the host-path replacer for posted error text.
+func newPathRedactor(host closeout.HostPaths) (*redact.Secrets, error) {
+	return redact.NewSecrets().WithPaths(closeout.PathRules("", "", host)...)
+}
+
 func (c *cfgLoader) report(ctx context.Context, err error) {
-	msg := err.Error()
+	raw := err.Error()
+	msg := "the error text is withheld because host paths could not be redacted; see the controller log"
+	if c.paths != nil {
+		msg = c.paths.String(raw)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if msg == c.last {
+	if raw == c.last {
 		return
 	}
 	n := c.issue()
@@ -124,5 +138,5 @@ func (c *cfgLoader) report(ctx context.Context, err error) {
 		c.log.Warn("serve.config_error_not_posted", "issue", n, "error", perr)
 		return
 	}
-	c.last = err.Error()
+	c.last = raw
 }

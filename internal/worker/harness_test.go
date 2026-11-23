@@ -469,7 +469,7 @@ func (h *harness) agentWrites(files map[string]string, role string, testExit fun
 				writeFile(h.t, hd.Worktree, p, c)
 			}
 			if role != "" {
-				writeFile(h.t, hd.Worktree, fmt.Sprintf(".ard/%d/worker-engineer.md", j.Issue), role)
+				writeFile(h.t, hd.Worktree, fmt.Sprintf(".ard/%d/worker-engineer.md", j.Issue), strings.ReplaceAll(role, "@WT@", hd.Worktree))
 			}
 		}
 		return 0

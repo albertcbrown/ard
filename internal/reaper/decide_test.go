@@ -124,7 +124,7 @@ func with(sj state.Job, kill string) state.Job { sj.KillReason = kill; return sj
 func TestCloseoutJob(t *testing.T) {
 	cost := 1.5
 	sj := state.Job{ID: "J", Issue: 7, PR: 9, Stage: "review", Role: "r", Attempt: 2, Branch: "worker/x"}
-	h := executor.Handle{Worktree: "/w", BaseSHA: "b", LogPath: "/l", Scrubbed: []string{".ard/7/review-r.md"}}
+	h := executor.Handle{Worktree: "/w", Home: "/home", BaseSHA: "b", LogPath: "/l", Scrubbed: []string{".ard/7/review-r.md"}}
 	for _, tc := range []struct {
 		st   executor.Status
 		want int
@@ -136,7 +136,7 @@ func TestCloseoutJob(t *testing.T) {
 	} {
 		j := CloseoutJob(sj, h, tc.st, closeout.Cause{Kind: closeout.CauseQuiet}, agent.Result{CostUSD: &cost})
 		if j.ExitCode != tc.want || j.ID != "J" || j.Issue != 7 || j.PR != 9 || j.Stage != "review" || j.Attempt != 2 ||
-			j.Branch != "worker/x" || j.Worktree != "/w" || j.BaseSHA != "b" || j.LogPath != "/l" || j.CostUSD != 1.5 || len(j.Scrubbed) != 1 || j.Scrubbed[0] != ".ard/7/review-r.md" ||
+			j.Branch != "worker/x" || j.Worktree != "/w" || j.Home != "/home" || j.BaseSHA != "b" || j.LogPath != "/l" || j.CostUSD != 1.5 || len(j.Scrubbed) != 1 || j.Scrubbed[0] != ".ard/7/review-r.md" ||
 			j.Cause.Kind != closeout.CauseQuiet {
 			t.Errorf("%v: job = %+v", tc.st.State, j)
 		}

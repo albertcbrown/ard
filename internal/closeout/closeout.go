@@ -21,7 +21,7 @@ import (
 
 // recordVersion stays 1 across the Reaper's additions (Job.Cause, Plan.Tail,
 // Plan.TailWithheld, Plan.KeepUntil) and the usage-limit ones (Cause.Family,
-// Cause.ResetsAt, OutcomeLimited): older records decode them as zero, and
+// Cause.ResetsAt, OutcomeLimited) and Job.Home: older records decode them as zero, and
 // zero means the earlier behaviour.
 const recordVersion = 1
 
@@ -40,8 +40,12 @@ type Job struct {
 	Attempt  int
 	Branch   string // "" commits to main (triage); worker/<name> otherwise
 	Worktree string // executor handle Worktree
-	BaseSHA  string // executor handle BaseSHA: what the worktree started from
-	LogPath  string // executor handle LogPath; "" when there is no log
+	// Home is the executor handle Home: the job's host home dir (its config
+	// dir, TMPDIR and sidecar live under it). "" on a record stored before
+	// #156; the redactor then skips that cosmetic rule.
+	Home    string
+	BaseSHA string // executor handle BaseSHA: what the worktree started from
+	LogPath string // executor handle LogPath; "" when there is no log
 	// Scrubbed is copied from the executor handle: the paths it removed from
 	// the worktree before the agent ran. An unchanged role file is trusted
 	// only if listed here.

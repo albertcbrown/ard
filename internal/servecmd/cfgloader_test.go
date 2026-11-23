@@ -2,11 +2,20 @@ package servecmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/redact"
 )
 
 func TestWarnHost(t *testing.T) {
@@ -70,5 +79,37 @@ func TestWarnIntakeOncePerValue(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "level=ERROR") {
 		t.Errorf("not at error level:\n%s", logs.String())
+	}
+}
+
+type captureCommenter struct{ bodies []string }
+
+func (c *captureCommenter) CreateComment(_ context.Context, _ int, body string) (github.Comment, error) {
+	c.bodies = append(c.bodies, body)
+	return github.Comment{}, nil
+}
+
+func TestReportReplacesHostPaths(t *testing.T) {
+	home := t.TempDir()
+	host := closeout.HostPaths{Home: home, ArdRoot: filepath.Join(home, ".ard")}
+	secret := filepath.Join(host.ArdRoot, "config", "o", "r", "abc123")
+	err := fmt.Errorf("config: snapshot: %w", &fs.PathError{Op: "rename", Path: secret, Err: errors.New("no such file")})
+	paths, perr := newPathRedactor(host)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	for name, p := range map[string]*redact.Secrets{"rules": paths, "no rules": nil} {
+		cm := &captureCommenter{}
+		c := &cfgLoader{fx: cm, log: slog.New(slog.NewTextHandler(io.Discard, nil)), issue: func() int { return 5 }, paths: p}
+		c.report(context.Background(), err)
+		if len(cm.bodies) != 1 {
+			t.Fatalf("%s: %d comments", name, len(cm.bodies))
+		}
+		if strings.Contains(cm.bodies[0], home) {
+			t.Errorf("%s: comment holds the host path: %s", name, cm.bodies[0])
+		}
+		if p != nil && !strings.Contains(cm.bodies[0], "~/.ard/config/o/r/abc123") {
+			t.Errorf("%s: placeholder missing: %s", name, cm.bodies[0])
+		}
 	}
 }
