@@ -22,6 +22,11 @@ import (
 // TestIntegration runs the conformance suite against a real repository. It
 // skips unless ARD_IT_REPO (owner/name) and ARD_GITHUB_* credentials are set.
 // It creates issues and labels in that repo: point it at a scratch repository.
+//
+// Optional: ARD_IT_REQUIRED_CHECK names a status check the repo's rules require
+// (RequiredChecksRead asserts it is reported). ARD_IT_RULES_UNAVAILABLE=1 is
+// required on a free-plan private repository such as ard-scratch, whose rules
+// API answers 403 "Upgrade to GitHub Pro"; without it RequiredChecksRead fails.
 func TestIntegration(t *testing.T) {
 	repoName := os.Getenv("ARD_IT_REPO")
 	if repoName == "" {

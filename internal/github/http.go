@@ -648,10 +648,12 @@ func rulesUnavailable(err error) bool {
 
 func (h *HTTP) RequiredChecks(ctx context.Context, branch string) (RequiredChecksResult, error) {
 	opts := &gogh.ListOptions{PerPage: 100}
+	failedPage := 0
 	items, err := paginate(0, func(page int) ([]RequiredCheck, int, error) {
 		opts.Page = page
 		rules, resp, err := h.gh.Repositories.ListRulesForBranch(ctx, h.o(), h.r(), branch, opts)
 		if err != nil {
+			failedPage = page
 			return nil, 0, err
 		}
 		var out []RequiredCheck
@@ -671,7 +673,9 @@ func (h *HTTP) RequiredChecks(ctx context.Context, branch string) (RequiredCheck
 	})
 	if err != nil {
 		err = h.fail(ctx, fmt.Sprintf("required checks of %q", branch), 0, err)
-		if rulesUnavailable(err) {
+		// Only a failure on the first page means "no rules API"; a later page
+		// failing after page 1 read fine is an ordinary error.
+		if failedPage <= 1 && rulesUnavailable(err) {
 			return RequiredChecksResult{}, nil
 		}
 		return RequiredChecksResult{}, err
@@ -689,7 +693,7 @@ func (h *HTTP) ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error
 		}
 		out := make([]CheckRun, len(res.CheckRuns))
 		for i, r := range res.CheckRuns {
-			out[i] = CheckRun{Name: r.GetName(), AppID: r.GetApp().GetID(), Status: r.GetStatus(), Conclusion: r.GetConclusion()}
+			out[i] = CheckRun{Name: r.GetName(), AppID: r.GetApp().GetID(), Status: r.GetStatus(), Conclusion: r.GetConclusion(), ID: r.GetID(), CompletedAt: r.GetCompletedAt().Time}
 		}
 		return out, nextPage(resp), nil
 	})

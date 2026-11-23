@@ -862,6 +862,23 @@ func TestRequiredChecks(t *testing.T) {
 		{"404 is unavailable", respond(404, `{"message":"Not Found"}`), RequiredChecksResult{}, nil},
 		{"permissions 403 is an error", respond(403, `{"message":"Resource not accessible by integration"}`), RequiredChecksResult{},
 			func(e error) bool { return errors.Is(e, ErrForbidden) }},
+		{"403 rate limit header is a transient error", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.Header().Set("X-RateLimit-Reset", "4102444800")
+			w.WriteHeader(403)
+			fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+		}, RequiredChecksResult{}, IsTransient},
+		{"403 secondary rate limit is a transient error", respond(403, `{"message":"You have exceeded a secondary rate limit. Please wait."}`), RequiredChecksResult{}, IsTransient},
+		{"403 upgrade to Team is unavailable", respond(403, `{"message":"Upgrade to GitHub Team or make this repository public to enable this feature."}`), RequiredChecksResult{}, nil},
+		{"404 on page 2 is an error", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("page") == "2" {
+				w.WriteHeader(404)
+				fmt.Fprint(w, `{"message":"Not Found"}`)
+				return
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/rules/branches/main?page=2>; rel="next"`, base))
+			fmt.Fprint(w, `[{"type":"required_status_checks","ruleset_id":1,"parameters":{"required_status_checks":[{"context":"test"}]}}]`)
+		}, RequiredChecksResult{}, func(e error) bool { return errors.Is(e, ErrNotFound) }},
 		{"500 is a transient error", respond(500, `{"message":"boom"}`), RequiredChecksResult{}, IsTransient},
 		{"unexpected status is an error", respond(418, `{"message":"teapot"}`), RequiredChecksResult{},
 			func(e error) bool { var he *HTTPError; return errors.As(e, &he) && he.Status == 418 }},
@@ -897,17 +914,17 @@ func TestListCheckRunsPaginates(t *testing.T) {
 				t.Errorf("filter = %q", r.URL.Query().Get("filter"))
 			}
 			if r.URL.Query().Get("page") == "2" {
-				fmt.Fprint(w, `{"total_count":2,"check_runs":[{"name":"lint","status":"in_progress"}]}`)
+				fmt.Fprint(w, `{"total_count":2,"check_runs":[{"id":8,"name":"lint","status":"in_progress"}]}`)
 				return
 			}
 			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/commits/abc/check-runs?page=2>; rel="next"`, base))
-			fmt.Fprint(w, `{"total_count":2,"check_runs":[{"name":"build","status":"completed","conclusion":"success","app":{"id":15368}}]}`)
+			fmt.Fprint(w, `{"total_count":2,"check_runs":[{"id":7,"name":"build","status":"completed","conclusion":"success","completed_at":"2026-01-02T03:04:05Z","app":{"id":15368}}]}`)
 		},
 	}
 	base = s.URL
 	h := newTestHTTP(t, s, nil)
 	got, err := h.ListCheckRuns(context.Background(), "abc")
-	want := []CheckRun{{Name: "build", AppID: 15368, Status: "completed", Conclusion: "success"}, {Name: "lint", Status: "in_progress"}}
+	want := []CheckRun{{ID: 7, Name: "build", AppID: 15368, Status: "completed", Conclusion: "success", CompletedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}, {ID: 8, Name: "lint", Status: "in_progress"}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("runs = %+v, %v", got, err)
 	}

@@ -245,8 +245,10 @@ type RequiredChecksResult struct {
 
 // CheckRun is the latest run of one check on a commit.
 type CheckRun struct {
-	Name       string
-	AppID      int64
-	Status     string // queued|in_progress|completed|waiting|requested|pending
-	Conclusion string // set when Status is completed
+	ID          int64     // higher is newer; filter=latest does not merge runs across check suites
+	CompletedAt time.Time // zero until completed
+	Name        string
+	AppID       int64
+	Status      string // queued|in_progress|completed|waiting|requested|pending
+	Conclusion  string // set when Status is completed
 }
