@@ -9,7 +9,7 @@ Open issues by phase. Generated from the GitHub milestones; closed issues are re
 ## Phase 1: First loop
 
 - #39 Gate 2: first loop proven
-- #172 Cost and tokens table on each issue
+- #187 serve: --loops to choose which controller loops run (soak runs scanners only)
 
 ## Phase 2: All roles
 
