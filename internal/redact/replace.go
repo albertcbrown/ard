@@ -66,7 +66,7 @@ func (s *Secrets) stream(ctx context.Context, r io.Reader, w io.Writer, chunk in
 			if _, err := w.Write(b[last:i]); err != nil {
 				return nil, total, werr(err)
 			}
-			if _, err := io.WriteString(w, marker(v.name)); err != nil {
+			if _, err := w.Write(v.replacement()); err != nil {
 				return nil, total, werr(err)
 			}
 			counts[v.name]++
@@ -142,7 +142,7 @@ func (s *Secrets) Names(b []byte) []string {
 		if len(s.byFirst[b[i]]) == 0 {
 			continue
 		}
-		if w := s.matchAt(b, i); w != nil {
+		if w := s.matchAt(b, i); w != nil && w.repl == nil {
 			found[w.name] = true
 		}
 	}

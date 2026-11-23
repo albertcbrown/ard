@@ -7,12 +7,18 @@
 // A log is processed in this order, which follows docs/proposal.md ("The .ard/
 // contract") and decision #4:
 //
-//  1. stream the raw log through the known-value redactor (Secrets),
+//  1. stream the raw log through the known-value redactor (Secrets), which
+//     also replaces host paths (PathRule) with placeholders,
 //  2. secret-scan the whole redacted log,
 //  3. cap it at 1 MiB as the first 32 KiB plus the tail, cut on line
 //     boundaries and joined by one marker line,
 //  4. re-scan the capped bytes, and
 //  5. return a verdict plus the bytes that are ready to commit.
+//
+// Host paths are replaced before the scan, not after, so the scan and the
+// re-scan of the capped bytes see exactly the bytes that get committed. This
+// cannot hide a credential: every scan rule anchors on a token prefix that no
+// path contains, and a placeholder matches no rule.
 //
 // Contract for the close-out (#20) and the reaper (#37):
 //

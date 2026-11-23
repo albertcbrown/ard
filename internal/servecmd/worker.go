@@ -47,7 +47,7 @@ func workerLoop(w *wiring) controller.Loop {
 		Executor: ex, Finisher: fin, Code: w.branchCommitter(), Git: gitx.New(""),
 		Pool:   func() worker.Offerer { return w.Pool() },
 		Agents: reg, Parse: w.parseFunc(), Model: w.Model,
-		Secrets: func() *redact.Secrets { return redact.FromEnviron(os.Environ()) },
-		Repo:    w.Repo, RepoDir: w.Root, RemoteURL: w.RemoteURL, Token: w.Token, Log: w.Log,
+		Secrets: func() *redact.Secrets { return redact.FromEnviron(os.Environ()) }, HostPaths: w.hostPaths(),
+		Repo: w.Repo, RepoDir: w.Root, RemoteURL: w.RemoteURL, Token: w.Token, Log: w.Log,
 	})
 }

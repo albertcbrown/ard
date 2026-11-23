@@ -454,10 +454,16 @@ func (jb *job) peekRole(h executor.Handle) (closeout.RoleFile, bool) {
 }
 
 // setSummary keeps the redacted summary of the role file for the commit and
-// the PR. A scan hit or error withholds it.
-func (jb *job) setSummary(ctx context.Context, raw string) {
+// the PR. Known secrets and host paths are replaced first; a path-rule error,
+// a scan hit or a scan error withholds it.
+func (jb *job) setSummary(ctx context.Context, h executor.Handle, raw string) {
 	d := jb.l.d
-	s := d.Secrets().String(raw)
+	sec, err := d.Secrets().WithPaths(closeout.PathRules(h.Worktree, h.Home, d.HostPaths)...)
+	if err != nil {
+		jb.summary, jb.withheld = "", true
+		return
+	}
+	s := sec.String(raw)
 	found, err := d.Scanner.Scan(ctx, strings.NewReader(s))
 	if err != nil || len(found) > 0 {
 		jb.summary, jb.withheld = "", true
@@ -477,7 +483,7 @@ func (jb *job) round(ctx context.Context, s step) (head string, noCode, done boo
 		jb.finishWithPR(ctx, s, "", closeout.Cause{})
 		return "", false, true
 	}
-	jb.setSummary(ctx, rf.Summary)
+	jb.setSummary(ctx, s.h, rf.Summary)
 	stage, err := os.MkdirTemp("", "ard-code-")
 	if err == nil {
 		defer os.RemoveAll(stage)

@@ -46,6 +46,37 @@ func (h *harness) only() finishCall {
 
 func noTests(h *harness) { h.cfg.Roles[0].Tests = "" }
 
+func TestSummaryHostPathsReplaced(t *testing.T) {
+	h := newHarness(t, noTests)
+	home := t.TempDir()
+	h.loop.d.HostPaths = closeout.HostPaths{Home: home, ArdRoot: filepath.Join(home, ".ard")}
+	h.issue("Crash on start", "type:bug")
+	var wt string
+	run := func(role string) {
+		h.agentWrites(map[string]string{"hello.txt": "bye"}, role, nil)
+		inner := h.ex.run
+		h.ex.run = func(kind string, j executor.Job, hd executor.Handle) int { wt = hd.Worktree; return inner(kind, j, hd) }
+	}
+	run("---\nrole: engineer\nstatus: done\nattempt: 1\n---\nWorked in @WT@/sub and " + home + "/.ard/logs.\n")
+	h.mustTick()
+	if h.code.n() != 1 || wt == "" {
+		t.Fatalf("code commits = %d, worktree %q", h.code.n(), wt)
+	}
+	prs := h.prs()
+	if len(prs) != 1 {
+		t.Fatalf("prs = %d", len(prs))
+	}
+	for name, body := range map[string]string{"commit body": h.code.reqs[0].Body, "PR body": prs[0].Body} {
+		if strings.Contains(body, wt) || strings.Contains(body, home) {
+			t.Errorf("%s holds a host path: %q", name, body)
+		}
+		if !strings.Contains(body, "/work/sub") || !strings.Contains(body, "~/.ard/logs") {
+			t.Errorf("%s lacks the placeholders: %q", name, body)
+		}
+	}
+
+}
+
 func TestHappyPathNoTests(t *testing.T) {
 	h := newHarness(t, noTests)
 	n := h.issue("Crash on start", "type:bug")

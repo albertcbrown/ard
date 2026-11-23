@@ -26,11 +26,17 @@ var (
 )
 
 type variant struct {
-	text []byte
-	name string
+	text     []byte
+	name     string
+	repl     []byte // replacement text; nil means marker(name)
+	boundary bool   // the match must end at a path boundary
 }
 
-type entry struct{ name, value string }
+type entry struct {
+	name, value string
+	path        bool   // a host path rule, not a secret
+	to          string // placeholder, for a path rule
+}
 
 // Secrets is the per-job set of known values. Build it once, then treat it as
 // read-only; it is safe for concurrent reads after the last Add.
@@ -54,7 +60,7 @@ func (s *Secrets) Add(name, value string) error {
 		slog.Warn("redact: secret value too short, not redacted", "name", name, "min_len", MinSecretLen)
 		return nil
 	}
-	s.entries = append(s.entries, entry{name, value})
+	s.entries = append(s.entries, entry{name: name, value: value})
 	s.rebuild()
 	return nil
 }
@@ -109,12 +115,16 @@ func (s *Secrets) rebuild() {
 	seen := map[string]bool{}
 	s.variants = s.variants[:0]
 	for _, e := range s.entries {
-		for _, v := range variantsOf(e.value) {
+		vs, repl := variantsOf(e.value), []byte(nil)
+		if e.path {
+			vs, repl = pathVariantsOf(e.value), []byte(e.to)
+		}
+		for _, v := range vs {
 			if seen[v] {
 				continue
 			}
 			seen[v] = true
-			s.variants = append(s.variants, variant{[]byte(v), e.name})
+			s.variants = append(s.variants, variant{text: []byte(v), name: e.name, repl: repl, boundary: e.path})
 		}
 	}
 	sort.SliceStable(s.variants, func(i, j int) bool { return len(s.variants[i].text) > len(s.variants[j].text) })
@@ -122,8 +132,12 @@ func (s *Secrets) rebuild() {
 	s.maxLen = 0
 	for i, v := range s.variants {
 		s.byFirst[v.text[0]] = append(s.byFirst[v.text[0]], i) // already longest first
-		if len(v.text) > s.maxLen {
-			s.maxLen = len(v.text)
+		n := len(v.text)
+		if v.boundary {
+			n++ // one byte of lookahead for the boundary check
+		}
+		if n > s.maxLen {
+			s.maxLen = n
 		}
 	}
 }
@@ -165,9 +179,14 @@ func marker(name string) string { return "[REDACTED:" + name + "]" }
 func (s *Secrets) matchAt(b []byte, i int) *variant {
 	for _, idx := range s.byFirst[b[i]] {
 		v := &s.variants[idx]
-		if len(b)-i >= len(v.text) && string(b[i:i+len(v.text)]) == string(v.text) {
-			return v
+		end := i + len(v.text)
+		if len(b) < end || string(b[i:end]) != string(v.text) {
+			continue
 		}
+		if v.boundary && end < len(b) && isNameByte(b[end]) {
+			continue // not at a path boundary: try a shorter candidate
+		}
+		return v
 	}
 	return nil
 }

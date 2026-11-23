@@ -123,7 +123,7 @@ func CloseoutJob(sj state.Job, h executor.Handle, st executor.Status, cause clos
 		exit = -1
 	}
 	j := closeout.Job{ID: sj.ID, Issue: sj.Issue, PR: sj.PR, Stage: sj.Stage, Role: sj.Role, Attempt: sj.Attempt,
-		Branch: sj.Branch, Worktree: h.Worktree, BaseSHA: h.BaseSHA, Scrubbed: h.Scrubbed, LogPath: h.LogPath, ExitCode: exit, Cause: cause}
+		Branch: sj.Branch, Worktree: h.Worktree, Home: h.Home, BaseSHA: h.BaseSHA, Scrubbed: h.Scrubbed, LogPath: h.LogPath, ExitCode: exit, Cause: cause}
 	if res.CostUSD != nil {
 		j.CostUSD = *res.CostUSD
 	}

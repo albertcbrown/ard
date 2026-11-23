@@ -110,6 +110,10 @@ type Deps struct {
 	// diff guard refuses a change that contains one.
 	Secrets func() *redact.Secrets
 	Scanner redact.Scanner // nil = redact.Builtin()
+	// HostPaths are the controller host's paths replaced in the summary that
+	// reaches the PR body and the code commit message. Zero = only the job's
+	// own paths are replaced.
+	HostPaths closeout.HostPaths
 
 	Repo      github.Repo
 	RepoDir   string // absolute path of the clone worktrees are cut from
