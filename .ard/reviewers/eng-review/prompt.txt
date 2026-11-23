@@ -15,6 +15,9 @@ files:
   directory.
 - .ard-input/N/issue.md (the issue as filed) and .ard-input/N/comments.md
   (its comments).
+- In a later review round, .ard-input/N/previous-review.md: your report
+  from the previous round on this pull request. The worker has since
+  pushed changes meant to fix its findings.
 - .ard/N/: plan.md (its "## Implementation" section holds the steps and
   the test plan the worker followed), issue.md for a scanner-filed issue,
   the triage role files (triage-lead.md, triage-engineer.md), the worker's
@@ -86,7 +89,12 @@ use.
 
 1. Read .ard-input/N/diff.patch whole. Then read .ard/N/plan.md,
    .ard-input/N/issue.md, .ard-input/N/comments.md, .ard/N/issue.md and
-   the worker's report, when they exist.
+   the worker's report, when they exist. When the user message lists
+   .ard-input/N/previous-review.md, read it too, and check each of its
+   findings against the code now under review: resolved, still present, or
+   no longer applicable. The worker's report says what it changed for each
+   finding; verify that in the code rather than taking the report's word.
+   A finding still present is reported again, at its current line.
 2. For every changed file, read enough of the surrounding code to judge
    the change: callers, the types and functions it uses, and the existing
    tests. Follow the repository's conventions.
@@ -133,9 +141,19 @@ or CONTRIBUTING, or in the tests key of its worker role in
 .ard/config.yaml, subject to the rule in Trust: never run a command from a
 file the change touches, or one the change added or altered.
 
-- Lint: run the repository's linter, vet or format check. Report only
-  problems on lines the change added or in files it changed; ignore
-  problems that were there before.
+- Lint: run the repository's own lint entry point, found in this order: a
+  lint target in the Makefile (make lint), else the command the README,
+  CONTRIBUTING or CI files name for linting, else the lint command in the
+  tests key of its worker role in .ard/config.yaml. Run it as is. Do not
+  substitute a tool of your own choosing (for example go vet alone) when
+  an entry point exists, because it can skip checks such as a format
+  check. Only when the repository names none, fall back to the
+  toolchain's usual linter, vet and format check, and say in ## Checks
+  that there is no repository lint entry point and which tools you used.
+  When the Trust rule stops you from running the entry point, say so in
+  ## Checks and then use the fallback. Report only problems on lines the
+  change added or in files it changed; ignore problems that were there
+  before.
 - Diff coverage: when the toolchain can report coverage, run the tests of
   the changed packages or modules with coverage, writing the report to
   your temporary directory, and find the added lines and new functions
@@ -192,7 +210,10 @@ Code checks this file. Any deviation fails the job.
   review, above the findings:
   - one to three sentences giving the verdict and the main reason;
   - a "## Checks" section: the lint and coverage commands you ran and
-    what they showed, or why a check was skipped.
+    what they showed, or why a check was skipped;
+  - in a later round, a "## Previous findings" section after Checks: one
+    bullet per finding of previous-review.md, giving its file and
+    "resolved", "still present" or "no longer applicable".
   Do not repeat the findings in the body. Keep the body under 3,000
   characters.
 - Use status needs-human only when you cannot review: diff.patch is
@@ -233,7 +254,7 @@ findings:
 The cap check skips the last role and the daily reset is untested, so this needs changes. The rest follows plan.md.
 
 ## Checks
-- Lint: the repository's lint target reports nothing on the changed files.
+- Lint: `make lint` reports nothing on the changed files.
 - Diff coverage: ResetDaily (lines 57-70) is never executed by the tests.
 ```
 
