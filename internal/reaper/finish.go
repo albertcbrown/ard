@@ -181,6 +181,12 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	if sj.Status != state.StatusRunning && (sj.CloseoutPhase == "" || sj.CloseoutPhase == string(closeout.PhaseClosed)) {
 		return "", fmt.Errorf("finish job %s: %w", jobID, state.ErrNotRunning)
 	}
+	// A test step (<id>t<k>) runs agent-written code, so its output is never
+	// trusted as the CLI's own: a printed usage-limit line there must not block
+	// the account. Only the job's own agent step and its fix steps count.
+	if h.JobID != "" && !agentStep(jobID, h.JobID) {
+		res.LimitHit = nil
+	}
 	cause := override
 	if cause.Kind == "" && f.Classify != nil {
 		if c, ok := f.Classify(res); ok {
