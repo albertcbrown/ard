@@ -142,6 +142,10 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		t.fail(n, "commit_statuses", err)
 		return false
 	}
+	if err := t.resolveApps(ctx, statuses); err != nil {
+		t.fail(n, "app_id", err)
+		return false
+	}
 	switch st, names := evalChecks(t.required, runs, statuses, graceOver); st {
 	case checksPending:
 		t.log.Info("merge.waiting_checks", "pr", n, "head", head, "checks", strings.Join(names, ","), "grace_over", graceOver)
@@ -355,4 +359,42 @@ func (t *tick) merge(ctx context.Context, pr github.PullRequest, issue int, head
 		t.log.Warn("merge.delete_branch_failed", "pr", n, "branch", pr.HeadRef, "error", err)
 	}
 	return !t.dry
+}
+
+// resolveApps fills AppID on the statuses a pinned required rule could use: a
+// status posted by "<slug>[bot]" gets the App's id (cached per process). A
+// status from a user stays 0 and so never satisfies a pinned rule. A lookup
+// error is returned, and the caller fails closed.
+func (t *tick) resolveApps(ctx context.Context, statuses []github.CommitStatus) error {
+	pinned := map[string]bool{}
+	for _, rc := range t.required {
+		if rc.IntegrationID != 0 {
+			pinned[rc.Context] = true
+		}
+	}
+	if len(pinned) == 0 {
+		return nil
+	}
+	l := t.l
+	for i := range statuses {
+		s := &statuses[i]
+		slug, ok := strings.CutSuffix(s.Creator, "[bot]")
+		if !pinned[s.Context] || !ok || slug == "" {
+			continue
+		}
+		l.mu.Lock()
+		id, hit := l.apps[slug]
+		l.mu.Unlock()
+		if !hit {
+			var err error
+			if id, err = l.d.Reader.AppID(ctx, slug); err != nil {
+				return fmt.Errorf("resolve app %s: %w", slug, err)
+			}
+			l.mu.Lock()
+			l.apps[slug] = id
+			l.mu.Unlock()
+		}
+		s.AppID = id
+	}
+	return nil
 }

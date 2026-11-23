@@ -726,11 +726,19 @@ func (h *HTTP) ListCommitStatuses(ctx context.Context, sha string) ([]CommitStat
 		}
 		out := make([]CommitStatus, len(res.Statuses))
 		for i, s := range res.Statuses {
-			out[i] = CommitStatus{Context: s.GetContext(), State: s.GetState(), UpdatedAt: s.GetUpdatedAt().Time}
+			out[i] = CommitStatus{Context: s.GetContext(), State: s.GetState(), UpdatedAt: s.GetUpdatedAt().Time, Creator: s.GetCreator().GetLogin(), CreatorType: s.GetCreator().GetType()}
 		}
 		return out, nextPage(resp), nil
 	})
 	return items, h.fail(ctx, fmt.Sprintf("list commit statuses of %s", sha), 0, err)
+}
+
+func (h *HTTP) AppID(ctx context.Context, slug string) (int64, error) {
+	app, _, err := h.gh.Apps.Get(ctx, slug)
+	if err != nil {
+		return 0, h.fail(ctx, fmt.Sprintf("get app %s", slug), 0, err)
+	}
+	return app.GetID(), nil
 }
 
 // ---- Writer ----

@@ -947,12 +947,12 @@ func TestListCommitStatusesPaginates(t *testing.T) {
 				return
 			}
 			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/commits/abc/status?page=2>; rel="next"`, base))
-			fmt.Fprint(w, `{"state":"pending","statuses":[{"context":"continuous-integration/jenkins/pr-merge","state":"success","updated_at":"2026-01-02T03:04:05Z"}]}`)
+			fmt.Fprint(w, `{"state":"pending","statuses":[{"context":"continuous-integration/jenkins/pr-merge","state":"success","updated_at":"2026-01-02T03:04:05Z","creator":{"login":"jenkins-app[bot]","type":"Bot"}}]}`)
 		},
 	}
 	base = s.URL
 	got, err := newTestHTTP(t, s, nil).ListCommitStatuses(context.Background(), "abc")
-	want := []CommitStatus{{Context: "continuous-integration/jenkins/pr-merge", State: "success", UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}, {Context: "lint", State: "pending"}}
+	want := []CommitStatus{{Context: "continuous-integration/jenkins/pr-merge", State: "success", UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Creator: "jenkins-app[bot]", CreatorType: "Bot"}, {Context: "lint", State: "pending"}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("statuses = %+v, %v", got, err)
 	}
@@ -960,5 +960,17 @@ func TestListCommitStatusesPaginates(t *testing.T) {
 	s2 := newStubAPI(t, map[string]http.HandlerFunc{"GET /repos/o/r/commits/abc/status": respond(403, `{"message":"Resource not accessible by integration"}`)})
 	if _, err := newTestHTTP(t, s2, nil).ListCommitStatuses(context.Background(), "abc"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestAppID(t *testing.T) {
+	s := newStubAPI(t, map[string]http.HandlerFunc{"GET /apps/github-actions": respond(200, `{"id":15368,"slug":"github-actions"}`)})
+	h := newTestHTTP(t, s, nil)
+	if id, err := h.AppID(context.Background(), "github-actions"); err != nil || id != 15368 {
+		t.Fatalf("AppID = %d, %v", id, err)
+	}
+	s2 := newStubAPI(t, map[string]http.HandlerFunc{"GET /apps/nope": respond(404, `{"message":"Not Found"}`)})
+	if _, err := newTestHTTP(t, s2, nil).AppID(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }

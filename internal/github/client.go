@@ -28,6 +28,8 @@ type Reader interface {
 	ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error) // filter=latest, all pages
 	// ListCommitStatuses returns the latest status per context on sha (all
 	// pages). A missing permission is an error (ErrForbidden), never "none".
+	// AppID resolves a public App's numeric id from its slug (GET /apps/{slug}).
+	AppID(ctx context.Context, slug string) (int64, error)
 	ListCommitStatuses(ctx context.Context, sha string) ([]CommitStatus, error)
 }
 

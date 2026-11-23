@@ -66,6 +66,7 @@ type state struct {
 	required map[string]github.RequiredChecksResult
 	runs     map[string][]github.CheckRun
 	statuses map[string][]github.CommitStatus
+	apps     map[string]int64
 }
 
 // Fake implements github.Client. Methods on the value returned by As attribute
@@ -93,6 +94,7 @@ func New(opts ...Option) *Fake {
 		required: map[string]github.RequiredChecksResult{},
 		runs:     map[string][]github.CheckRun{},
 		statuses: map[string][]github.CommitStatus{},
+		apps:     map[string]int64{"github-actions": 15368},
 	}
 	for _, o := range opts {
 		o(s)
@@ -241,6 +243,13 @@ func (f *Fake) SetCommitStatuses(sha string, ss ...github.CommitStatus) {
 	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
 	f.s.statuses[sha] = append([]github.CommitStatus(nil), ss...)
+}
+
+// SetAppID sets the id AppID reports for slug.
+func (f *Fake) SetAppID(slug string, id int64) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.apps[slug] = id
 }
 
 // SetMergeableState sets PR n's mergeable_state.
@@ -707,6 +716,19 @@ func (f *Fake) ListCommitStatuses(ctx context.Context, sha string) ([]github.Com
 		return nil, err
 	}
 	return append([]github.CommitStatus(nil), f.s.statuses[sha]...), nil
+}
+
+func (f *Fake) AppID(ctx context.Context, slug string) (int64, error) {
+	unlock, err := f.beginRead("AppID")
+	defer unlock()
+	if err != nil {
+		return 0, err
+	}
+	id, ok := f.s.apps[slug]
+	if !ok {
+		return 0, fmt.Errorf("github: app %s: %w", slug, github.ErrNotFound)
+	}
+	return id, nil
 }
 
 // ---- Writer ----

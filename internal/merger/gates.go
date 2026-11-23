@@ -94,9 +94,8 @@ func combine(run *github.CheckRun, st *github.CommitStatus) checkState {
 }
 
 // evalChecks judges the check runs and commit statuses of a head. With a
-// required list, each required context is matched by name (a check run also by
-// app when the rule names an integration; a status has no app, so it is not
-// matched then) and the latest run and latest status decide, the newer one
+// required list, each required context is matched by name (when the rule names an integration, a check run must come from that app and
+// a status must have a resolved AppID equal to it) and the latest run and latest status decide, the newer one
 // winning; a context with neither is pending. With no list, there is nothing
 // to go by: no runs and no statuses at all is green once graceOver (CI had
 // time to queue) and pending before, otherwise every latest run and status per
@@ -116,11 +115,11 @@ func evalChecks(required []github.RequiredCheck, runs []github.CheckRun, statuse
 		}
 		return best
 	}
-	latestStatus := func(name string) *github.CommitStatus {
+	latestStatus := func(name string, app int64) *github.CommitStatus {
 		var best *github.CommitStatus
 		for i := range statuses {
 			s := &statuses[i]
-			if s.Context == name && (best == nil || newerStatus(*s, *best)) {
+			if s.Context == name && (app == 0 || s.AppID == app) && (best == nil || newerStatus(*s, *best)) {
 				best = s
 			}
 		}
@@ -128,11 +127,7 @@ func evalChecks(required []github.RequiredCheck, runs []github.CheckRun, statuse
 	}
 	var red, pending []string
 	judge := func(name string, app int64) {
-		var st *github.CommitStatus
-		if app == 0 {
-			st = latestStatus(name)
-		}
-		switch combine(latestRun(name, app), st) {
+		switch combine(latestRun(name, app), latestStatus(name, app)) {
 		case checksRed:
 			red = append(red, name)
 		case checksPending:

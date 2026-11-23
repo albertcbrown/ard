@@ -265,6 +265,13 @@ type CommitStatus struct {
 	Context   string
 	State     string // success|pending|failure|error
 	UpdatedAt time.Time
+	// Creator is who posted the status: the login (an App shows as
+	// "<slug>[bot]") and the account type ("Bot" or "User").
+	Creator     string
+	CreatorType string
+	// AppID is the id of the App that created the status. The client leaves it
+	// zero (GitHub does not return it); the merger fills it from AppID lookups.
+	AppID int64
 }
 
 // CheckRun is the latest run of one check on a commit.
