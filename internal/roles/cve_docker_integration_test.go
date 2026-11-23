@@ -37,7 +37,8 @@ func dockerOut(t *testing.T, timeout time.Duration, args ...string) (stdout, std
 	return so.String(), se.String(), code
 }
 
-// scanRunArgs mirrors the executor's runArgv for a read-only scanner job.
+// scanRunArgs mirrors the executor's runArgv for a read-only scanner job. It is
+// shared by the cve and lint Docker integration tests.
 // Keep in sync with internal/executor/local/docker.go runArgv.
 func scanRunArgs(image, repo, roleDir string, extraEnv ...string) []string {
 	a := []string{"run", "--rm", "--init",

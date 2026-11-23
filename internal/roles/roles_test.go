@@ -29,7 +29,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/trufflehog/Dockerfile", "scanners/trufflehog/exclude-paths", "scanners/trufflehog/findings.jq", "scanners/trufflehog/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
+	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/lint/Dockerfile", "scanners/lint/normalize.jq", "scanners/lint/scan", "scanners/trufflehog/Dockerfile", "scanners/trufflehog/exclude-paths", "scanners/trufflehog/findings.jq", "scanners/trufflehog/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
@@ -43,7 +43,7 @@ func TestFSContents(t *testing.T) {
 // embed.FS reports 0444 for everything, so the exec bit must be checked on disk
 // to catch a mode lost in git.
 func TestScanIsExecutableOnDisk(t *testing.T) {
-	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/trufflehog/scan"} {
+	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/lint/scan", "scanners/trufflehog/scan"} {
 		fi, err := os.Stat(p)
 		if err != nil {
 			t.Fatal(err)
@@ -116,6 +116,30 @@ func TestEmbeddedErrorCodesRoleLoadsAsScanner(t *testing.T) {
 		return
 	}
 	t.Fatal("no scanner role error-codes")
+}
+
+func TestEmbeddedLintRoleLoadsAsScanner(t *testing.T) {
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
+	if err != nil {
+		t.Fatalf("LoadFS: %v", err)
+	}
+	r, ok := res.Role(config.KindScanner, "lint")
+	if !ok {
+		t.Fatalf("no scanner role lint in %+v", res.Roles)
+	}
+	if r.ScanPath != ".ard/scanners/lint/scan" || !r.Autoclose || r.Every != 24*time.Hour || r.MaxOpen != 3 || r.GroupSize != 20 {
+		t.Errorf("unexpected role: %+v", r)
+	}
+	if r.Dockerfile != ".ard/scanners/lint/Dockerfile" {
+		t.Errorf("Dockerfile = %q", r.Dockerfile)
+	}
+	if !slices.Equal(r.Extra, []string{"normalize.jq"}) {
+		t.Errorf("Extra = %v, want [normalize.jq]", r.Extra)
+	}
+	// Linter config is protected: a PR must not weaken it unreviewed.
+	if !res.Protected(".golangci.yml") || !res.Protected("sub/dir/.golangci.toml") {
+		t.Error(".golangci.* is not a protected path")
+	}
 }
 
 func TestEmbeddedDocsRoleLoadsAsScanner(t *testing.T) {

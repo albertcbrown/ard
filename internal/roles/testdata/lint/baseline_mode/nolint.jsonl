@@ -1,0 +1,1 @@
+{"path": "pkg/b.go", "line": 4, "text": "\tx() //nolint:errcheck"}
