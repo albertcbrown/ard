@@ -1,0 +1,1 @@
+{"module": ".", "report": {"Issues": [{"FromLinter": "unused", "Text": "func c is unused", "Pos": {"Filename": "/R/pkg/a.go", "Line": 1, "Column": 1}}]}}

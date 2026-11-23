@@ -1,0 +1,156 @@
+#!/bin/sh
+# lint scanner: lint findings beyond a committed baseline, as ard findings.
+#
+# Contract (see docs/proposal.md, Scanners):
+#   - cwd is a read-only worktree of origin/main. This script finds its siblings
+#     (normalize.jq, baseline, golangci.yml) from its own path, never from cwd.
+#   - Prints findings as JSON lines on stdout, and only as its very last action:
+#     any failure exits non-zero with nothing on stdout, and the controller
+#     discards the run. It never prints partial results.
+#   - Writes nothing outside a mktemp dir that is removed on exit. HOME may be
+#     unwritable. It holds no GitHub token and needs none.
+#   - stderr is the job log: tool versions, one line per Go module, final counts.
+#
+# What it does: runs golangci-lint v2 once per go.mod (the repo's own config, or
+# ./golangci.yml next to this script when that human-owned file exists), lists
+# every //nolint directive in .go files, and drops findings whose fingerprint is
+# in the human-owned ./baseline file. A missing baseline fails the run: commit an
+# empty file to mean "no baseline".
+#
+# Arguments: none, or exactly --baseline, which prints a baseline of ALL current
+# findings (ignoring ./baseline, not requiring it): scan --baseline > baseline.
+#
+# The golangci-lint flags below are forced after any config, so a repo config
+# cannot truncate output or report "new issues only": either would make findings
+# vanish and be autoclosed. Go only, with the image's Go (GOTOOLCHAIN=local).
+#
+# Exit codes: 0 success, 1 failure, 2 a required tool is missing.
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+die() { echo "lint: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || { echo "lint: $1 not found" >&2; exit 2; }; }
+
+mode=findings
+case $# in
+  0) ;;
+  1) if [ "$1" = "--baseline" ]; then mode=baseline; else echo "usage: scan [--baseline]" >&2; exit 1; fi ;;
+  *) echo "usage: scan [--baseline]" >&2; exit 1 ;;
+esac
+
+need golangci-lint
+need go
+need jq
+need find
+need grep
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ard-lint.XXXXXX")
+# Go's module cache is read-only on disk; make it removable first.
+cleanup() { chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Keep Go's caches off an unwritable HOME and out of the worktree.
+for v in GOCACHE GOMODCACHE GOPATH; do
+  eval "cur=\${$v:-}"
+  if [ -z "$cur" ] || [ ! -w "$cur" ]; then
+    eval "$v=\$tmp/$v; export $v"
+  fi
+done
+GOLANGCI_LINT_CACHE=$tmp/golangci
+GOWORK=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local
+export GOLANGCI_LINT_CACHE GOWORK GOFLAGS GOTOOLCHAIN
+
+version=$(golangci-lint version --short 2>/dev/null || golangci-lint --version | head -n 1) || version=unknown
+echo "golangci-lint: $version" >&2
+echo "go: $(go env GOVERSION)" >&2
+
+if [ "$mode" = findings ]; then
+  [ -f "$dir/baseline" ] || die 'no baseline file: generate one with "scan --baseline > baseline" in the role directory and commit it (an empty file means no baseline)'
+  baseline=$dir/baseline
+else
+  : > "$tmp/empty"
+  baseline=$tmp/empty
+fi
+
+cfg=
+if [ -f "$dir/golangci.yml" ]; then
+  cfg="--config $dir/golangci.yml"
+  echo "golangci: using role config" >&2
+else
+  echo "golangci: repo config or defaults" >&2
+fi
+
+prune='( -name .git -o -name vendor -o -name node_modules -o -name testdata ) -prune'
+
+# golangci-lint, once per Go module. Fail closed: a module that cannot be
+# analysed fails the run.
+: > "$tmp/gl.jsonl"
+find . $prune -o -name go.mod -type f -print > "$tmp/mods.raw" || die "find failed"
+LC_ALL=C sort "$tmp/mods.raw" > "$tmp/mods.txt"
+n=0
+while IFS= read -r f; do
+  manifest=${f#./}
+  mdir=$(dirname -- "$manifest")
+  n=$((n + 1))
+  rc=0
+  # $cfg is intentionally unquoted: it is empty or two words.
+  # shellcheck disable=SC2086
+  (cd -- "$mdir" && golangci-lint run $cfg \
+    --path-mode=abs --output.json.path="$tmp/$n.json" --output.text.path=stderr \
+    --show-stats=false --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
+    --new=false --new-from-rev= --new-from-merge-base= --new-from-patch= \
+    --fix=false --allow-parallel-runners ./...) 2>"$tmp/gl.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if grep -qi 'go version\|requires go\|toolchain' "$tmp/gl.err"; then
+      tail -n 3 "$tmp/gl.err" >&2
+      die "$manifest needs a newer Go than the image's $(go env GOVERSION); update the lint image"
+    fi
+    die "golangci-lint failed in $manifest (exit $rc): $(tail -n 3 "$tmp/gl.err")"
+  fi
+  [ -s "$tmp/$n.json" ] || die "golangci-lint wrote no report for $manifest"
+  jq -c --arg module "$mdir" '{module: $module, report: .}' "$tmp/$n.json" >> "$tmp/gl.jsonl" \
+    || die "cannot parse golangci-lint output for $manifest"
+  echo "golangci-lint: $manifest: $(jq '(.Issues // []) | length' "$tmp/$n.json") issue(s)" >&2
+done < "$tmp/mods.txt"
+
+# //nolint directives are findings: they hide linter output.
+: > "$tmp/nolint.jsonl"
+rc=0
+find . $prune -o -name '*.go' -type f -exec grep -lE '//[[:space:]]*nolint' {} + > "$tmp/nolint.files" || rc=$?
+[ "$rc" -le 1 ] || die "searching for nolint directives failed"
+LC_ALL=C sort "$tmp/nolint.files" > "$tmp/nolint.sorted"
+while IFS= read -r f; do
+  grep -nE '//[[:space:]]*nolint' "$f" \
+    | jq -R -c --arg path "${f#./}" 'capture("^(?<line>[0-9]+):(?<text>.*)$") | {path: $path, line: (.line|tonumber), text}' \
+    >> "$tmp/nolint.jsonl" || die "cannot read nolint directives in $f"
+done < "$tmp/nolint.sorted"
+
+# Merge. golangci-lint (--path-mode=abs) uses absolute paths; strip either root.
+root=$(pwd -P)
+lroot=$(pwd)
+run_jq() {
+  jq -n "$1" --arg mode "$2" --arg root "$root" --arg lroot "$lroot" --arg version "$version" \
+    --rawfile baseline "$baseline" --slurpfile gl "$tmp/gl.jsonl" --slurpfile nolint "$tmp/nolint.jsonl" \
+    -f "$dir/normalize.jq"
+}
+
+if [ "$mode" = baseline ]; then
+  run_jq -r baseline > "$tmp/out" || die "normalize failed"
+  echo "lint: baseline written" >&2
+  cat "$tmp/out"
+  exit 0
+fi
+
+run_jq -c findings > "$tmp/out" || die "normalize failed"
+run_jq -r fingerprints > "$tmp/fps.raw" || die "normalize failed"
+LC_ALL=C sort -u "$tmp/fps.raw" > "$tmp/fps"
+sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$baseline" \
+  | grep -v -e '^#' -e '^$' | LC_ALL=C sort -u > "$tmp/base" || true
+count=$(wc -l < "$tmp/out" | tr -d ' ')
+baselined=$(LC_ALL=C comm -12 "$tmp/fps" "$tmp/base" | wc -l | tr -d ' ')
+unused=$(LC_ALL=C comm -13 "$tmp/fps" "$tmp/base" | wc -l | tr -d ' ')
+echo "lint: $count finding(s), $baselined baselined, $unused baseline entries unused" >&2
+cat "$tmp/out"

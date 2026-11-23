@@ -1,0 +1,7 @@
+# header comment
+
+lint:errcheck:pkg/a.go:Error return value of `a` is not checked
+  # indented comment
+lint:unused:pkg/a.go:func c is unused
+lint:unused:pkg/a.go:func c is unused
+lint:unused:pkg/a.go:gone entry

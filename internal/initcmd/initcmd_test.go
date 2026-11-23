@@ -143,7 +143,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 	return m
 }
 
-var starterTree = []string{".ard/config.yaml", ".ard/reviewers/eng-review/prompt.txt", ".ard/reviewers/license-review/allowlist.txt", ".ard/reviewers/license-review/prompt.txt", ".ard/reviewers/security-review/prompt.txt", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan", ".ard/scanners/docs/Dockerfile", ".ard/scanners/docs/docscan.go", ".ard/scanners/docs/scan", ".ard/scanners/error-codes/Dockerfile", ".ard/scanners/error-codes/errcodes.jq", ".ard/scanners/error-codes/scan", ".ard/triage/engineer/prompt.txt", ".ard/triage/lead/prompt.txt", ".ard/workers/engineer/prompt.txt"}
+var starterTree = []string{".ard/config.yaml", ".ard/reviewers/eng-review/prompt.txt", ".ard/reviewers/license-review/allowlist.txt", ".ard/reviewers/license-review/prompt.txt", ".ard/reviewers/security-review/prompt.txt", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan", ".ard/scanners/docs/Dockerfile", ".ard/scanners/docs/docscan.go", ".ard/scanners/docs/scan", ".ard/scanners/error-codes/Dockerfile", ".ard/scanners/error-codes/errcodes.jq", ".ard/scanners/error-codes/scan", ".ard/scanners/lint/Dockerfile", ".ard/scanners/lint/normalize.jq", ".ard/scanners/lint/scan", ".ard/triage/engineer/prompt.txt", ".ard/triage/lead/prompt.txt", ".ard/workers/engineer/prompt.txt"}
 
 func TestInitOpensPR(t *testing.T) {
 	h := newHarness(t)
@@ -160,6 +160,9 @@ func TestInitOpensPR(t *testing.T) {
 	}
 	if got := strings.TrimSpace(gittest.Run(t, h.bare, "ls-tree", "-r", "ard-init", "--", ".ard/scanners/docs/scan")); !strings.HasPrefix(got, "100755 ") {
 		t.Errorf("docs scan = %q, want mode 100755", got)
+	}
+	if got := strings.TrimSpace(gittest.Run(t, h.bare, "ls-tree", "-r", "ard-init", "--", ".ard/scanners/lint/scan")); !strings.HasPrefix(got, "100755 ") {
+		t.Errorf("lint scan = %q, want mode 100755", got)
 	}
 	if !reflect.DeepEqual(snapshot(t, h.clone), before) {
 		t.Error("the working tree changed")
@@ -188,6 +191,10 @@ func TestInitOpensPR(t *testing.T) {
 	docs, _ := cres.Role(config.KindScanner, "docs")
 	if docs.Every != 72*time.Hour || docs.MaxOpen != 3 || docs.GroupSize != 10 || !docs.Autoclose {
 		t.Errorf("docs = %+v", docs)
+	}
+	lint, ok := cres.Role(config.KindScanner, "lint")
+	if !ok || lint.Every != 24*time.Hour || lint.MaxOpen != 3 || lint.GroupSize != 20 || !lint.Autoclose {
+		t.Errorf("lint = %+v", lint)
 	}
 
 	prs, err := h.fake.ListPRs(context.Background(), github.ListPRsOpts{})
@@ -227,6 +234,12 @@ func TestInitOpensPR(t *testing.T) {
 	names := map[string]bool{}
 	for _, l := range have {
 		names[l.Name] = true
+	}
+	if !names[labels.Scanner("lint")] {
+		t.Errorf("label %s missing: %v", labels.Scanner("lint"), have)
+	}
+	if !strings.Contains(pr.Body, "The lint scanner fails until you commit `.ard/scanners/lint/baseline`") {
+		t.Errorf("PR body lacks the lint baseline bullet:\n%s", pr.Body)
 	}
 	for _, want := range []string{labels.Running(labels.StageTriage, "lead"), labels.Done(labels.StageTriage, "lead"), "ard:triage:engineer", labels.Running(labels.StageTriage, "engineer"), labels.Done(labels.StageTriage, "engineer"), labels.Request(labels.StageWorker, "engineer"), labels.Running(labels.StageWorker, "engineer"), labels.Done(labels.StageWorker, "engineer"), labels.Request(labels.StageReview, "eng-review"), labels.Running(labels.StageReview, "eng-review"), labels.Done(labels.StageReview, "eng-review"), labels.Changes("eng-review"), labels.Request(labels.StageReview, "security-review"), labels.Running(labels.StageReview, "security-review"), labels.Done(labels.StageReview, "security-review"), labels.Changes("security-review")} {
 		if !names[want] {
@@ -523,11 +536,11 @@ func TestDefaultProtectedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.ProtectedPaths) != 13 || res.ProtectedPaths[0] != ".github/" || res.ProtectedPaths[12] != ".mcp.json" {
+	if len(res.ProtectedPaths) != 17 || res.ProtectedPaths[0] != ".github/" || res.ProtectedPaths[12] != ".mcp.json" || res.ProtectedPaths[16] != "**/.golangci.json" {
 		t.Errorf("ProtectedPaths = %v", res.ProtectedPaths)
 	}
 	yes := []string{".github/workflows/ci.yml", ".ard/config.yaml", ".ard/triage/x/prompt.txt", "CODEOWNERS", "docs/CODEOWNERS",
-		".github/CODEOWNERS", "CLAUDE.md", "pkg/CLAUDE.md", "AGENTS.md", "a/b/AGENTS.md", ".claude/settings.json", ".mcp.json"}
+		".github/CODEOWNERS", "CLAUDE.md", "pkg/CLAUDE.md", "AGENTS.md", "a/b/AGENTS.md", ".claude/settings.json", ".mcp.json", ".golangci.yml", "sub/.golangci.toml"}
 	no := []string{".ard/12/issue.md", "main.go", "docs/CODEOWNERS.md", "pkg/.mcp.json"}
 	for _, p := range yes {
 		if !res.Protected(p) {

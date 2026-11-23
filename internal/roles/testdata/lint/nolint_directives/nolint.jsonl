@@ -1,0 +1,4 @@
+{"path": "pkg/a.go", "line": 5, "text": "\tx() //nolint:errcheck"}
+{"path": "pkg/a.go", "line": 90, "text": "\t\tx()  //nolint:errcheck"}
+{"path": "pkg/a.go", "line": 95, "text": "\ty() // nolint:unused // 12 digits stay 34"}
+{"path": "other/b.go", "line": 2, "text": "//nolint:errcheck"}

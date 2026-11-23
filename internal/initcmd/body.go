@@ -30,6 +30,12 @@ func initBody(ops []op, res *config.Resolved) string {
 	b.WriteString("\n## Before you merge\n\n")
 	b.WriteString("- Nothing takes effect until this is merged: ard serve reads its configuration from origin/main.\n")
 	b.WriteString("- Merge with **Squash and merge** (recommended); **Create a merge commit** is also safe. Never fast-forward this branch into main from the command line: the bot-commit check reads main's first-parent history and would fail on the bot's commit.\n")
+	for _, o := range ops {
+		if o.File.Path == ".ard/scanners/lint/scan" {
+			b.WriteString("- The lint scanner fails until you commit `.ard/scanners/lint/baseline`: run the command in `.ard/scanners/lint/Dockerfile`'s header (an empty file means no baseline).\n")
+			break
+		}
+	}
 	b.WriteString("\n## Follow-up the App cannot do\n\n")
 	b.WriteString("ard's GitHub App has no permission to write `.github/`, so do this by hand:\n\n")
 	b.WriteString("1. Copy `.github/workflows/bot-commits.yml` from the ard repository into this repository.\n")

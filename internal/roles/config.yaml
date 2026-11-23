@@ -25,11 +25,18 @@ merge:
     - "**/AGENTS.md"
     - .claude/
     - .mcp.json
+    # Linter config a PR could weaken: disabling a linter silently autocloses its issues.
+    - "**/.golangci.yml"
+    - "**/.golangci.yaml"
+    - "**/.golangci.toml"
+    - "**/.golangci.json"
 
 overrides:
   scanners/cve: { every: 6h, max_open: 10, group_size: 1, autoclose: true }
   scanners/docs: { every: 3d, max_open: 3, group_size: 10, autoclose: true }
   scanners/error-codes: { every: 24h, group_size: 20, autoclose: true }
+  # needs a human-made `baseline` next to `scan`; see its Dockerfile
+  scanners/lint: { every: 24h, max_open: 3, group_size: 20, autoclose: true }
   triage/lead:  { model: claude-opus-5-5, timeout: 15m }
   triage/engineer: { model: claude-sonnet-5-5 }
   # timeout covers the whole worker job (agent, tests, fix rounds). tests is your

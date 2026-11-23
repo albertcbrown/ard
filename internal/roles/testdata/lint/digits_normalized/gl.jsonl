@@ -1,0 +1,1 @@
+{"module": ".", "report": {"Issues": [{"FromLinter": "gocyclo", "Text": "cyclomatic complexity 31 of func `f` is high (> 30)", "Pos": {"Filename": "/R/pkg/a.go", "Line": 10, "Column": 1}}, {"FromLinter": "gocyclo", "Text": "cyclomatic complexity 32 of func `f` is high (> 30)", "Pos": {"Filename": "/R/pkg/a.go", "Line": 40, "Column": 1}}]}}
