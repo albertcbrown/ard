@@ -125,7 +125,7 @@ def canonical:
   // (sort | .[0]);
 
 def safeid: gsub("[^A-Za-z0-9._:-]"; "_");
-def safetxt: gsub("[`\\r\\n<>]"; "");
+def safetxt: gsub("[`\\r\\n<>]"; "") | gsub("@"; "＠");
 
 def sev0:
   if .score != null then
@@ -142,7 +142,7 @@ def render:
   | . as $v
   | {
       fingerprint: ("osv:" + $canon + ":" + $m + ":" + $pkg),
-      title: ("`" + ($pkg | gsub("[`\\r\\n]"; "")) + "`: " + $canon + " (" + $sev + ")" | .[:200]),
+      title: ("`" + ($pkg | safetxt) + "`: " + $canon + " (" + $sev + ")" | .[:200]),
       severity: $sev,
       group: $m,
       files: [$m],

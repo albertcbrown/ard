@@ -41,6 +41,7 @@ type Reader interface {
 // Effects is the part of effects.Effects the loop uses.
 type Effects interface {
 	AddLabels(ctx context.Context, n int, labels ...string) error
+	RemoveLabel(ctx context.Context, n int, label string) error
 	CreateComment(ctx context.Context, n int, body string) (github.Comment, error)
 	UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) error
 	MergePR(ctx context.Context, n int, in github.MergeInput) (github.MergeResult, error)

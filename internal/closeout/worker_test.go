@@ -88,6 +88,7 @@ func TestWorkerComment(t *testing.T) {
 		"failed":    {WorkerResult{PR: 9, Tests: TestsFailed, Fixes: 2, TestNote: "ran out of time"}, []string{"Tests: failed after 2 fix attempts · ran out of time"}},
 		"none":      {WorkerResult{PR: 9, Tests: TestsNone}, []string{"Tests: not configured"}},
 		"bad url":   {WorkerResult{PR: 9, PRURL: "https://evil.example/x", Tests: TestsNone}, []string{"PR: #9\n"}},
+		"large":     {WorkerResult{PR: 9, Tests: TestsPassed, Large: "Large change: 1200 changed lines (warn at 1000)"}, []string{"Tests: passed\nLarge change: 1200 changed lines (warn at 1000)"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := tc.w

@@ -75,6 +75,7 @@ type job struct {
 
 	summary  string // redacted summary of the latest role file
 	withheld bool
+	large    string // the diff guard's latest "Large change" note; "" when under diff_warn_lines
 
 	stepBudget float64 // max_budget_usd the current agent step runs with
 }
@@ -536,11 +537,18 @@ func (jb *job) round(ctx context.Context, s step) (head string, noCode, done boo
 		jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "the diff guard could not run", false))
 		return "", false, true
 	}
-	v := Check(n, changes, prLines, jb.exists)
+	lim := Lines{Warn: jb.role.DiffWarnLines, Max: jb.role.DiffMaxLines}
+	v := Check(n, changes, prLines, jb.exists, lim)
 	jb.log.Info("worker.guard", "hold", v.Hold != "", "lines", v.Lines, "rejects", len(v.Rejects), "files", len(v.Commit))
 	if v.Hold != "" {
 		jb.finishWithPR(ctx, s, v.Hold, closeout.Cause{})
 		return "", false, true
+	}
+	// The latest round's line count decides the note: a fix round can shrink
+	// the PR back under the warn threshold.
+	jb.large = v.Large
+	if v.Large != "" {
+		jb.log.Info("worker.diff_large", "lines", v.Lines, "warn", lim.Warn, "max", lim.Max)
 	}
 	if v.NoCode {
 		jb.head = s.h.BaseSHA
@@ -783,6 +791,7 @@ func (jb *job) openPR(ctx context.Context, res *closeout.WorkerResult) bool {
 	d := jb.l.d
 	n := jb.is.Number
 	res.Reviewers = jb.reviewers(ctx)
+	res.Large = jb.large
 	title, err := Title(CommitType(jb.is.Labels), jb.is.Title, n, jb.sj.ID)
 	if err != nil {
 		jb.log.Error("worker.pr_failed", "step", "title", "error", err)

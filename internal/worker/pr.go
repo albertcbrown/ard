@@ -72,6 +72,9 @@ func Body(b BodyInfo) string {
 		w.WriteString(QuoteSummary(b.Summary) + "\n")
 	}
 	fmt.Fprintf(&w, "\n**Tests:** %s\n", testsText(b.Result))
+	if b.Result.Large != "" {
+		fmt.Fprintf(&w, "\n**%s**\n", b.Result.Large)
+	}
 	base := fmt.Sprintf("https://github.com/%s/%s", b.Repo.Owner, b.Repo.Name)
 	role := fmt.Sprintf(".ard/%d/worker-%s.md", b.Issue, b.Role)
 	fmt.Fprintf(&w, "\n**Files:** [%s](%s/blob/%s/%s) · [logs](%s/tree/%s/.ard/%d/logs) · job `%s`\n",

@@ -20,7 +20,7 @@ sidecars:
 overrides:
   scanners/cve: {every: 12h, max_open: 10, group_size: 1}
   triage/lead: {sidecar: vpe-specs, after: [architect]}
-  workers/engineer: {reviewers: [security-review]}
+  workers/engineer: {reviewers: [security-review], diff_warn_lines: 800}
   reviewers/license-review: {when: {paths: [go.mod]}}
 `)
 	res := mustLoad(t, fsys)

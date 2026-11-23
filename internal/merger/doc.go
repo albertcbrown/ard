@@ -23,8 +23,9 @@
 //     with the reviewer's mark-ready. Each requested review must be done at a
 //     head that still covers the current one. An update-branch merge from main
 //     does not invalidate a review (prgate.Covers with the merge base). A stale
-//     review is only logged: until review fix rounds (#41) a human must
-//     re-request it.
+//     review (code changed since it) is re-requested once per head: the merger
+//     removes the role's :done label, records a review_rerequest event and logs
+//     merge.review_rerequested (merge.would_rerequest in dry-run).
 //  2. The body's first line is "Closes #<issue>" and a worker job of the issue
 //     ran on this branch (its id becomes the Ard-Job trailer). Otherwise the PR
 //     gets ard:needs-human.

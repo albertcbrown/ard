@@ -2,6 +2,7 @@ package roles
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -381,6 +382,27 @@ func TestErrorCodesDockerfilePinned(t *testing.T) {
 		a, b := r.FindString(ec), r.FindString(cve)
 		if a == "" || a != b {
 			t.Errorf("%s: error-codes %q, cve %q", re, a, b)
+		}
+	}
+}
+
+func TestErrCodesHostilePaths(t *testing.T) {
+	e := ecSetup(t, baseCodes)
+	e.cleanRepo(t)
+	e.write(t, "a`b<img src=x>@octocat<!--.go", "E7777\n")
+	out, se, code := e.run(t)
+	if code != 0 || out == "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, se)
+	}
+	for _, ln := range strings.Split(strings.TrimSpace(out), "\n") {
+		var f struct {
+			Title, Body string
+		}
+		if err := json.Unmarshal([]byte(ln), &f); err != nil {
+			t.Fatal(err)
+		}
+		if strings.ContainsAny(f.Title, "<>@") || strings.Contains(f.Body, "<img") || strings.Contains(f.Body, "<!--") || strings.Contains(f.Body, "@octocat") {
+			t.Errorf("live markup in %q / %q", f.Title, f.Body)
 		}
 	}
 }

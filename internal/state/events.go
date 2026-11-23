@@ -30,6 +30,10 @@ const (
 	EventMerge = "merge"
 	// EventReviewRound: a review fix round changed phase; data has round, phase, reason, pr, head, worker and roles.
 	EventReviewRound = "review_round"
+	// EventReviewRerequest: the merger removed a stale :done review label so the
+	// review re-runs; data has pr, head and reviewed. Stage is review and role
+	// is the reviewer role. One per head: it stops the merger from looping.
+	EventReviewRerequest = "review_rerequest"
 )
 
 // Event is one row of the append-only event log. Data holds structured fields

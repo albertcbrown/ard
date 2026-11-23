@@ -52,6 +52,7 @@ type rawOverride struct {
 	timeout, every               *Duration
 	maxOpen, groupSize           *int
 	maxTestFixes, maxRounds      *int
+	diffWarnLines, diffMaxLines  *int
 	autoclose                    *bool
 	route                        *string
 	after, reviewers             *[]string
@@ -74,7 +75,7 @@ var commonOverrideKeys = map[string]bool{
 var kindOverrideKeys = map[Kind]map[string]bool{
 	KindScanner:  {"every": true, "max_open": true, "group_size": true, "autoclose": true, "route": true},
 	KindTriage:   {"after": true, "plan_section": true},
-	KindWorker:   {"tests": true, "max_test_fixes": true, "max_review_rounds": true, "reviewers": true},
+	KindWorker:   {"tests": true, "max_test_fixes": true, "max_review_rounds": true, "reviewers": true, "diff_warn_lines": true, "diff_max_lines": true},
 	KindReviewer: {"when": true},
 }
 
@@ -191,6 +192,8 @@ func applyRoleDefaults(res *Resolved, role *Role) {
 		role.Tests = defaultWorkerTests
 		role.MaxTestFixes = defaultWorkerMaxTestFixes
 		role.MaxReviewRounds = defaultWorkerMaxReviewRounds
+		role.DiffWarnLines = defaultWorkerDiffWarnLines
+		role.DiffMaxLines = defaultWorkerDiffMaxLines
 	}
 }
 
@@ -244,14 +247,19 @@ func parseOverride(ref rawOverrideRef, kind Kind, cfgPath string) (rawOverride, 
 					ov.every = &d
 				}
 			}
-		case "max_open", "group_size", "max_test_fixes", "max_review_rounds":
+		case "max_open", "group_size", "max_test_fixes", "max_review_rounds", "diff_warn_lines", "diff_max_lines":
 			var v int
+			before := len(errs)
 			errs = append(errs, decodeValue(value, cfgPath, fkey, &v)...)
-			if value.Tag == "!!null" {
+			if value.Tag == "!!null" || len(errs) > before {
 				continue
 			}
 			if v < 1 {
-				errs = append(errs, &Error{File: cfgPath, Key: fkey, Msg: fmt.Sprintf("must be at least 1 (use paused to stop a role), got %d", v)})
+				msg := fmt.Sprintf("must be at least 1 (use paused to stop a role), got %d", v)
+				if strings.HasPrefix(field, "diff_") {
+					msg = fmt.Sprintf("must be at least 1, got %d", v)
+				}
+				errs = append(errs, &Error{File: cfgPath, Key: fkey, Msg: msg})
 				continue
 			}
 			switch field {
@@ -263,6 +271,10 @@ func parseOverride(ref rawOverrideRef, kind Kind, cfgPath string) (rawOverride, 
 				ov.maxTestFixes = &v
 			case "max_review_rounds":
 				ov.maxRounds = &v
+			case "diff_warn_lines":
+				ov.diffWarnLines = &v
+			case "diff_max_lines":
+				ov.diffMaxLines = &v
 			}
 		case "autoclose":
 			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.autoclose)...)
@@ -414,6 +426,15 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 	}
 	if ov.maxRounds != nil {
 		role.MaxReviewRounds = *ov.maxRounds
+	}
+	if ov.diffWarnLines != nil {
+		role.DiffWarnLines = *ov.diffWarnLines
+	}
+	if ov.diffMaxLines != nil {
+		role.DiffMaxLines = *ov.diffMaxLines
+	}
+	if (ov.diffWarnLines != nil || ov.diffMaxLines != nil) && role.DiffWarnLines > role.DiffMaxLines {
+		*errs = append(*errs, &Error{File: cfgPath, Key: keyRef + ".diff_warn_lines", Msg: fmt.Sprintf("must not exceed diff_max_lines (%d), got %d", role.DiffMaxLines, role.DiffWarnLines)})
 	}
 	if ov.reviewers != nil {
 		for _, rev := range *ov.reviewers {
