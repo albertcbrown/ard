@@ -66,6 +66,22 @@ type Job struct {
 	// placement and whether the PR head moved. nil for every other job, and
 	// for a review closed out by the Reaper after a restart.
 	Review *ReviewContext
+	// Usage is the job's agent usage summed over its steps (from state). The
+	// zero value renders as "not reported".
+	Usage Usage
+	// StartedAt is when the job was created; zero when unknown.
+	StartedAt time.Time
+}
+
+// Tokens are token counts by type; it mirrors state.Tokens.
+type Tokens struct{ Input, Output, CacheWrite, CacheRead int64 }
+
+// Usage is the job's agent usage summed over its steps (from state).
+type Usage struct {
+	Models  []string `json:",omitempty"`
+	Tokens  *Tokens  `json:",omitempty"`
+	CostUSD *float64 `json:",omitempty"`
+	Steps   int      `json:",omitempty"`
 }
 
 // CauseKind names why a job ended without a usable result.

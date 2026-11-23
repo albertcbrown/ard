@@ -838,3 +838,39 @@ func TestSizeAndCountLimitsHoldBeforeHashing(t *testing.T) {
 		})
 	}
 }
+
+// Each agent and fix step is recorded under its own key, and the job's totals
+// in state are their sum. The Finisher is handed the final step only: it reads
+// the totals from state, so nothing is counted twice.
+func TestStepUsageRecordedForEveryAgentStep(t *testing.T) {
+	h := newHarness(t)
+	h.issue("Crash")
+	h.loop.d.Parse = func(_ context.Context, _ *config.Resolved, _ state.Job, hd executor.Handle, _ int) (agent.Result, error) {
+		c := 0.25
+		u := agent.Usage{Input: 10, Output: 100, CacheWrite: 1000, CacheRead: 10000}
+		return agent.Result{CostUSD: &c, Usage: &u, Model: "claude-opus-5-5", ModelUsage: map[string]agent.Usage{"claude-opus-5-5": u}}, nil
+	}
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, func(int) int { return 1 })
+	h.mustTick()
+	fc := h.only()
+	id := h.ex.ids()[0]
+	if fc.JobID != id {
+		t.Fatalf("finished job %s, want %s", fc.JobID, id)
+	}
+	u, err := h.store.JobUsage(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An agent step and two fix steps; the test steps run no agent.
+	if u.Steps != 3 || u.Tokens == nil || *u.Tokens != (state.Tokens{Input: 30, Output: 300, CacheWrite: 3000, CacheRead: 30000}) ||
+		u.CostUSD == nil || *u.CostUSD != 0.75 || len(u.Models) != 1 {
+		t.Errorf("usage = %+v tokens=%+v", u, u.Tokens)
+	}
+	if fc.Res.CostUSD == nil || *fc.Res.CostUSD != 0.25 {
+		t.Errorf("the Finisher was handed the job sum %v instead of the final step's own result", fc.Res.CostUSD)
+	}
+	// Re-recording at finish (or a replay) does not change the sums.
+	if rec, err := h.store.RecordStepUsage(context.Background(), id, id, state.StepUsage{CostUSD: new(float64)}); err != nil || rec {
+		t.Errorf("re-record = %v, %v", rec, err)
+	}
+}

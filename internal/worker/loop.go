@@ -65,6 +65,7 @@ type Store interface {
 	SetBranch(ctx context.Context, id, branch string) error
 	SetPR(ctx context.Context, id string, pr int) error
 	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+	RecordStepUsage(ctx context.Context, jobID, step string, u state.StepUsage) (bool, error)
 }
 
 // Finisher is *reaper.Finisher: the one way a started job ends.

@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
@@ -31,6 +34,8 @@ type FinishStore interface {
 	Job(ctx context.Context, id string) (state.Job, error)
 	EndAttempt(ctx context.Context, id string, n int, e state.AttemptEnd) error
 	MarkCleaned(ctx context.Context, id string) error
+	RecordStepUsage(ctx context.Context, jobID, step string, u state.StepUsage) (bool, error)
+	JobUsage(ctx context.Context, jobID string) (state.JobUsage, error)
 }
 
 // Finisher ends a job whose process has stopped. The triage, worker and
@@ -123,7 +128,7 @@ func CloseoutJob(sj state.Job, h executor.Handle, st executor.Status, cause clos
 		exit = -1
 	}
 	j := closeout.Job{ID: sj.ID, Issue: sj.Issue, PR: sj.PR, Stage: sj.Stage, Role: sj.Role, Attempt: sj.Attempt,
-		Branch: sj.Branch, Worktree: h.Worktree, Home: h.Home, BaseSHA: h.BaseSHA, Scrubbed: h.Scrubbed, LogPath: h.LogPath, ExitCode: exit, Cause: cause}
+		StartedAt: sj.CreatedAt, Branch: sj.Branch, Worktree: h.Worktree, Home: h.Home, BaseSHA: h.BaseSHA, Scrubbed: h.Scrubbed, LogPath: h.LogPath, ExitCode: exit, Cause: cause}
 	if res.CostUSD != nil {
 		j.CostUSD = *res.CostUSD
 	}
@@ -196,7 +201,40 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 		}
 		cause.ResetsAt = until
 	}
+	// Record the final step's usage, then read the job's totals (the sum of
+	// every step recorded so far). Close-out never fails over accounting: on an
+	// error the final step's own numbers stand in.
+	cost := res.CostUSD
+	var totals state.JobUsage
+	recorded := true
+	// Only agent steps are recorded: the job's own id or <id>f<k> (a fix step).
+	// A test step (<id>t<k>) runs agent-written code, so its output is never
+	// parsed into usage.
+	if u, ok := StepUsageOf(res); ok && agentStep(jobID, h.JobID) {
+		if _, err := f.Store.RecordStepUsage(ctx, jobID, h.JobID, u); err != nil {
+			f.log().Warn("reaper.usage_record_failed", "job", jobID, "step", h.JobID, "error", err)
+			recorded = false
+		}
+	}
+	haveTotals := false
+	if recorded {
+		if t, err := f.Store.JobUsage(ctx, jobID); err != nil {
+			f.log().Warn("reaper.usage_record_failed", "job", jobID, "error", err)
+		} else {
+			totals, haveTotals = t, true
+			cost = t.CostUSD
+		}
+	}
 	cj := CloseoutJob(sj, h, st, cause, res)
+	cj.CostUSD = 0
+	if cost != nil {
+		cj.CostUSD = *cost
+	}
+	if haveTotals {
+		cj.Usage = usageOf(totals)
+	} else if u, ok := StepUsageOf(res); ok {
+		cj.Usage = usageOf(state.JobUsage{Models: u.Models, Tokens: u.Tokens, CostUSD: u.CostUSD, Steps: 1})
+	}
 	cj.Worker, cj.ExtraLogs, cj.Review = o.Worker, o.ExtraLogs, o.Review
 	// End the attempt before close-out: a crash after it leaves a resumable
 	// close-out and an ended attempt, never the reverse.
@@ -204,9 +242,7 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 		end := state.AttemptEnd{Cause: string(cause.Kind), Transient: cause.Transient}
 		code := cj.ExitCode
 		end.ExitCode = &code
-		if res.CostUSD != nil {
-			end.CostUSD = res.CostUSD
-		}
+		end.CostUSD = cost
 		if err := f.Store.EndAttempt(ctx, jobID, sj.Attempt, end); err != nil && !errors.Is(err, state.ErrNotFound) {
 			return "", fmt.Errorf("finish job %s: end attempt: %w", jobID, err)
 		}
@@ -220,7 +256,7 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	if cause.Kind == closeout.CauseUsageLimit {
 		attrs = append(attrs, "family", cause.Family, "until", cause.ResetsAt.UTC())
 	}
-	f.log().Info("reaper.finish", append(attrs, usageAttrs(res)...)...)
+	f.log().Info("reaper.finish", append(attrs, usageAttrs(cj.Usage)...)...)
 	if res.OK && cause.Kind == "" && (out == closeout.OutcomeDone || out == closeout.OutcomeChanges) && f.Limits != nil {
 		// A job that ended well proves the account is usable: the no-reset
 		// backoff starts over. Best effort.
@@ -232,14 +268,78 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	return out, nil
 }
 
-// usageAttrs are the token totals for the reaper.finish event. Storing them
-// is #57 and #64.
-func usageAttrs(res agent.Result) []any {
-	if res.Usage == nil {
-		return nil
+// usageAttrs are the job's totals for the reaper.finish event: tokens, cost
+// and the number of agent steps summed.
+func usageAttrs(u closeout.Usage) []any {
+	var a []any
+	if t := u.Tokens; t != nil {
+		a = append(a, "tokens_in", t.Input, "tokens_out", t.Output, "tokens_cache_write", t.CacheWrite, "tokens_cache_read", t.CacheRead)
 	}
-	u := res.Usage
-	return []any{"tokens_in", u.Input, "tokens_out", u.Output, "tokens_cache_write", u.CacheWrite, "tokens_cache_read", u.CacheRead}
+	if u.CostUSD != nil {
+		a = append(a, "cost_usd", *u.CostUSD)
+	}
+	if u.Steps > 0 {
+		a = append(a, "steps", u.Steps)
+	}
+	return a
+}
+
+// usageOf maps a job's state totals to the close-out Usage.
+func usageOf(u state.JobUsage) closeout.Usage {
+	out := closeout.Usage{Models: u.Models, CostUSD: u.CostUSD, Steps: u.Steps}
+	if t := u.Tokens; t != nil {
+		out.Tokens = &closeout.Tokens{Input: t.Input, Output: t.Output, CacheWrite: t.CacheWrite, CacheRead: t.CacheRead}
+	}
+	return out
+}
+
+// agentStep reports whether step is an agent or fix step of the job.
+func agentStep(jobID, step string) bool {
+	if step == jobID {
+		return true
+	}
+	rest, ok := strings.CutPrefix(step, jobID+"f")
+	if !ok || rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// StepUsageOf maps what one agent run reported to a state record. ok is false
+// when the result reported nothing: no cost, no usage and no model. Models are
+// the keys of res.ModelUsage plus res.Model, de-duplicated, sorted and limited
+// to valid model ids.
+func StepUsageOf(res agent.Result) (state.StepUsage, bool) {
+	var u state.StepUsage
+	if res.CostUSD != nil {
+		if c := *res.CostUSD; !math.IsNaN(c) && !math.IsInf(c, 0) && c >= 0 {
+			u.CostUSD = &c
+		}
+	}
+	if res.Usage != nil {
+		u.Tokens = &state.Tokens{Input: res.Usage.Input, Output: res.Usage.Output, CacheWrite: res.Usage.CacheWrite, CacheRead: res.Usage.CacheRead}
+	}
+	seen := map[string]bool{}
+	add := func(m string) {
+		if m != "" && !seen[m] && state.ValidModel(m) {
+			seen[m] = true
+			u.Models = append(u.Models, m)
+		}
+	}
+	for m := range res.ModelUsage {
+		add(m)
+	}
+	add(res.Model)
+	sort.Strings(u.Models)
+	if u.CostUSD == nil && u.Tokens == nil && len(u.Models) == 0 {
+		return state.StepUsage{}, false
+	}
+	return u, true
 }
 
 // Tidy removes the worktree of a closed-out job unless the outcome keeps it

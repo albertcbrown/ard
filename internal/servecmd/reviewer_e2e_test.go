@@ -254,10 +254,12 @@ func TestReviewEndToEndInlineComments(t *testing.T) {
 	if msg := gittest.Run(t, e.bare, "log", "-1", "--format=%B", e.branch); strings.Contains(msg, "skip ci") {
 		t.Errorf("commit message carries [skip ci]:\n%s", msg)
 	}
-	var logs int
+	var logs, costs int
 	for _, f := range strings.Fields(gittest.Run(t, e.bare, "diff", "--name-only", e.tip, e.branch)) {
 		switch {
 		case f == ".ard/"+n+"/review-eng-review.md":
+		case strings.HasPrefix(f, ".ard/"+n+"/costs/") && strings.HasSuffix(f, ".json"):
+			costs++ // the controller's usage record rides the PR branch
 		case strings.HasPrefix(f, ".ard/"+n+"/logs/"):
 			logs++
 			if b := gittest.Run(t, e.bare, "show", e.branch+":"+f); strings.Contains(b, e2eToken) || !strings.Contains(b, "using token") {
@@ -267,8 +269,8 @@ func TestReviewEndToEndInlineComments(t *testing.T) {
 			t.Errorf("the review commit changed %s", f)
 		}
 	}
-	if logs != 1 {
-		t.Errorf("logs = %d", logs)
+	if logs != 1 || costs != 1 {
+		t.Errorf("logs = %d, usage records = %d", logs, costs)
 	}
 	if got := gittest.Run(t, e.bare, "show", e.branch+":hello.go"); strings.Contains(got, "tampered") {
 		t.Error("the agent's code edit was committed")

@@ -488,8 +488,8 @@ func TestRunWriteDenied(t *testing.T) {
 	}
 	for _, files := range e.cm.commits {
 		for p := range files {
-			if !strings.HasPrefix(p, ".ard/7/logs/") {
-				t.Errorf("committed %s, want only the log", p)
+			if !strings.HasPrefix(p, ".ard/7/logs/") && !strings.HasPrefix(p, ".ard/7/costs/") {
+				t.Errorf("committed %s, want only the log and the usage record", p)
 			}
 		}
 	}

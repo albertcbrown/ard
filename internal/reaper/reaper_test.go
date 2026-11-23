@@ -44,6 +44,19 @@ func (h *harness) markerCount(n int, id string) int {
 }
 
 // checkEvidence asserts what every Reaper failure leaves behind.
+// onlyUsageCommits reports whether every commit holds nothing but the job's
+// usage record (a job with no log still commits that).
+func onlyUsageCommits(reqs []committer.Request, issue int) bool {
+	for _, r := range reqs {
+		for _, f := range r.Files {
+			if !strings.HasPrefix(f.Path, ".ard/"+itoa(issue)+"/costs/") {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (h *harness) checkEvidence(sj state.Job, wantReason string) {
 	t := h.t
 	t.Helper()
@@ -57,7 +70,7 @@ func (h *harness) checkEvidence(sj state.Job, wantReason string) {
 		t.Errorf("comment lacks reason %q:\n%s", wantReason, body)
 	}
 	if noLog { // never started: there is no log to tail or commit
-		if strings.Contains(body, "Last 50") || len(h.cm.reqs) != 0 || !strings.Contains(body, "Kept until") {
+		if strings.Contains(body, "Last 50") || !onlyUsageCommits(h.cm.reqs, sj.Issue) || !strings.Contains(body, "Kept until") {
 			t.Errorf("a job with no log:\n%s", body)
 		}
 		return
@@ -79,8 +92,17 @@ func (h *harness) checkEvidence(sj state.Job, wantReason string) {
 		t.Fatal("no commit")
 	}
 	last := h.cm.reqs[len(h.cm.reqs)-1]
-	if len(last.Files) != 1 || !strings.HasPrefix(last.Files[0].Path, ".ard/"+itoa(sj.Issue)+"/logs/") {
-		t.Errorf("commit files = %+v, want only the log under .ard/%d/logs/", last.Files, sj.Issue)
+	var logs, costs int
+	for _, f := range last.Files {
+		switch {
+		case strings.HasPrefix(f.Path, ".ard/"+itoa(sj.Issue)+"/logs/"):
+			logs++
+		case strings.HasPrefix(f.Path, ".ard/"+itoa(sj.Issue)+"/costs/"):
+			costs++
+		}
+	}
+	if logs != 1 || costs != 1 || len(last.Files) != 2 {
+		t.Errorf("commit files = %+v, want the log under .ard/%d/logs/ and the usage record", last.Files, sj.Issue)
 	}
 	for _, c := range h.ex.cleanupsOf(sj.ID) {
 		if !c.Keep {

@@ -205,11 +205,13 @@ func TestTriageEndToEndDone(t *testing.T) {
 		t.Errorf("comments = %d, want one close-out comment", len(cs))
 	}
 	files := strings.Fields(gittest.Run(t, e.bare, "ls-tree", "-r", "--name-only", "main"))
-	var gotRole, gotLog bool
+	var gotRole, gotLog, gotCosts bool
 	for _, f := range files {
 		switch {
 		case f == ".ard/"+itoa(n)+"/triage-lead.md":
 			gotRole = true
+		case strings.HasPrefix(f, ".ard/"+itoa(n)+"/costs/") && strings.HasSuffix(f, ".json"):
+			gotCosts = true
 		case f == ".ard/"+itoa(n)+"/plan.md":
 			t.Errorf("the lead's plan.md was committed")
 		case strings.HasPrefix(f, ".ard/"+itoa(n)+"/logs/triage-lead-") && strings.HasSuffix(f, ".log"):
@@ -223,7 +225,7 @@ func TestTriageEndToEndDone(t *testing.T) {
 			t.Errorf("untrusted input committed: %s", f)
 		}
 	}
-	if !gotRole || !gotLog {
+	if !gotRole || !gotLog || !gotCosts {
 		t.Errorf("committed files = %v", files)
 	}
 	for _, f := range files {
@@ -255,8 +257,8 @@ func TestTriageEndToEndWriteDenied(t *testing.T) {
 		t.Errorf("labels = %v", e.labels())
 	}
 	for _, f := range strings.Fields(gittest.Run(t, e.bare, "ls-tree", "-r", "--name-only", "main")) {
-		if strings.HasPrefix(f, ".ard/"+itoa(n)+"/") && !strings.Contains(f, "/logs/") {
-			t.Errorf("committed %s, want only the log", f)
+		if strings.HasPrefix(f, ".ard/"+itoa(n)+"/") && !strings.Contains(f, "/logs/") && !strings.Contains(f, "/costs/") {
+			t.Errorf("committed %s, want only the log and the usage record", f)
 		}
 	}
 	if cs := e.comments(); len(cs) != 1 || !strings.Contains(cs[0].Body, "write not allowed") {
