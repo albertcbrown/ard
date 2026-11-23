@@ -1,0 +1,52 @@
+# Plan for #255
+
+## Implementation
+
+### Steps
+
+Paths are under `internal/`. "New" marks anything that does not exist yet. Do not touch anything under `.ard/` (the worker prompt section is a separate human PR).
+
+1. `reviewfix/round.go`, `reviewfix/loop.go`: make `capPath` reason-aware. Add a `reason string` parameter (callers in `handle` and `landing` pass `ReasonReview`; the conflict path passes `ReasonConflict`), write it into the capped `Round` instead of the hard-coded `ReasonReview`, and word the cap comment for conflicts ("Conflict rounds stopped ... the limit of N review rounds is reached"). Keep the review wording and marker unchanged for `ReasonReview`. Reason: the cap comment currently talks about reviewers asking for changes. `RequestRound` passes `r.Reason` through.
+2. `merger/loop.go` (Deps): add an interface `Rounds interface { RequestRound(ctx, reviewfix.Request) (bool, error) }` (new) and a `Rounds` field. Nil means the old needs-human behaviour, so existing tests keep passing. `servecmd/merger.go`: pass the reviewfix loop. `servecmd/reviewfix.go` builds it now, so build it once in `servecmd` and share it between both loops. Reason: the merger must call `RequestRound`.
+3. `merger/merge.go`: new method `(t *tick) conflict(ctx, pr, issue, roles)` replacing the two `needsHuman(ctx, pr, "conflict", "")` calls (gate g, around line 121, and `updateBranch`, around line 317). Both are already limited to a computed conflict (`!*Mergeable || MergeableState == "dirty"`); keep 405 and unknown going to retry. Behaviour:
+   - resolve the worker role (`prgate.ParseWorkerBranch(pr.HeadRef)`) and its `max_review_rounds`;
+   - if the issue's newest round is already `requested` for this head (`reviewfix.Rounds`), log and return (idempotent);
+   - if the newest round is `capped` at this head, a human owns it: return without a new comment;
+   - dry-run: log `merge.would_request_conflict_round` and return;
+   - otherwise call `Rounds.RequestRound(ctx, reviewfix.Request{Issue, PR, Head: pr.HeadSHA, Worker, Reason: reviewfix.ReasonConflict, Roles: roles, Max})`. At the cap `RequestRound` already runs `capPath` (comment, needs-human, capped event); the merger adds nothing. On error call `t.fail`.
+   - when `Rounds` is nil or the branch is not a worker branch, fall back to `needsHuman("conflict")`; update its text (merge.go:264) to say conflict rounds are tried first.
+   Update `merger/doc.go` gate 3.
+4. `gitx` (new `gitx/merge.go`): add `(g *Git) MergeNoCommit(ctx, dir, ref string) (conflicted []string, err error)` running `git merge --no-commit --no-ff <ref>` and returning the unmerged paths (`git diff --name-only --diff-filter=U`); exit 1 with unmerged paths is not an error. Also `UnmergedPaths(ctx, dir)` and `MergeAbort`. Used by both the worker and the committer.
+5. `committer/code.go`, `committer/committer.go`: the single-parent lane cannot push a merge, and a squash-only resolution would not clear GitHub's conflict (main would still not be an ancestor). Add `MergeParent string` (40-hex main tip, optional) to `CodeRequest`. When set, `attempt` starts from the fetched branch tip, runs `MergeNoCommit(MergeParent)`, writes the declared snapshot files over the conflicted paths, requires `UnmergedPaths` to be empty after staging, and commits (two parents) through `effects.CommitOp`. `CheckStaged(declared, changes)` must then accept the paths changed by the merge itself: compare staged changes against `MergeParent`'s tree for the undeclared check, and keep `CheckCodePath` on every path. Keep the lease and retry loop. Fail with `ErrConflict` as today if the branch moved. `codeSnapshot` validates `MergeParent` with `shaRe`.
+6. `worker/conflict.go` (new): `(l *Loop) conflictInput(ctx, role, n, branch, r reviewfix.Round) (executor.File, mainTip string, ok bool, err error)`. Fetch `main` to a private ref in `RepoDir`, then build `conflict.md`: begins with `agentjob.UntrustedHeader`, names the round, lists the conflicted files and includes the hunks (`git merge-tree --write-tree` output or a trial `MergeNoCommit` in a scratch worktree, then abort), capped at `feedbackCap`. It marks hunks as untrusted text from the PR and `main`. If the trial merge is clean (main moved), return `ok=false` so the worker just proceeds with the normal flow.
+7. `worker/feedback.go` and `worker/run.go` (lines ~114-125): when the newest requested round has `Reason == reviewfix.ReasonConflict`, add `conflict.md` instead of `review-feedback.md` (both marked untrusted). Record the main tip on the `job` (new field `mergeParent`). Before the agent step, merge `origin/main` into the job worktree with `MergeNoCommit` so the agent sees real conflict markers and runs `make test` on the merge result.
+8. `worker/run.go` `round` / `push` and `worker/guard.go` (`facts`, `Check`): in a conflict round, compute the diff guard against the merge result relative to `mergeParent` (the PR's own changes), not against `BaseSHA`, so main's changes do not trip `diff_max_lines`. Refuse the round (finish as needs-human) if any conflict marker (`<<<<<<<`, `>>>>>>>`) is left in a file or any path is still unmerged. Pass `MergeParent: jb.mergeParent` in `committer.CodeRequest` in `push`. The commit title and trailer stay as today. A role file with a non-done status (the worker cannot resolve confidently) already ends needs-human through `finishWithPR`; do not change that.
+9. `reviewfix/loop.go` `landing`: a conflict round lands when the head is a merge that includes `R.Head`. The `covered` check (no code changed, capped) must not misfire on a merge-only resolution: for `Reason == conflict` treat "pr head has `R.Head` as ancestor and differs from it" as applied (use `gitx` ancestor check, new `IsAncestor(ctx, dir, a, b)` if none exists), then remove every requested reviewer's `:done` and `:changes` labels and append the applied event (the existing code). If the head did not move, cap with reason conflict.
+10. `docs/proposal.md`: replace the "Merger conflict and rebase rounds are a follow-up" sentence (line ~332) and the conflict bullet in the merger section (line ~378) with the conflict-round behaviour (merge round, counts toward `max_review_rounds`, union conflicts resolved by the worker, overlapping logic ends needs-human, all requested reviewers re-run, kill switch and dry-run apply). Add a short paragraph on the worker's conflict round and on the merge-parent commit in the code lane (line ~160). Update the `reviewfix/doc.go` last paragraph.
+
+### Test plan
+
+Test command: `make test` (`go test ./...`), plus `make lint`.
+
+- `merger/loop_test.go` `TestConflictRequestsRound`: ready PR with `Mergeable=false`; fake `Rounds` records one `Request` with `Reason: conflict`, all requested roles, correct `Max`; no needs-human label or comment.
+- `TestConflictUnknownAndNotMergeableRetry`: `Mergeable==nil`, state `unknown` and a 405 from merge produce no round and no label.
+- `TestConflictRoundIdempotent`: newest round requested for the same head: no second request.
+- `TestConflictCapped`: `Requested` count equals `Max`: the real reviewfix `capPath` posts the comment, adds needs-human and appends a capped event with reason conflict; a review round and a conflict round together reach the cap (the cap counts conflict rounds).
+- `TestConflictDryRun`: no round, no label, a `would_request` log line.
+- `TestConflictNilRoundsFallsBack`: `Rounds == nil` keeps the old needs-human comment.
+- `TestUpdateBranchConflictRequestsRound` for the `updateBranch` 409 path.
+- `gitx/merge_test.go`: `MergeNoCommit` on a scratch repo with a union conflict returns the conflicted path; clean merge returns none; `UnmergedPaths` after resolution is empty.
+- `committer/code_test.go`: `CommitCode` with `MergeParent` produces a commit with two parents whose tree has the resolved files and main's other changes; refuses a leftover unmerged path; refuses a forbidden path (`.github/`) arriving through main's side only if declared by the worker; `ErrConflict` when the branch moved; invalid `MergeParent` is `ErrInvalid`.
+- `worker/loop_test.go`: `TestConflictRoundInput` (the input has `conflict.md` listed untrusted, carries the header, hunks and file names, is capped); `TestConflictRoundUnionResolved` (fake agent keeps both sides, `make test` passes, push has `MergeParent`); `TestConflictRoundOverlapNeedsHuman` (fake agent returns a non-done role file, job ends needs-human, nothing pushed); `TestConflictMarkersLeftRefused`.
+- `reviewfix/loop_test.go`: a conflict round lands when the head is a merge descendant, removes all requested reviewers' labels; a head that did not move caps with reason conflict.
+- End-to-end in `merger/integration_test.go` (fake GitHub, scratch git repo, fake agent): ready PR with a union conflict (two list entries added to the same place) goes conflict round, worker resolves, reviewers re-run and pass, merger merges with no human label. Second case: overlapping logic edit ends `ard:needs-human`.
+
+### Risk
+
+High. It crosses the merger, reviewfix, worker and the committer code lane (security-sensitive: path guard, `CheckStaged`, force-with-lease push). A merge commit brings main's files into the branch, so the guard must still reject forbidden paths and must not let the agent write outside the conflicted files. `landing` logic and `capPath` wording change on a shared state machine (concurrency with the worker claim and the `review_round` event order). Public interfaces: `committer.CodeRequest`, `reviewfix.capPath`, `merger.Deps`. No migration. No protected path in `merge.protected_paths` is edited; the worker prompt section is excluded on purpose, so until a human adds it the agent runs with the existing prompt plus the `conflict.md` input.
+
+### Size
+
+XL by the strict reading is avoided only by keeping each step minimal; estimate L (about 1,200 to 1,800 changed lines including tests, so expect a large-change note above diff_warn_lines). If it passes diff_max_lines, split into (a) merger request path plus reviewfix reason handling, and (b) merge-parent code lane plus worker conflict input.
+
+Files touched: `internal/merger/{loop.go,merge.go,doc.go,loop_test.go,integration_test.go}`, `internal/reviewfix/{round.go,loop.go,doc.go,loop_test.go}`, `internal/gitx/{merge.go (new),merge_test.go (new)}`, `internal/committer/{code.go,committer.go,code_test.go}`, `internal/worker/{conflict.go (new),feedback.go,run.go,guard.go,loop_test.go}`, `internal/servecmd/{merger.go,reviewfix.go}`, `docs/proposal.md`.
