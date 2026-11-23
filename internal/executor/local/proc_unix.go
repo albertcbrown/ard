@@ -297,16 +297,16 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 				// ard never runs git. The registration there dangles until the
 				// operator's own `git worktree prune`.
 				l.log.Info("executor.cleanup_foreign_repo", "job", h.JobID, "repo_dir", h.RepoDir, "clone", l.cloneDir)
-				if err := os.RemoveAll(h.Worktree); err != nil {
+				if err := removeAllWritable(h.Worktree); err != nil {
 					errs = append(errs, err)
 				}
 			} else if err := l.git.WorktreeRemove(context.WithoutCancel(ctx), h.RepoDir, h.Worktree, true); err != nil {
 				errs = append(errs, err)
-				os.RemoveAll(h.Worktree)
+				removeAllWritable(h.Worktree)
 			}
 		}
-		chmodWritable(filepath.Join(h.Home, sidecarDirName)) // a-w tree; derived from Home, not h.SidecarDir
-		if err := os.RemoveAll(h.Home); err != nil {
+		// Home holds a-w trees (sidecar, Go module cache); derived from Home, not h.SidecarDir
+		if err := removeAllWritable(h.Home); err != nil {
 			errs = append(errs, err)
 		}
 		if !foreign {

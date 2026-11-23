@@ -203,7 +203,7 @@ func TestEnvScrubbed(t *testing.T) {
 	for _, ignore := range []string{"PWD", "SHLVL", "_", "OLDPWD"} {
 		delete(got, ignore)
 	}
-	want := []string{"PATH", "HOME", "LANG", "TMPDIR", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
+	want := []string{"PATH", "HOME", "LANG", "GOFLAGS", "TMPDIR", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
 		"ARD_JOB", "ARD_ISSUE", "ARD_STAGE", "ARD_ROLE", "ARD_WORK", "ARD_ROLE_DIR", "ANTHROPIC_API_KEY"}
 	if len(got) != len(want) {
 		t.Errorf("env names %v", got)
