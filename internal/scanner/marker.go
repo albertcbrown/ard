@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/albertcbrown/ard/internal/costblock"
 )
@@ -114,8 +115,85 @@ func neutralize(s string, multiline bool) string {
 	return strings.ReplaceAll(s, "--!>", "--!&gt;")
 }
 
+func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
+
+// defuseMentions replaces an @ that starts a word and is followed by a word
+// character with a fullwidth commercial at, which notifies nobody. An @ inside
+// an address such as x@y.com stays as it is.
+func defuseMentions(s string) string {
+	r := []rune(s)
+	var b strings.Builder
+	for i, c := range r {
+		if c == '@' && i+1 < len(r) && isWordRune(r[i+1]) && (i == 0 || !isWordRune(r[i-1])) {
+			c = '＠'
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
+
+// SafeTitle makes one line of untrusted text inert in an issue title or
+// checklist line: control characters collapse to one space, backticks become
+// apostrophes, angle brackets and link brackets are swapped for lookalikes and
+// mentions are defused. It is idempotent.
+func SafeTitle(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.NewReplacer("`", "'", "<", "‹", ">", "›", "[", "(", "]", ")").Replace(s)
+	return strings.Join(strings.Fields(defuseMentions(s)), " ")
+}
+
+// InlineCode wraps untrusted text in an inline code span that it cannot leave.
+func InlineCode(s string) string {
+	return "`" + strings.ReplaceAll(neutralize(s, false), "`", "'") + "`"
+}
+
+// neutralizeBody defuses mentions and raw HTML tags in a scanner's free text
+// outside fenced code blocks and inline code spans.
+func neutralizeBody(s string) string {
+	lines := strings.Split(s, "\n")
+	fenced := false
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimLeft(ln, " "), "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		parts := strings.Split(ln, "`")
+		for j := 0; j < len(parts); j++ {
+			// Odd parts sit inside a span, unless the span never closes.
+			if j%2 == 1 && j < len(parts)-1 {
+				continue
+			}
+			parts[j] = defuseTags(defuseMentions(parts[j]))
+		}
+		lines[i] = strings.Join(parts, "`")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// defuseTags escapes a < that would begin an HTML tag, comment or declaration.
+func defuseTags(s string) string {
+	r := []rune(s)
+	var b strings.Builder
+	for i, c := range r {
+		if c == '<' && i+1 < len(r) && (unicode.IsLetter(r[i+1]) || strings.ContainsRune("/!?", r[i+1])) {
+			b.WriteString("&lt;")
+			continue
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
+
 func lineText(l Line) string {
-	t := l.Title
+	t := SafeTitle(l.Title)
 	if l.RegressionOf > 0 && !strings.Contains(t, "(regression of #") {
 		t += fmt.Sprintf(" (regression of #%d)", l.RegressionOf)
 	}
@@ -265,13 +343,13 @@ func findingsSpan(lines []Line) string {
 // that many characters.
 func detailBlock(f Finding, limit int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<details><summary>%s</summary>\n\n", neutralize(f.Title, false))
+	fmt.Fprintf(&b, "<details><summary>%s</summary>\n\n", neutralize(SafeTitle(f.Title), false))
 	if f.Body != "" {
 		body := f.Body
 		if limit > 0 {
 			body = truncateRunes(body, limit)
 		}
-		b.WriteString(neutralize(body, true) + "\n\n")
+		b.WriteString(neutralize(neutralizeBody(body), true) + "\n\n")
 	}
 	if len(f.Files) > 0 {
 		b.WriteString("Files: ")
@@ -279,7 +357,7 @@ func detailBlock(f Finding, limit int) string {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString("`" + strings.ReplaceAll(neutralize(p, false), "`", "'") + "`")
+			b.WriteString(InlineCode(p))
 		}
 		b.WriteString("\n\n")
 	}
@@ -389,7 +467,10 @@ func IssueTitle(scanner, group string, groupSize int, items []Item) string {
 			t = scanner + ": findings"
 		}
 	}
-	t = neutralize(t, false)
+	t = neutralize(SafeTitle(t), false)
+	if t == "" {
+		t = SafeTitle(scanner)
+	}
 	if r := []rune(t); len(r) > MaxTitleChars {
 		t = string(r[:MaxTitleChars-3]) + "..."
 	}

@@ -2,6 +2,7 @@ package roles
 
 import (
 	"bytes"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -317,4 +318,37 @@ func TestMain(m *testing.M) {
 		os.RemoveAll(docscanDir)
 	}
 	os.Exit(code)
+}
+
+func TestDocscanHostilePaths(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"a`b", "x<img src=1>", "@octocat", "n<!--"} {
+		dir := filepath.Join(root, d)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Skipf("directory name %q unsupported: %v", d, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "p.go"), []byte("package p\n\nfunc Exported() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, se, code := runDocscan(t, "-root", root)
+	if code != 0 || out == "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, se)
+	}
+	for _, ln := range strings.Split(strings.TrimSpace(out), "\n") {
+		var f struct {
+			Title, Body string
+		}
+		if err := json.Unmarshal([]byte(ln), &f); err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range []string{f.Title, f.Body} {
+			if strings.ContainsAny(s, "<>") || strings.Contains(s, "@octocat") || strings.Contains(s, "<!--") {
+				t.Errorf("live markup in %q", s)
+			}
+		}
+		if strings.Contains(f.Title, "`") {
+			t.Errorf("backtick in title %q", f.Title)
+		}
+	}
 }

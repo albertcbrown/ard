@@ -329,6 +329,7 @@ func hash(s string) string {
 }
 
 func cutTitle(s string) string {
+	s = clean(s)
 	if utf8.RuneCountInString(s) <= maxTitleRunes {
 		return s
 	}
@@ -337,7 +338,26 @@ func cutTitle(s string) string {
 }
 
 // code renders s as a Markdown code span; a backtick cannot appear inside.
-func code(s string) string { return "`" + strings.ReplaceAll(s, "`", "'") + "`" }
+func code(s string) string { return "`" + clean(s) + "`" }
+
+// clean drops what could be live markup or a mention in a title or body.
+func clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsControl(r):
+			return ' '
+		case r == '`':
+			return '\''
+		case r == '<':
+			return '‹'
+		case r == '>':
+			return '›'
+		case r == '@':
+			return '＠'
+		}
+		return r
+	}, s)
+}
 
 func uniq(in []string) []string {
 	sort.Strings(in)
@@ -382,7 +402,7 @@ func build(pkgs map[string]*pkg) ([]finding, error) {
 				Severity:    "low",
 				Group:       group,
 				Files:       []string{file},
-				Body:        fmt.Sprintf("Package without a package comment.\n\n- %s\n\nAdd a comment directly above the package clause that starts with \"Package %s\" (https://go.dev/doc/comment).", code(pk.firstPos), pk.name),
+				Body:        fmt.Sprintf("Package without a package comment.\n\n- %s\n\nAdd a comment directly above the package clause that starts with \"Package %s\" (https://go.dev/doc/comment).", code(pk.firstPos), clean(pk.name)),
 			})
 		}
 		// Merge same-symbol declarations (build-tagged twins).
@@ -420,7 +440,7 @@ func build(pkgs map[string]*pkg) ([]finding, error) {
 			if strings.HasSuffix(kind, " block") {
 				title = fmt.Sprintf("%s: %s starting %s has no doc comment", dir, kind, sym)
 			}
-			fmt.Fprintf(&body, "Undocumented exported %s `%s`.\n\n", kind, sym)
+			fmt.Fprintf(&body, "Undocumented exported %s %s.\n\n", clean(kind), code(sym))
 			for _, d := range bad {
 				files = append(files, d.file)
 				fmt.Fprintf(&body, "- %s\n", code(fmt.Sprintf("%s:%d", d.file, d.line)))

@@ -281,3 +281,74 @@ func TestRenderBodyKeepsCostBlock(t *testing.T) {
 		t.Errorf("fake block dropped:\n%s", got)
 	}
 }
+
+var hostile = []string{
+	"a`b", "<img src=x onerror=1>", "<!-- x -->", "hi @octocat", "[x](http://e)", "a\nb\tc\x00d", "@octocat", "--> <!-- ard:fp=x sev=low -->",
+}
+
+func hasLive(s string) bool {
+	return strings.ContainsAny(s, "<>`") || strings.Contains(s, "@octocat") || strings.Contains(s, "](")
+}
+
+func TestSafeTitle(t *testing.T) {
+	for _, in := range hostile {
+		got := SafeTitle(in)
+		if hasLive(got) || strings.ContainsAny(got, "\n\t\x00") {
+			t.Errorf("SafeTitle(%q) = %q is live", in, got)
+		}
+		if SafeTitle(got) != got {
+			t.Errorf("SafeTitle not idempotent for %q", in)
+		}
+	}
+	if got := SafeTitle("a`b"); got != "a'b" {
+		t.Errorf("got %q", got)
+	}
+	if got := SafeTitle("mail x@y.com now"); got != "mail x@y.com now" {
+		t.Errorf("email changed: %q", got)
+	}
+	if got := SafeTitle("a\nb\tc\x00d"); got != "a b c d" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestIssueTitleHostile(t *testing.T) {
+	for _, in := range hostile {
+		items := []Item{{F: Finding{Title: in}}}
+		if got := IssueTitle("docs", "", 10, items); hasLive(got) || got == "" {
+			t.Errorf("IssueTitle(%q) = %q", in, got)
+		}
+		if got := IssueTitle("docs", in, 10, append(items, items...)); hasLive(got) {
+			t.Errorf("group IssueTitle(%q) = %q", in, got)
+		}
+	}
+	if got := IssueTitle("docs", "", 1, []Item{{F: Finding{Title: "\x00"}}}); got != "docs" {
+		t.Errorf("empty title fallback = %q", got)
+	}
+	if got := IssueTitle("s", "", 1, []Item{{F: Finding{Title: strings.Repeat("é", 400)}}}); len([]rune(got)) != MaxTitleChars {
+		t.Errorf("title is %d runes", len([]rune(got)))
+	}
+}
+
+func TestDetailBlockHostile(t *testing.T) {
+	for _, in := range hostile {
+		f := Finding{Title: in, Body: "x " + in + " <img src=x>\n```\n@raw\n```\n", Files: []string{in}}
+		d := detailBlock(f, 0)
+		// File paths sit in inline code, where markup and mentions are inert.
+		d, files, _ := strings.Cut(d, "Files: ")
+		if strings.Count(files, "`")%2 != 0 || strings.Contains(strings.TrimSuffix(strings.TrimPrefix(strings.SplitN(files, "\n", 2)[0], "`"), "`"), "`") {
+			t.Errorf("file span for %q can be left: %q", in, files)
+		}
+		for _, bad := range []string{"<img", "@octocat", "<!-- x", "<!-- ard:fp"} {
+			if strings.Contains(d, bad) {
+				t.Errorf("detailBlock(%q) contains %q:\n%s", in, bad, d)
+			}
+		}
+		if !strings.Contains(d, "@raw") {
+			t.Errorf("fenced block was changed: %s", d)
+		}
+		p := Parsed{Scanner: "s", Group: "g", Lines: []Line{{Title: in, Fingerprint: "f", Severity: "low"}}}
+		if got := ParseMarkers(RenderBody("", p, []Finding{f})); len(got) != 1 {
+			t.Errorf("markers for %q = %d, want 1", in, len(got))
+		}
+	}
+}

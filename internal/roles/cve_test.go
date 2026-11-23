@@ -71,6 +71,7 @@ var syntheticCases = map[string]string{
 	"cve_only":           "no GHSA id",
 	"excluded_manifests": "testdata/vendor/node_modules manifests",
 	"untrusted_summary":  "hostile advisory summary",
+	"hostile_name":       "package name with markup, a backtick and a mention",
 }
 
 var cases = allCases()

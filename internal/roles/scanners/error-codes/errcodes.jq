@@ -85,16 +85,17 @@ def matchline:
     else {skip: "code"} end;
 
 def safe: gsub("[`\r\n<>]"; "");
+def code: "`" + gsub("`"; "'") + "`";
 
 def locs:
   length as $n
-  | ((.[:50] | map("\(.p | safe):\(.l)") | join("\n"))
+  | ((.[:50] | map("\(.p | safe | gsub("@"; "＠")):\(.l)") | join("\n"))
      + (if $n > 50 then "\n… and \($n - 50) more" else "" end));
 
 def mk($kind; $sev; $grp; $title; $sentence):
   {
     fingerprint: "error-codes:\($kind):\(.key)",
-    title: ("`\(.key)` " + $title),
+    title: ((.key | safe | code) + " " + $title),
     severity: $sev,
     group: $grp,
     files: (.value | map(.p) | unique | .[:20]),
