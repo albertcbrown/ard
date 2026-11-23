@@ -86,7 +86,7 @@ func TestPrepareReplacesHostPaths(t *testing.T) {
 			home := t.TempDir()
 			host := HostPaths{Home: home, ArdRoot: filepath.Join(home, ".ard")}
 			e := newEnv(t)
-			e.d.NewRedactor = JobRedactor(func() []string { return nil }, host)
+			e.d.NewRedactor = JobRedactor(func() []string { return nil }, host, nil)
 			if err := os.MkdirAll(host.ArdRoot, 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -172,7 +172,7 @@ func TestPrepareReplacesHostPaths(t *testing.T) {
 
 func TestJobRedactorBadRuleFailsClosed(t *testing.T) {
 	// A newline in a path is a bad rule: the redactor must not be built.
-	_, err := JobRedactor(func() []string { return nil }, HostPaths{Home: "/Users/zed\nx"})(Job{})
+	_, err := JobRedactor(func() []string { return nil }, HostPaths{Home: "/Users/zed\nx"}, nil)(Job{})
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -193,5 +193,68 @@ func TestJobHomeRecordCompat(t *testing.T) {
 	var old Record
 	if err := json.Unmarshal([]byte(`{"Version":1,"Job":{"ID":"J","Worktree":"/w"}}`), &old); err != nil || old.Job.Home != "" || old.Job.Worktree != "/w" {
 		t.Errorf("old record: %+v, %v", old.Job, err)
+	}
+}
+
+func fakeGitleaksBin(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "gitleaks")
+	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --report-path ] && report=\"$2\"; shift; done\n" + body + "\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestJobRedactorGitleaks(t *testing.T) {
+	hit := `echo '[{"RuleID":"r","StartLine":1,"StartColumn":1}]' > "$report"; exit 2`
+	cases := []struct {
+		name    string
+		gl      func(string) func() (redact.GitleaksOptions, bool)
+		bin     string
+		flagged bool
+	}{
+		{"off", func(string) func() (redact.GitleaksOptions, bool) { return nil }, hit, false},
+		{"disabled", func(p string) func() (redact.GitleaksOptions, bool) {
+			return func() (redact.GitleaksOptions, bool) { return redact.GitleaksOptions{Path: p}, false }
+		}, hit, false},
+		{"hit", func(p string) func() (redact.GitleaksOptions, bool) {
+			return func() (redact.GitleaksOptions, bool) { return redact.GitleaksOptions{Path: p}, true }
+		}, hit, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			bin := fakeGitleaksBin(t, c.bin)
+			e.d.NewRedactor = JobRedactor(func() []string { return nil }, HostPaths{}, c.gl(bin))
+			e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
+			j := e.claim(StageTriage, "lead")
+			if err := os.WriteFile(j.LogPath, []byte("plain log\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := New(e.d).Run(context.Background(), j); err != nil {
+				t.Fatal(err)
+			}
+			if l := e.labels(7); l["ard:needs-human"] != c.flagged {
+				t.Errorf("needs-human = %v, want %v (labels %v)", l["ard:needs-human"], c.flagged, l)
+			}
+		})
+	}
+	// Enabled but the binary is missing: fail closed.
+	e := newEnv(t)
+	missing := filepath.Join(t.TempDir(), "nope")
+	e.d.NewRedactor = JobRedactor(func() []string { return nil }, HostPaths{}, func() (redact.GitleaksOptions, bool) {
+		return redact.GitleaksOptions{Path: missing}, true
+	})
+	e.write(".ard/7/triage-lead.md", roleFile("lead", "done"))
+	j := e.claim(StageTriage, "lead")
+	if err := os.WriteFile(j.LogPath, []byte("plain log\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(e.d).Run(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	if l := e.labels(7); !l["ard:needs-human"] || l["ard:triage:lead:done"] {
+		t.Errorf("labels = %v", l)
 	}
 }

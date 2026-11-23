@@ -50,6 +50,17 @@ type Stale struct {
 	SuppressFor Duration // default 90d
 }
 
+// Redact configures optional extra passes of the close-out secret scan.
+type Redact struct {
+	Gitleaks Gitleaks
+}
+
+// Gitleaks configures the optional, fail-closed gitleaks pass.
+type Gitleaks struct {
+	Enabled bool   // default false
+	Path    string // default "gitleaks"; absolute path or a name on PATH
+}
+
 // IntakeMode says which human-filed issues may enter triage (decided, #2).
 type IntakeMode string
 
@@ -154,6 +165,7 @@ type Resolved struct {
 	Intake         Intake
 	ProtectedPaths []string // merge.protected_paths: "dir/" = directory prefix, else doublestar glob; see Protected
 	Stale          Stale
+	Redact         Redact
 	Sidecars       map[string]Sidecar
 	Roles          []Role // sorted by Kind then Name
 }

@@ -79,13 +79,21 @@ func resolveForms(p string) []string {
 
 // JobRedactor is the production Deps.NewRedactor: the credential values in
 // environ() (redact.FromEnviron) plus PathRules(j.Worktree, j.Home, host).
-// A bad path rule fails the build, so close-out commits nothing.
-func JobRedactor(environ func() []string, host HostPaths) func(Job) (Redactor, error) {
+// A bad path rule fails the build, so close-out commits nothing. When
+// gitleaks is non-nil and returns true, the optional gitleaks pass runs after
+// the builtin scan; it is read per job so a config change applies at once.
+func JobRedactor(environ func() []string, host HostPaths, gitleaks func() (redact.GitleaksOptions, bool)) func(Job) (Redactor, error) {
 	return func(j Job) (Redactor, error) {
 		s, err := redact.FromEnviron(environ()).WithPaths(PathRules(j.Worktree, j.Home, host)...)
 		if err != nil {
 			return nil, fmt.Errorf("closeout: path rules: %w", err)
 		}
-		return redact.New(s, redact.Options{})
+		var o redact.Options
+		if gitleaks != nil {
+			if gl, on := gitleaks(); on {
+				o.Scanner = redact.Multi(redact.Builtin(), redact.Gitleaks(gl))
+			}
+		}
+		return redact.New(s, o)
 	}
 }

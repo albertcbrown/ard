@@ -18,6 +18,7 @@ import (
 	"github.com/albertcbrown/ard/internal/limits"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/reaper"
+	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -30,6 +31,16 @@ func (c cfgRoles) Role(k config.Kind, name string) (config.Role, bool) {
 		return config.Role{}, false
 	}
 	return cfg.Role(k, name)
+}
+
+// gitleaksOptions reports whether the optional gitleaks pass is enabled in the
+// latest loaded config, and which binary to run.
+func (w *wiring) gitleaksOptions() (redact.GitleaksOptions, bool) {
+	cfg := w.cfg.Load()
+	if cfg == nil || !cfg.Redact.Gitleaks.Enabled {
+		return redact.GitleaksOptions{}, false
+	}
+	return redact.GitleaksOptions{Path: cfg.Redact.Gitleaks.Path}, true
 }
 
 // closer returns the one *closeout.Closer of this process. The triage, worker
@@ -50,7 +61,7 @@ func (w *wiring) closer() *closeout.Closer {
 		Roles: cfgRoles{w},
 		// The job's model credentials are in the controller's environment.
 		// Host paths are replaced by placeholders in the same pass.
-		NewRedactor: closeout.JobRedactor(os.Environ, w.hostPaths()),
+		NewRedactor: closeout.JobRedactor(os.Environ, w.hostPaths(), w.gitleaksOptions),
 		// Job worktrees belong to the agent: git runs in the controller's own
 		// clone (w.Root) and never trusts a worktree's .git, index or config.
 		Changed: func(ctx context.Context, worktree, base string, paths ...string) ([]gitx.PathChange, error) {

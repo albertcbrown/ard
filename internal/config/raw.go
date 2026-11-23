@@ -29,6 +29,8 @@ type rawConfig struct {
 	haveMerge       bool
 	stale           rawStale
 	haveStale       bool
+	gitleaksEnabled *bool // redact.gitleaks.enabled
+	gitleaksPath    *string
 	sidecars        map[string]rawSidecar
 	overrides       []rawOverrideRef
 }
@@ -123,6 +125,8 @@ func parseConfigDoc(doc *yaml.Node, cfgPath string) (rawConfig, Errors) {
 			errs = append(errs, raw.parseMerge(value, cfgPath)...)
 		case "stale":
 			errs = append(errs, raw.parseStale(value, cfgPath)...)
+		case "redact":
+			errs = append(errs, raw.parseRedact(value, cfgPath)...)
 		case "sidecars":
 			errs = append(errs, raw.parseSidecars(value, cfgPath)...)
 		case "overrides":
@@ -256,6 +260,42 @@ func (raw *rawConfig) parseStale(n *yaml.Node, file string) Errors {
 			errs = append(errs, decodeValue(value, file, "stale.suppress_for", &raw.stale.suppressFor)...)
 		default:
 			errs = append(errs, &Error{File: file, Key: "stale." + key.Value, Msg: "unknown key (want inactive_for or suppress_for)"})
+		}
+	}
+	return errs
+}
+
+func (raw *rawConfig) parseRedact(n *yaml.Node, file string) Errors {
+	var errs Errors
+	if n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return Errors{{File: file, Key: "redact", Msg: "must be a mapping"}}
+	}
+	for i := 0; i < len(n.Content); i += 2 {
+		key, value := n.Content[i], n.Content[i+1]
+		if key.Value != "gitleaks" {
+			errs = append(errs, &Error{File: file, Key: "redact." + key.Value, Msg: "unknown key (want gitleaks)"})
+			continue
+		}
+		if value.Tag == "!!null" {
+			continue
+		}
+		if value.Kind != yaml.MappingNode {
+			errs = append(errs, &Error{File: file, Key: "redact.gitleaks", Msg: "must be a mapping"})
+			continue
+		}
+		for j := 0; j < len(value.Content); j += 2 {
+			k, v := value.Content[j], value.Content[j+1]
+			switch k.Value {
+			case "enabled":
+				errs = append(errs, decodeValue(v, file, "redact.gitleaks.enabled", &raw.gitleaksEnabled)...)
+			case "path":
+				errs = append(errs, decodeValue(v, file, "redact.gitleaks.path", &raw.gitleaksPath)...)
+			default:
+				errs = append(errs, &Error{File: file, Key: "redact.gitleaks." + k.Value, Msg: "unknown key (want enabled or path)"})
+			}
 		}
 	}
 	return errs

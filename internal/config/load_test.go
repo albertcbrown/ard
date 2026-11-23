@@ -183,6 +183,26 @@ func TestLoadIntake(t *testing.T) {
 	}
 }
 
+func TestLoadRedactGitleaks(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want Gitleaks
+	}{
+		{"absent", "paused: false\n", Gitleaks{Path: "gitleaks"}},
+		{"enabled", "redact: {gitleaks: {enabled: true}}\n", Gitleaks{Enabled: true, Path: "gitleaks"}},
+		{"path", "redact: {gitleaks: {enabled: true, path: /opt/gl}}\n", Gitleaks{Enabled: true, Path: "/opt/gl"}},
+		{"null", "redact:\n", Gitleaks{Path: "gitleaks"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mustLoad(t, withConfig(t, tt.yaml)).Redact.Gitleaks; got != tt.want {
+				t.Errorf("Gitleaks = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadOverrides(t *testing.T) {
 	fsys := withConfig(t, `
 agent: kimi
@@ -574,6 +594,26 @@ func TestLoadErrors(t *testing.T) {
 			name: "bad stale duration",
 			yaml: "stale: {inactive_for: 2x}\n",
 			want: []wantErr{{".ard/config.yaml", "stale.inactive_for", `invalid duration "2x"`}},
+		},
+		{
+			name: "unknown redact key",
+			yaml: "redact: {trufflehog: {}}\n",
+			want: []wantErr{{".ard/config.yaml", "redact.trufflehog", "unknown key"}},
+		},
+		{
+			name: "unknown gitleaks key",
+			yaml: "redact: {gitleaks: {on: true}}\n",
+			want: []wantErr{{".ard/config.yaml", "redact.gitleaks.on", "unknown key"}},
+		},
+		{
+			name: "non-bool gitleaks enabled",
+			yaml: "redact: {gitleaks: {enabled: [1]}}\n",
+			want: []wantErr{{".ard/config.yaml", "redact.gitleaks.enabled", ""}},
+		},
+		{
+			name: "empty gitleaks path",
+			yaml: "redact: {gitleaks: {path: \"\"}}\n",
+			want: []wantErr{{".ard/config.yaml", "redact.gitleaks.path", "must not be empty"}},
 		},
 		{
 			name: "unknown sidecar field",

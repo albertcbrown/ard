@@ -33,6 +33,7 @@ type resolvedYAML struct {
 	Intake          intakeYAML             `yaml:"intake"`
 	ProtectedPaths  []string               `yaml:"protected_paths,omitempty"`
 	Stale           staleYAML              `yaml:"stale"`
+	Redact          redactYAML             `yaml:"redact"`
 	Sidecars        map[string]sidecarYAML `yaml:"sidecars,omitempty"`
 	Roles           []roleYAML             `yaml:"roles,omitempty"`
 }
@@ -53,6 +54,15 @@ type intakeYAML struct {
 type staleYAML struct {
 	InactiveFor Duration `yaml:"inactive_for"`
 	SuppressFor Duration `yaml:"suppress_for"`
+}
+
+type redactYAML struct {
+	Gitleaks gitleaksYAML `yaml:"gitleaks"`
+}
+
+type gitleaksYAML struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
 }
 
 type sidecarYAML struct {
@@ -123,6 +133,7 @@ func (r *Resolved) render() resolvedYAML {
 			InactiveFor: r.Stale.InactiveFor,
 			SuppressFor: r.Stale.SuppressFor,
 		},
+		Redact:   redactYAML{Gitleaks: gitleaksYAML{Enabled: r.Redact.Gitleaks.Enabled, Path: r.Redact.Gitleaks.Path}},
 		Sidecars: map[string]sidecarYAML{},
 	}
 	for name, sc := range r.Sidecars {
