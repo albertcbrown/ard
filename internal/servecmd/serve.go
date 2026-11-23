@@ -288,6 +288,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 			}},
 		},
 		Force: forceOnSecondSignal(ctx),
+		Wake:  wakeSignals(ctx),
 	}, selected...)
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
