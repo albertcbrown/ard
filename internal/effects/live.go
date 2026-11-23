@@ -126,11 +126,12 @@ func (l *Live) MarkReady(ctx context.Context, n int) error {
 	return l.done(ctx, "MarkReady", n, l.w.MarkReady(ctx, n))
 }
 
-func (l *Live) CreateReview(ctx context.Context, n int, in github.ReviewInput) error {
+func (l *Live) CreateReview(ctx context.Context, n int, in github.ReviewInput) (int64, error) {
 	if err := bad("CreateReview", n); err != nil {
-		return err
+		return 0, err
 	}
-	return l.done(ctx, "CreateReview", n, l.w.CreateReview(ctx, n, in),
+	id, err := l.w.CreateReview(ctx, n, in)
+	return id, l.done(ctx, "CreateReview", n, err,
 		"commit", in.CommitSHA, "body_len", len(in.Body), "inline", len(in.Comments))
 }
 

@@ -733,7 +733,7 @@ func (h *HTTP) MarkReady(ctx context.Context, n int) error {
 	return mapErr(fmt.Sprintf("mark PR %d ready", n), h.graphql(ctx, markReadyMutation, map[string]any{"id": pr.NodeID}, nil))
 }
 
-func (h *HTTP) CreateReview(ctx context.Context, n int, in ReviewInput) error {
+func (h *HTTP) CreateReview(ctx context.Context, n int, in ReviewInput) (int64, error) {
 	ev := "COMMENT"
 	req := &gogh.PullRequestReviewRequest{Event: &ev}
 	if in.Body != "" {
@@ -750,8 +750,11 @@ func (h *HTTP) CreateReview(ctx context.Context, n int, in ReviewInput) error {
 		path, line, body := c.Path, c.Line, c.Body
 		req.Comments = append(req.Comments, &gogh.DraftReviewComment{Path: &path, Line: &line, Side: &side, Body: &body})
 	}
-	_, _, err := h.gh.PullRequests.CreateReview(ctx, h.o(), h.r(), n, req)
-	return h.fail(ctx, fmt.Sprintf("create review %d", n), n, err)
+	rv, _, err := h.gh.PullRequests.CreateReview(ctx, h.o(), h.r(), n, req)
+	if err != nil {
+		return 0, h.fail(ctx, fmt.Sprintf("create review %d", n), n, err)
+	}
+	return rv.GetID(), nil
 }
 
 func (h *HTTP) UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) error {

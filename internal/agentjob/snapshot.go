@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/albertcbrown/ard/internal/costblock"
 	"github.com/albertcbrown/ard/internal/github"
 )
 
@@ -20,8 +21,14 @@ const (
 // BodyHash is the hex sha256 of the title and body, which are exactly what
 // Snapshot writes. Comments are not hashed: they are untrusted data from
 // anyone and never admit an issue.
+//
+// The body is hashed without ard's own cost block (costblock.Strip), and
+// Snapshot writes the same stripped body: what the hash ignores is exactly what
+// no agent sees, so text hidden from the admission re-gate can never reach an
+// agent. Strip only removes text that parses as ard's table, and leaves any
+// other body unchanged, so a body without the block hashes as it always did.
 func BodyHash(is github.Issue) string {
-	sum := sha256.Sum256([]byte("title\x00" + is.Title + "\x00body\x00" + is.Body))
+	sum := sha256.Sum256([]byte("title\x00" + is.Title + "\x00body\x00" + costblock.Strip(is.Body)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -42,7 +49,7 @@ func Snapshot(is github.Issue) []byte {
 	var b strings.Builder
 	b.WriteString(UntrustedHeader)
 	fmt.Fprintf(&b, "\nIssue: #%d\nAuthor: %s\nCreated: %s\n", is.Number, is.Author, is.CreatedAt.UTC().Format(time.RFC3339))
-	b.WriteString("\n## Title\n\n" + is.Title + "\n\n## Body\n\n" + clip(is.Body, maxBodyBytes) + "\n")
+	b.WriteString("\n## Title\n\n" + is.Title + "\n\n## Body\n\n" + clip(costblock.Strip(is.Body), maxBodyBytes) + "\n")
 	return []byte(b.String())
 }
 

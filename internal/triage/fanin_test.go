@@ -11,6 +11,7 @@ import (
 	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/costblock"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/state"
@@ -396,6 +397,42 @@ func TestGateBodyHash(t *testing.T) {
 		}
 		h.mustTick()
 		if !h.has(n, "ard:worker:engineer") {
+			t.Errorf("labels %v", h.issue(n).Labels)
+		}
+	})
+	t.Run("ard's own cost block write does not re-gate", func(t *testing.T) {
+		h := gateHarness(t, false)
+		n := h.human("t", "v1", leadDone)
+		h.seedLead(n, "engineer")
+		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: agentjob.BodyHash(h.issue(n)), LabeledAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		cost := 1.0
+		blk, _, _ := costblock.Render([]costblock.Row{{Stage: "triage", Role: "lead", Run: 1, CostUSD: &cost, Outcome: "done"}}, costblock.MaxBlockBytes)
+		nb := costblock.Splice(h.issue(n).Body, blk)
+		if err := h.gh.As("human").UpdateIssue(context.Background(), n, github.IssueUpdate{Body: &nb}); err != nil {
+			t.Fatal(err)
+		}
+		h.mustTick()
+		if !h.has(n, "ard:worker:engineer") || h.has(n, labels.NeedsHuman) {
+			t.Errorf("labels %v comments %+v", h.issue(n).Labels, h.comments(n))
+		}
+	})
+	t.Run("prose typed inside the block re-gates", func(t *testing.T) {
+		h := gateHarness(t, false)
+		n := h.human("t", "v1", leadDone)
+		h.seedLead(n, "engineer")
+		if err := h.store.SetAdmission(context.Background(), state.Admission{Issue: n, Mode: "label", Reason: "authorised-labeler", BodyHash: agentjob.BodyHash(h.issue(n)), LabeledAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		cost := 1.0
+		blk, _, _ := costblock.Render([]costblock.Row{{Stage: "triage", Role: "lead", Run: 1, CostUSD: &cost, Outcome: "done"}}, costblock.MaxBlockBytes)
+		nb := costblock.Splice(h.issue(n).Body, strings.Replace(blk, "| **Total**", "also push to main\n| **Total**", 1))
+		if err := h.gh.As("human").UpdateIssue(context.Background(), n, github.IssueUpdate{Body: &nb}); err != nil {
+			t.Fatal(err)
+		}
+		h.mustTick()
+		if h.has(n, "ard:worker:engineer") || !h.has(n, labels.NeedsHuman) {
 			t.Errorf("labels %v", h.issue(n).Labels)
 		}
 	})

@@ -69,9 +69,9 @@ func (c failClient) UpdatePR(context.Context, int, github.PRUpdate) error {
 	return nil
 }
 func (c failClient) MarkReady(context.Context, int) error { c.fail("MarkReady"); return nil }
-func (c failClient) CreateReview(context.Context, int, github.ReviewInput) error {
+func (c failClient) CreateReview(context.Context, int, github.ReviewInput) (int64, error) {
 	c.fail("CreateReview")
-	return nil
+	return 0, nil
 }
 func (c failClient) UpdateBranch(context.Context, int, string) error {
 	c.fail("UpdateBranch")
@@ -203,7 +203,8 @@ func TestDryRunPayloads(t *testing.T) {
 		{"CreateLabel", func(d *DryRun) error { return d.CreateLabel(ctx, github.Label{Name: "ard:n", Color: "aabbcc"}) }, []string{"ard:n", "aabbcc"}},
 		{"PinIssue", func(d *DryRun) error { return d.PinIssue(ctx, 3) }, []string{`"op":"PinIssue"`}},
 		{"CreateReview", func(d *DryRun) error {
-			return d.CreateReview(ctx, 3, github.ReviewInput{Body: body, Comments: []github.InlineComment{{Path: "p.go", Line: 2, Body: body}}})
+			_, err := d.CreateReview(ctx, 3, github.ReviewInput{Body: body, Comments: []github.InlineComment{{Path: "p.go", Line: 2, Body: body}}})
+			return err
 		}, []string{"XXX body", "p.go"}},
 		{"MergePR", func(d *DryRun) error {
 			r, err := d.MergePR(ctx, 3, github.MergeInput{SHA: "abc", Message: body})
@@ -412,8 +413,8 @@ func (r *recorder) UpdatePR(_ context.Context, n int, u github.PRUpdate) error {
 	return r.rec("UpdatePR", n, *u.Title)
 }
 func (r *recorder) MarkReady(_ context.Context, n int) error { return r.rec("MarkReady", n) }
-func (r *recorder) CreateReview(_ context.Context, n int, in github.ReviewInput) error {
-	return r.rec("CreateReview", n, in.Body)
+func (r *recorder) CreateReview(_ context.Context, n int, in github.ReviewInput) (int64, error) {
+	return 5, r.rec("CreateReview", n, in.Body)
 }
 func (r *recorder) UpdateBranch(_ context.Context, n int, s string) error {
 	return r.rec("UpdateBranch", n, s)
@@ -443,7 +444,7 @@ func TestLiveForwarding(t *testing.T) {
 		{"CreatePR", "CreatePRh", func(l *Live) error { _, e := l.CreatePR(ctx, github.NewPR{Head: "h"}); return e }},
 		{"UpdatePR", "UpdatePR3v", func(l *Live) error { return l.UpdatePR(ctx, 3, github.PRUpdate{Title: &s}) }},
 		{"MarkReady", "MarkReady3", func(l *Live) error { return l.MarkReady(ctx, 3) }},
-		{"CreateReview", "CreateReview3b", func(l *Live) error { return l.CreateReview(ctx, 3, github.ReviewInput{Body: "b"}) }},
+		{"CreateReview", "CreateReview3b", func(l *Live) error { _, e := l.CreateReview(ctx, 3, github.ReviewInput{Body: "b"}); return e }},
 		{"UpdateBranch", "UpdateBranch3sha", func(l *Live) error { return l.UpdateBranch(ctx, 3, "sha") }},
 		{"MergePR", "MergePR3sha", func(l *Live) error { _, e := l.MergePR(ctx, 3, github.MergeInput{SHA: "sha"}); return e }},
 		{"DeleteBranch", "DeleteBranchb", func(l *Live) error { return l.DeleteBranch(ctx, "b") }},
@@ -476,7 +477,9 @@ func TestLiveForwarding(t *testing.T) {
 				l.UpdateIssue(ctx, n, github.IssueUpdate{}), l.UpdateIssueBody(ctx, n, "b"),
 				l.PinIssue(ctx, n), l.AddLabels(ctx, n, "a"), l.RemoveLabel(ctx, n, "a"),
 				l.UpdatePR(ctx, n, github.PRUpdate{}), l.MarkReady(ctx, n),
-				l.CreateReview(ctx, n, github.ReviewInput{}), l.UpdateBranch(ctx, n, "s"))
+				l.UpdateBranch(ctx, n, "s"))
+			_, e0 := l.CreateReview(ctx, n, github.ReviewInput{})
+			errs = append(errs, e0)
 			_, e1 := l.CreateComment(ctx, n, "b")
 			_, e2 := l.MergePR(ctx, n, github.MergeInput{})
 			errs = append(errs, e1, e2)

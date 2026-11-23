@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/costblock"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
@@ -760,4 +761,38 @@ func TestDryRunAdoptedLedgerIssueCountsTowardsMaxOpen(t *testing.T) {
 		t.Fatalf("res = %+v, scans %d: the adopted issue must count towards max_open", res, h.eng.calls)
 	}
 	h.wantRow("ghost", -1, StatusOpen)
+}
+
+func TestScannerRewritesKeepTheCostBlock(t *testing.T) {
+	h := newHarness(t, func(r *config.Role) { r.GroupSize = 3 })
+	h.p.BodyLocks = &costblock.Locks{}
+	h.eng.set(gfnd("a", SevHigh, "g"), gfnd("b", SevLow, "g"))
+	h.mustRun()
+	c := 0.5
+	blk, _, ok := costblock.Render([]costblock.Row{{Stage: "triage", Role: "lead", Run: 1, CostUSD: &c, Outcome: "done"}}, costblock.MaxBlockBytes)
+	if !ok {
+		t.Fatal("render")
+	}
+	nb := costblock.Splice(h.issue(1).Body, blk)
+	if err := h.gh.UpdateIssue(h.ctx, 1, github.IssueUpdate{Body: &nb}); err != nil {
+		t.Fatal(err)
+	}
+	// A join (c is added) keeps the block verbatim, at the end.
+	h.eng.set(gfnd("a", SevHigh, "g"), gfnd("b", SevLow, "g"), gfnd("c", SevLow, "g"))
+	if res := h.mustRun(); res.Joined != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	body := h.issue(1).Body
+	if len(ParseBody(body).Lines) != 3 || !strings.HasSuffix(body, "\n\n"+blk) || strings.Count(body, costblock.Begin) != 1 {
+		t.Fatalf("join lost or moved the block:\n%s", body)
+	}
+	// An edit (a is gone) keeps it too.
+	h.eng.set(gfnd("b", SevLow, "g"), gfnd("c", SevLow, "g"))
+	if res := h.mustRun(); res.Edited != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	body = h.issue(1).Body
+	if !strings.HasSuffix(body, "\n\n"+blk) || strings.Count(body, costblock.Begin) != 1 || !ParseBody(body).Lines[0].Checked {
+		t.Fatalf("edit lost the block:\n%s", body)
+	}
 }

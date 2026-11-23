@@ -148,7 +148,7 @@ type Effects interface {
 	AddLabels(ctx context.Context, n int, labels ...string) error
 	RemoveLabel(ctx context.Context, n int, label string) error
 	CreateComment(ctx context.Context, n int, body string) (github.Comment, error)
-	CreateReview(ctx context.Context, n int, in github.ReviewInput) error
+	CreateReview(ctx context.Context, n int, in github.ReviewInput) (int64, error)
 	DryRun() bool
 }
 
@@ -624,10 +624,10 @@ func (c *Closer) postReview(ctx context.Context, rec *Record) error {
 	}
 	inline := inlineComments(rp)
 	if len(inline) > 0 {
-		err := c.d.Effects.CreateReview(ctx, n, github.ReviewInput{CommitSHA: rp.CommitSHA,
+		rid, err := c.d.Effects.CreateReview(ctx, n, github.ReviewInput{CommitSHA: rp.CommitSHA,
 			Body: RenderReview(*rec, c.d.Repo, dry, false), Comments: inline})
 		if err == nil {
-			rec.ReviewMode = ReviewInline
+			rec.CommentID, rec.ReviewMode = rid, ReviewInline
 			return nil
 		}
 		if !rejected(err) {
@@ -636,9 +636,9 @@ func (c *Closer) postReview(ctx context.Context, rec *Record) error {
 		c.d.log().Warn("closeout.review_inline_rejected", "job", j.ID, "pr", n, "error", err)
 	}
 	body := RenderReview(*rec, c.d.Repo, dry, len(inline) > 0)
-	err := c.d.Effects.CreateReview(ctx, n, github.ReviewInput{CommitSHA: rp.CommitSHA, Body: body})
+	rid, err := c.d.Effects.CreateReview(ctx, n, github.ReviewInput{CommitSHA: rp.CommitSHA, Body: body})
 	if err == nil {
-		rec.ReviewMode = ReviewBody
+		rec.CommentID, rec.ReviewMode = rid, ReviewBody
 		return nil
 	}
 	if !rejected(err) {

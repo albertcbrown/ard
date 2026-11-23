@@ -208,7 +208,7 @@ func TestWritesRequestShapes(t *testing.T) {
 		"POST /repos/o/r/issues/7/labels":      respond(200, `[]`),
 		"POST /repos/o/r/issues/7/comments":    respond(201, `{"id":5,"body":"hi","user":{"login":"ard[bot]"}}`),
 		"POST /repos/o/r/pulls":                respond(201, `{"number":9,"draft":true,"head":{"ref":"b","sha":"s"},"base":{"ref":"main"}}`),
-		"POST /repos/o/r/pulls/9/reviews":      respond(200, `{"id":1}`),
+		"POST /repos/o/r/pulls/9/reviews":      respond(200, `{"id":77}`),
 		"PATCH /repos/o/r/pulls/9":             respond(200, `{"number":9}`),
 		"PUT /repos/o/r/pulls/9/update-branch": respond(202, `{"message":"Updating pull request branch."}`),
 	})
@@ -233,8 +233,8 @@ func TestWritesRequestShapes(t *testing.T) {
 	if err != nil || pr.Number != 9 || !pr.Draft || pr.HeadSHA != "s" || pr.BaseRef != "main" {
 		t.Fatalf("pr: %+v, %v", pr, err)
 	}
-	if err := h.CreateReview(ctx, 9, ReviewInput{CommitSHA: "s", Body: "ok", Comments: []InlineComment{{Path: "a.go", Line: 3, Body: "x"}}}); err != nil {
-		t.Fatal(err)
+	if rid, err := h.CreateReview(ctx, 9, ReviewInput{CommitSHA: "s", Body: "ok", Comments: []InlineComment{{Path: "a.go", Line: 3, Body: "x"}}}); err != nil || rid != 77 {
+		t.Fatal(rid, err)
 	}
 	title := "new"
 	if err := h.UpdatePR(ctx, 9, PRUpdate{Title: &title}); err != nil {

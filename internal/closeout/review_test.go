@@ -9,6 +9,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/state"
 )
 
 func fm(extra string) string {
@@ -300,6 +301,20 @@ func TestCloserPostsOneReview(t *testing.T) {
 	rec, err := decode(e.sjob(j.ID))
 	if err != nil || rec.ReviewMode != ReviewInline {
 		t.Errorf("mode = %q, %v", rec.ReviewMode, err)
+	}
+	// The review's own id is kept, so the cost table can link to it.
+	rs, _ := e.gh.ListReviews(ctx, 9)
+	if len(rs) != 1 || rec.CommentID != rs[0].ID || rec.CommentID == 0 {
+		t.Errorf("record review id = %d, reviews %+v", rec.CommentID, rs)
+	}
+	if f, err := FactsOf(e.sjob(j.ID)); err != nil || f.CommentID != rec.CommentID || f.ReviewMode != ReviewInline || f.Outcome == "" {
+		t.Errorf("facts = %+v, %v", f, err)
+	}
+}
+
+func TestFactsOfNeedsClosed(t *testing.T) {
+	if _, err := FactsOf(state.Job{ID: "x", CloseoutPlan: []byte(`{"Version":1,"Phase":"committed"}`)}); err == nil {
+		t.Error("an unclosed job must be an error")
 	}
 }
 

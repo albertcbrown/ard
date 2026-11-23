@@ -23,6 +23,8 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/configsrc"
 	"github.com/albertcbrown/ard/internal/controller"
+	"github.com/albertcbrown/ard/internal/costblock"
+	"github.com/albertcbrown/ard/internal/costs"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/executor/local"
@@ -260,6 +262,9 @@ type wiring struct {
 	Scanners  *scannerdb.Registry
 	Model     modelauth.Credential           // zero when no model credential is set; see deps.Model
 	Paused    func(ctx context.Context) bool // nil = never paused
+	// bodyLocks serialises issue body read-modify-writes: the scanner pipeline
+	// and the costs loop share it, so they never interleave on one body.
+	bodyLocks costblock.Locks
 	pool      atomic.Pointer[pool.Pool]
 
 	statusIssue atomic.Int64 // the status issue number; 0 until the startup hook has run
@@ -363,7 +368,7 @@ func (w *wiring) Pool() *pool.Pool {
 
 // registerLoops returns the loops to run: the scanners loop (#23), the stale
 // closer (#25), the triage loop (#29), the worker loop (#33), the reviewer loop
-// (#35) and the Reaper (#37) so far. Loops that run jobs build their executor
+// (#35) and the Reaper (#37) and the costs loop (#172) so far. Loops that run jobs build their executor
 // with w.newExecutor(), end jobs through w.finisher() and share w.closer(). The
 // merger loop adds one constructor call here. It is a variable so tests can observe wiring.
 var registerLoops = func(w *wiring) []controller.Loop {
@@ -384,6 +389,8 @@ var registerLoops = func(w *wiring) []controller.Loop {
 	if l := reaperLoop(w); l != nil {
 		loops = append(loops, l)
 	}
+	loops = append(loops, costs.New(costs.Deps{Store: w.Store, Reader: w.Reader, Effects: w.Effects,
+		Repo: w.Repo, Locks: &w.bodyLocks, Log: w.Log}))
 	return loops
 }
 

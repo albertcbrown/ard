@@ -202,13 +202,15 @@ func (d *DryRun) MarkReady(ctx context.Context, n int) error {
 	return err
 }
 
-func (d *DryRun) CreateReview(ctx context.Context, n int, in github.ReviewInput) error {
+func (d *DryRun) CreateReview(ctx context.Context, n int, in github.ReviewInput) (int64, error) {
 	inline := make([]map[string]any, 0, len(in.Comments))
 	for _, c := range in.Comments {
 		inline = append(inline, map[string]any{"path": c.Path, "line": c.Line, "side": c.Side, "body": d.r(c.Body)})
 	}
-	_, err := d.emit(ctx, "CreateReview", num(n), map[string]any{"commit": in.CommitSHA, "body": d.r(in.Body), "comments": inline}, false, nil)
-	return err
+	id, err := d.emit(ctx, "CreateReview", num(n), map[string]any{"commit": in.CommitSHA, "body": d.r(in.Body), "comments": inline}, true, func(id int) map[string]any {
+		return map[string]any{"id": id}
+	})
+	return int64(id), err
 }
 
 func (d *DryRun) UpdateBranch(ctx context.Context, n int, expectedHeadSHA string) error {

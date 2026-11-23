@@ -75,9 +75,9 @@ func (f flakyEffects) CreateComment(ctx context.Context, n int, b string) (githu
 	}
 	return f.inner.CreateComment(ctx, n, b)
 }
-func (f flakyEffects) CreateReview(ctx context.Context, n int, in github.ReviewInput) error {
+func (f flakyEffects) CreateReview(ctx context.Context, n int, in github.ReviewInput) (int64, error) {
 	if err := f.tick(); err != nil {
-		return err
+		return 0, err
 	}
 	return f.inner.CreateReview(ctx, n, in)
 }

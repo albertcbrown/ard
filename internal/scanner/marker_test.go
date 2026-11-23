@@ -2,10 +2,13 @@ package scanner
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/albertcbrown/ard/internal/costblock"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -244,5 +247,37 @@ func TestIssueTitle(t *testing.T) {
 	long := IssueTitle("cve", "", 1, []Item{{F: finding("a", strings.Repeat("é", 400), SevLow, "")}})
 	if len([]rune(long)) > MaxTitleChars {
 		t.Errorf("title not capped: %d", len([]rune(long)))
+	}
+}
+
+func TestRenderBodyKeepsCostBlock(t *testing.T) {
+	c := 1.25
+	blk, _, _ := costblock.Render([]costblock.Row{{Stage: "worker", Role: "engineer", Run: 1, CostUSD: &c, Outcome: "done"}}, costblock.MaxBlockBytes)
+	p := Parsed{Scanner: "cve", Lines: []Line{{Title: "t", Fingerprint: "fp1", Severity: SevHigh}}}
+	prev := costblock.Splice(RenderBody("", p, []Finding{{Fingerprint: "fp1", Title: "t", Severity: SevHigh, Body: "d"}}), blk)
+	// Details trim: a large addition forces trimDetails; the block still ends the body.
+	big := strings.Repeat("x", MaxDetailChars)
+	var add []Finding
+	p2 := p
+	for i := 0; i < 40; i++ {
+		fp := fmt.Sprintf("fp%d", i+2)
+		add = append(add, Finding{Fingerprint: fp, Title: "t", Severity: SevLow, Body: big})
+		p2.Lines = append(p2.Lines, Line{Title: "t", Fingerprint: fp, Severity: SevLow})
+	}
+	for name, got := range map[string]string{
+		"edit": RenderBody(prev, p, nil),
+		"join": RenderBody(prev, p2, add),
+	} {
+		if !strings.HasSuffix(got, "\n\n"+blk) || strings.Count(got, costblock.Begin) != 1 {
+			t.Errorf("%s: block lost or moved:\n%s", name, got)
+		}
+		if rest, _ := costblock.Cut(got); len(rest) > MaxBodyChars || len(got) > costblock.MaxBodyRunes {
+			t.Errorf("%s: body too big: %d", name, len(got))
+		}
+	}
+	// A fake block with prose is not the scanner's to keep or cut: it is just text.
+	fake := "\n\n" + costblock.Begin + "\nprose\n" + costblock.End
+	if got := RenderBody(prev+"x"+fake, p, nil); !strings.Contains(got, "prose") {
+		t.Errorf("fake block dropped:\n%s", got)
 	}
 }

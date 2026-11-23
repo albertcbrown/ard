@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/albertcbrown/ard/internal/costblock"
 )
 
 // Issue body layout. Everything the controller reads back sits between the
@@ -301,8 +303,15 @@ func truncateRunes(s string, n int) string {
 // rewritten from p.Lines. add holds the findings whose details are appended to
 // the details span (the existing blocks stay); when the body would exceed
 // MaxBodyChars the details are trimmed from the end. The checklist is never
-// trimmed: group_size bounds it.
+// trimmed: group_size bounds it. ard's cost block, when prev has a valid one,
+// is cut off before rendering and put back verbatim at the end, so the
+// scanner's rewrite never loses or reorders it.
 func RenderBody(prev string, p Parsed, add []Finding) string {
+	rest, region := costblock.Cut(prev)
+	return renderBody(rest, p, add) + region
+}
+
+func renderBody(prev string, p Parsed, add []Finding) string {
 	fs := findingsSpan(p.Lines)
 	var blocks strings.Builder
 	for _, f := range add {

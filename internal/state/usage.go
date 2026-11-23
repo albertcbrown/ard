@@ -102,6 +102,41 @@ func (s *Store) RecordStepUsage(ctx context.Context, jobID, step string, u StepU
 	return true, nil
 }
 
+// usageRow is one step_usage row.
+type usageRow struct {
+	models         sql.NullString
+	ti, to, tw, tr sql.NullInt64
+	cost           sql.NullFloat64
+}
+
+// add folds one step into u. seen de-duplicates u's models.
+func (u *JobUsage) add(r usageRow, seen map[string]bool) {
+	u.Steps++
+	if r.models.Valid {
+		for _, m := range strings.Split(r.models.String, ",") {
+			if m != "" && !seen[m] {
+				seen[m] = true
+				u.Models = append(u.Models, m)
+			}
+		}
+	}
+	if r.ti.Valid || r.to.Valid || r.tw.Valid || r.tr.Valid {
+		if u.Tokens == nil {
+			u.Tokens = &Tokens{}
+		}
+		u.Tokens.Input += r.ti.Int64
+		u.Tokens.Output += r.to.Int64
+		u.Tokens.CacheWrite += r.tw.Int64
+		u.Tokens.CacheRead += r.tr.Int64
+	}
+	if r.cost.Valid {
+		if u.CostUSD == nil {
+			u.CostUSD = new(float64)
+		}
+		*u.CostUSD += r.cost.Float64
+	}
+}
+
 // JobUsage sums a job's recorded steps. A job with none gives the zero value.
 func (s *Store) JobUsage(ctx context.Context, jobID string) (JobUsage, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT models, tokens_in, tokens_out, tokens_cache_write, tokens_cache_read, cost_usd
@@ -113,40 +148,49 @@ func (s *Store) JobUsage(ctx context.Context, jobID string) (JobUsage, error) {
 	var out JobUsage
 	seen := map[string]bool{}
 	for rows.Next() {
-		var models sql.NullString
-		var ti, to, tw, tr sql.NullInt64
-		var cost sql.NullFloat64
-		if err := rows.Scan(&models, &ti, &to, &tw, &tr, &cost); err != nil {
+		var r usageRow
+		if err := rows.Scan(&r.models, &r.ti, &r.to, &r.tw, &r.tr, &r.cost); err != nil {
 			return JobUsage{}, fmt.Errorf("job usage %s: %w", jobID, err)
 		}
-		out.Steps++
-		if models.Valid {
-			for _, m := range strings.Split(models.String, ",") {
-				if m != "" && !seen[m] {
-					seen[m] = true
-					out.Models = append(out.Models, m)
-				}
-			}
-		}
-		if ti.Valid || to.Valid || tw.Valid || tr.Valid {
-			if out.Tokens == nil {
-				out.Tokens = &Tokens{}
-			}
-			out.Tokens.Input += ti.Int64
-			out.Tokens.Output += to.Int64
-			out.Tokens.CacheWrite += tw.Int64
-			out.Tokens.CacheRead += tr.Int64
-		}
-		if cost.Valid {
-			if out.CostUSD == nil {
-				out.CostUSD = new(float64)
-			}
-			*out.CostUSD += cost.Float64
-		}
+		out.add(r, seen)
 	}
 	if err := rows.Err(); err != nil {
 		return JobUsage{}, fmt.Errorf("job usage %s: %w", jobID, err)
 	}
 	sort.Strings(out.Models)
+	return out, nil
+}
+
+// IssueUsage sums the recorded steps of every non-scanner job of an issue, by
+// job id, in one query. A job with no steps is absent.
+func (s *Store) IssueUsage(ctx context.Context, issue int) (map[string]JobUsage, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT u.job_id, u.models, u.tokens_in, u.tokens_out, u.tokens_cache_write, u.tokens_cache_read, u.cost_usd
+		FROM step_usage u JOIN jobs j ON j.id = u.job_id WHERE j.issue = ? AND j.stage != 'scanner' ORDER BY u.job_id, u.step`, issue)
+	if err != nil {
+		return nil, fmt.Errorf("issue usage %d: %w", issue, err)
+	}
+	defer rows.Close()
+	out := map[string]JobUsage{}
+	seen := map[string]map[string]bool{}
+	for rows.Next() {
+		var id string
+		var r usageRow
+		if err := rows.Scan(&id, &r.models, &r.ti, &r.to, &r.tw, &r.tr, &r.cost); err != nil {
+			return nil, fmt.Errorf("issue usage %d: %w", issue, err)
+		}
+		if seen[id] == nil {
+			seen[id] = map[string]bool{}
+		}
+		u := out[id]
+		u.add(r, seen[id])
+		out[id] = u
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("issue usage %d: %w", issue, err)
+	}
+	for id, u := range out {
+		sort.Strings(u.Models)
+		out[id] = u
+	}
 	return out, nil
 }

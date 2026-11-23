@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/costblock"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
@@ -30,8 +32,12 @@ type Pipeline struct {
 	// Paused reports whether the controller is paused. It is re-checked after
 	// a scan, which can outlast a pause: a paused run files and closes nothing.
 	Paused func(ctx context.Context) bool
-	Log    *slog.Logger
-	Now    func() time.Time
+	// BodyLocks, shared with the costs loop, serialises body read-modify-writes
+	// per issue: editIssue and join hold the issue from their fetch until the
+	// body write is done. nil is a no-op.
+	BodyLocks *costblock.Locks
+	Log       *slog.Logger
+	Now       func() time.Time
 }
 
 // RunResult summarises one run.
@@ -473,6 +479,8 @@ func allChecked(ls []Line) bool {
 }
 
 func (e *execution) editIssue(n int, ed *edit) {
+	release := sync.OnceFunc(e.p.BodyLocks.Lock(n))
+	defer release()
 	cur, ok, err := e.fetch(n)
 	if err != nil {
 		e.fail(err)
@@ -522,6 +530,7 @@ func (e *execution) editIssue(n int, ed *edit) {
 		}
 		e.save(Batch{PutFindings: puts})
 	}
+	release()
 	if !e.role.Autoclose || !allChecked(lines) {
 		return
 	}
@@ -597,6 +606,8 @@ func (e *execution) sortedItems(items []Item) []Item {
 // no longer joinable (so the caller falls back to a new issue) and true when
 // the op is done, even if it failed.
 func (e *execution) join(op GroupOp) bool {
+	release := sync.OnceFunc(e.p.BodyLocks.Lock(op.Join))
+	defer release()
 	cur, ok, err := e.fetch(op.Join)
 	if err != nil {
 		e.fail(err)
@@ -634,7 +645,9 @@ func (e *execution) join(op GroupOp) bool {
 	parsed := cur.Parsed
 	parsed.Lines = append(append([]Line(nil), parsed.Lines...), linesOf(items)...)
 	body := RenderBody(cur.Body, parsed, findingsOf(items))
-	if err := e.p.Effects.UpdateIssueBody(e.ctx, op.Join, body); err != nil {
+	err = e.p.Effects.UpdateIssueBody(e.ctx, op.Join, body)
+	release()
+	if err != nil {
 		e.fail(fmt.Errorf("join issue #%d: %w", op.Join, err))
 		return true
 	}
