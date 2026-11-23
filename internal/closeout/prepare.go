@@ -261,6 +261,13 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 			plan.Tail, plan.TailWithheld = tail, tail == ""
 		}
 	}
+	// 5. The controller's own usage record, for every outcome. It bypasses
+	// checkWrites: no role may write this path.
+	uref, err := stageUsage(stage, j, n, plan, d.now())
+	if err != nil {
+		return Record{}, err
+	}
+	files = append(files, uref)
 	sort.SliceStable(files, func(a, b int) bool { return files[a].Path < files[b].Path })
 	plan.Files = files
 	plan.ExtraLogPaths = extraPaths

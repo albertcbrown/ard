@@ -42,6 +42,12 @@ type step struct {
 	res agent.Result
 }
 
+// stepUsage is the usage one agent step reported, keyed by its executor job id.
+type stepUsage struct {
+	step string
+	u    state.StepUsage
+}
+
 // job is the state of one claimed worker job while its watcher runs.
 type job struct {
 	l    *Loop
@@ -63,8 +69,8 @@ type job struct {
 	final     step              // the latest agent step: close-out reads its worktree
 	live      []executor.Handle // agent steps whose worktrees still exist
 	agentLogs []string          // logs of the agent steps that completed
-	cost      float64
-	hasCost   bool
+	cost      float64           // spent so far, for max_budget_usd
+	usage     []stepUsage       // what each agent step reported, re-recorded at finish
 
 	summary  string // redacted summary of the latest role file
 	withheld bool
@@ -248,9 +254,12 @@ func (jb *job) agentStep(ctx context.Context, id, ref string, extra []executor.F
 		jb.finishWithPR(ctx, s, "", *cause)
 		return step{}, false
 	}
+	if u, ok := reaper.StepUsageOf(s.res); ok && s.h.JobID != "" {
+		jb.usage = append(jb.usage, stepUsage{s.h.JobID, u})
+		jb.recordUsage(ctx, jb.usage[len(jb.usage)-1])
+	}
 	if s.res.CostUSD != nil {
 		jb.cost += *s.res.CostUSD
-		jb.hasCost = true
 	} else {
 		jb.log.Warn("worker.no_cost_reported", "step", id)
 	}
@@ -766,11 +775,12 @@ func (jb *job) finish(ctx context.Context, s step, w *closeout.WorkerResult, cau
 			extra = append(extra, p)
 		}
 	}
-	res := s.res
-	if jb.hasCost {
-		c := jb.cost
-		res.CostUSD = &c
+	// Re-record every agent step: idempotent, and it repairs a step whose
+	// earlier write failed. The Finisher then reads the job's totals from state.
+	for _, su := range jb.usage {
+		jb.recordUsage(ctx, su)
 	}
+	res := s.res
 	if s.h.JobID != "" {
 		agentjob.SaveHandle(ctx, d.Store, jb.log, jb.sj.ID, s.h)
 	}
@@ -781,6 +791,14 @@ func (jb *job) finish(ctx context.Context, s step, w *closeout.WorkerResult, cau
 		return
 	}
 	jb.log.Info("worker.closeout", "outcome", string(out))
+}
+
+// recordUsage stores one step's usage. A failure is logged: accounting never
+// stops a job.
+func (jb *job) recordUsage(ctx context.Context, su stepUsage) {
+	if _, err := jb.l.d.Store.RecordStepUsage(ctx, jb.sj.ID, su.step, su.u); err != nil {
+		jb.log.Warn("worker.usage_record_failed", "step", su.step, "error", err)
+	}
 }
 
 // oneLine keeps a configured command on one line for the log header.

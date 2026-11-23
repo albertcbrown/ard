@@ -14,9 +14,14 @@ import (
 	"github.com/albertcbrown/ard/internal/redact"
 )
 
+// paths lists the agent-visible files of a plan: the controller's own usage
+// record (.ard/<n>/costs/) is left out, see usageOnly.
 func paths(p Plan) []string {
 	var out []string
 	for _, f := range p.Files {
+		if strings.Contains(f.Path, "/costs/") {
+			continue
+		}
 		s := f.Path
 		if f.Delete {
 			s += " (delete)"
@@ -264,7 +269,7 @@ func TestPrepareScannerDownCommitsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.Plan.Files) != 0 || rec.Plan.Outcome != OutcomeNeedsHuman || !rec.Plan.LogWithheld {
+	if len(paths(rec.Plan)) != 0 || rec.Plan.Outcome != OutcomeNeedsHuman || !rec.Plan.LogWithheld {
 		t.Errorf("plan = %+v", rec.Plan)
 	}
 }
