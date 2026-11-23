@@ -349,3 +349,39 @@ func TestSuccessResetsBackoff(t *testing.T) {
 		t.Errorf("succeeded = %v", fl.succeeded)
 	}
 }
+
+// A test step (<id>t<k>) runs agent-written code. A usage-limit line it prints
+// must not be trusted as the CLI's own: no limit is recorded, so the account is
+// not blocked, and the job is not a limit stop. The same output on the job's own
+// agent step does record the limit.
+func TestUsageLimitIgnoredOnTestStep(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		suffix string
+		want   bool
+	}{
+		{"test step", "t1", false},
+		{"agent step", "", true},
+		{"fix step", "f1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			fl := &fakeLimits{}
+			h.limits = fl
+			h.classify = UsageLimitClassifier(agent.AuthOAuthToken)
+			h.rebuild()
+			sj, hd := h.startJob(207, withStatus(executor.Status{State: executor.Exited, ExitCode: 1}))
+			hd.JobID = sj.ID + tc.suffix
+			res := fixtureResult(t, "synthetic_limit_rejected_event.jsonl", 1)
+			if _, err := h.fin.Finish(context.Background(), sj.ID, hd, executor.Status{State: executor.Exited, ExitCode: 1}, res, closeout.Cause{}); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(fl.exhausted) > 0; got != tc.want {
+				t.Errorf("limit recorded = %v, want %v", got, tc.want)
+			}
+			if got := h.job(sj.ID).LimitStop; got != tc.want {
+				t.Errorf("LimitStop = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
