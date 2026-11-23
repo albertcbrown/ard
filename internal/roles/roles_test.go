@@ -29,7 +29,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/lint/Dockerfile", "scanners/lint/normalize.jq", "scanners/lint/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
+	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/lint/Dockerfile", "scanners/lint/normalize.jq", "scanners/lint/scan", "scanners/trufflehog/Dockerfile", "scanners/trufflehog/exclude-paths", "scanners/trufflehog/findings.jq", "scanners/trufflehog/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
@@ -43,7 +43,7 @@ func TestFSContents(t *testing.T) {
 // embed.FS reports 0444 for everything, so the exec bit must be checked on disk
 // to catch a mode lost in git.
 func TestScanIsExecutableOnDisk(t *testing.T) {
-	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/lint/scan"} {
+	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/lint/scan", "scanners/trufflehog/scan"} {
 		fi, err := os.Stat(p)
 		if err != nil {
 			t.Fatal(err)
@@ -191,4 +191,30 @@ func starterFS(t *testing.T, chmod bool) fstest.MapFS {
 		t.Fatal(err)
 	}
 	return m
+}
+
+func TestEmbeddedTrufflehogRoleLoadsAsScanner(t *testing.T) {
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
+	if err != nil {
+		t.Fatalf("LoadFS: %v", err)
+	}
+	for _, r := range res.Roles {
+		if r.Kind != config.KindScanner || r.Name != "trufflehog" {
+			continue
+		}
+		if r.ScanPath != ".ard/scanners/trufflehog/scan" || !r.Autoclose || r.Every != 24*time.Hour || r.GroupSize != 1 || r.MaxOpen != 5 || r.Timeout != 30*time.Minute {
+			t.Errorf("unexpected role: %+v", r)
+		}
+		if r.Route != config.RouteNeedsHuman {
+			t.Errorf("Route = %v, want needs-human", r.Route)
+		}
+		if r.Dockerfile != ".ard/scanners/trufflehog/Dockerfile" {
+			t.Errorf("Dockerfile = %q", r.Dockerfile)
+		}
+		if !slices.Equal(r.Extra, []string{"exclude-paths", "findings.jq"}) {
+			t.Errorf("Extra = %v, want [exclude-paths findings.jq]", r.Extra)
+		}
+		return
+	}
+	t.Fatal("no scanner role trufflehog")
 }

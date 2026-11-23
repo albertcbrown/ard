@@ -26,10 +26,16 @@ func scannerLoop(w *wiring) controller.Loop {
 		Repo:     w.Repo.String(), RepoDir: w.Root,
 		Log: w.Log,
 	})
-	return scanner.NewLoop(&scanner.Pipeline{
+	return scanner.NewLoop(scannerPipeline(w, lc, eng))
+}
+
+// scannerPipeline builds the pipeline the scanners loop runs.
+func scannerPipeline(w *wiring, lc scanner.Committer, eng scanner.Engine) *scanner.Pipeline {
+	return &scanner.Pipeline{
 		Reader: w.Reader, Effects: w.Effects, Committer: lc, Engine: eng,
 		Stores: scanner.RegistryStores(w.Scanners), Repo: w.Repo.String(), Log: w.Log, Paused: w.Paused, BodyLocks: &w.bodyLocks,
-	})
+		StatusIssue: func() int { return int(w.statusIssue.Load()) },
+	}
 }
 
 // repoWorkDir is ~/.ard/work/<owner>/<repo>: the local executor's job
