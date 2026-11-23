@@ -8,16 +8,15 @@ findings:
     line: 2
     severity: info
     message: |
-      The header says the pins are still "verification pending human".
-      The Docker build, `make lint-scanner-fixtures` and the Docker integration test were not run, as the worker's report says. A human must build the image and regenerate the fixtures before merge, as the issue's plan requires.
-  - file: "CLAUDE.md"
-    severity: info
-    message: |
-      The plan asked for a CLAUDE.md Layout update. The worker updated docs/layout.md instead, because the Layout section now points there. This is a reasonable deviation.
+      The header still says the pins are "verification pending human". The Docker build, `make lint-scanner-fixtures` and the Docker integration test were not run here. A human must build the image and regenerate the fixtures before merge.
 ---
-The change follows plan.md: scan, normalize.jq, Dockerfile, starter config, protected paths, init body bullet, docs and fixtures are all present. The forced golangci-lint flags, the fail-closed paths and the stubbed-scan tests cover the risky logic. Approved. A human still has to do the Docker pin check.
+The change follows plan.md and the build, vet and tests pass on the merged head. The only change since the last round is the merge of main, which kept both the lint scanner and the new triage roles. Approved.
 
 ## Checks
-- Lint: `make lint` fails only on `internal/roles/testdata/docs/skips/src/_x.go`, a file this change does not touch. `go vet ./...` is clean.
-- Tests: `go test ./internal/roles/ ./internal/initcmd/` passes. The new Go code is test files only, so the roles package reports no statements. initcmd coverage is 80.8%.
-- Diff coverage: the shell and jq code is exercised by the golden tests and the stubbed-scan tests. I did not run the integration-tagged tests or any Docker check.
+- Lint: `make lint` fails only on `internal/roles/testdata/docs/skips/src/_x.go`, a file this change does not touch. `go build ./...` and `go vet ./...` are clean.
+- Tests: `go test ./internal/roles/ ./internal/initcmd/` passes.
+- Diff coverage: the added code is shell and jq plus test files, exercised by the golden and stubbed-scan tests. I did not run the integration-tagged tests or any Docker check.
+
+## Previous findings
+- internal/roles/scanners/lint/Dockerfile: still present (info; the human Docker pin check is still needed).
+- CLAUDE.md: no longer applicable (the docs/layout.md deviation is reasonable; info only).
