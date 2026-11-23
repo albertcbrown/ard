@@ -459,7 +459,11 @@ flowchart LR
     P0["Phase 0: Skeleton<br/>controller and config<br/>label bootstrap<br/>committer, local executor<br/>cve and stale scanners<br/>dry-run mode"] -->|"Gate 1: 1 week dry-run, 0 duplicate issues"| P1["Phase 1: First loop<br/>lead + engineer triage<br/>engineer worker<br/>eng-review<br/>Reaper<br/>human approval gate"]
     P1 -->|"Gate 2: 10 merged PRs, failures under 10%"| P2["Phase 2: All roles<br/>all triage roles<br/>all four reviewers<br/>review fix rounds<br/>merger loop<br/>remaining scanners"]
     P2 -->|"Gate 3: 50% merged with no human code edits"| P3["Phase 3: Scale<br/>k8s executor<br/>second repo<br/>shared roles repo<br/>budgets and digest"]
+    P3 --> P4["Phase 4: Docs and site<br/>user documentation<br/>GitHub Pages site"]
+    P4 --> P5["Phase 5: Distribution<br/>versioned releases<br/>Homebrew cask"]
 ```
+
+Phases 4 and 5 have no gate: Phase 4 ([#178](https://github.com/albertcbrown/ard/issues/178)) writes the user documentation and publishes it as a GitHub Pages site, and Phase 5 ([#177](https://github.com/albertcbrown/ard/issues/177)) publishes versioned releases and a Homebrew cask (`brew install --cask albertcbrown/tap/ard`).
 
 **Where it runs (decided, #5; amended for the soak, [#144](https://github.com/albertcbrown/ard/issues/144)).** `ard serve` runs live on the owner's Mac with the local executor until Phase 3, when it moves to the "spark" Kubernetes cluster with the k8s executor and a Lease lock in place of the `flock`. The Gate 1 soak week does not run on the Mac: it runs on spark as `ard serve --dry-run` (one pod, `Recreate`, state on a persistent volume), and the week counts from the first healthy pod; no other `ard serve` for the same repo runs meanwhile, so one ledger is counted. See Delivery. ard supports macOS and Linux only; Windows is unsupported.
 
