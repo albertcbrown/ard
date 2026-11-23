@@ -162,6 +162,9 @@ func TestExecEngineScan(t *testing.T) {
 	if !j.TrustedInput {
 		t.Errorf("a deterministic scan must be marked TrustedInput: %+v", j)
 	}
+	if j.History {
+		t.Errorf("a role without a history marker must not get history: %+v", j)
+	}
 	if f.ex.cmd.Path != "/role/scan" || len(f.ex.cmd.Env) != 0 || len(f.ex.cmd.Fixed) != 0 {
 		t.Errorf("command = %+v: no env of any kind may reach a scan", f.ex.cmd)
 	}
@@ -285,5 +288,17 @@ func TestExecEngineShutdownCleansUp(t *testing.T) {
 	f.assertReleased(t)
 	if f.ex.cleaned != 1 || len(f.jobs.failed) != 1 {
 		t.Errorf("cleanup %d, jobs %+v", f.ex.cleaned, f.jobs)
+	}
+}
+
+func TestExecEngineScanHistory(t *testing.T) {
+	f := newEngineFixture()
+	role := scannerRole("trufflehog-history")
+	role.Extra = []string{"history"}
+	if _, err := f.eng.Scan(tctx(t), f.cfg, role, time.Unix(500, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ex.job.History {
+		t.Errorf("job = %+v, want History", f.ex.job)
 	}
 }

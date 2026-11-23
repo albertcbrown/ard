@@ -163,6 +163,22 @@ type Role struct {
 // does not. A scanner without ScanPath counts as LLM, so the check fails closed.
 func (r Role) ReadsUntrusted() bool { return r.Kind != KindScanner || r.LLMScanner() }
 
+// ReadsHistory reports whether the role's job gets a read-only mount of the
+// repository's git history: a deterministic scanner whose directory holds a
+// file named history. Only the role directory (a reviewed path) can grant it;
+// there is no config key, so an override cannot.
+func (r Role) ReadsHistory() bool {
+	if r.Kind != KindScanner || r.ScanPath == "" {
+		return false
+	}
+	for _, e := range r.Extra {
+		if e == "history" {
+			return true
+		}
+	}
+	return false
+}
+
 // LLMScanner reports whether the role is a scanner run by an agent from
 // prompt.txt rather than by a scan executable.
 func (r Role) LLMScanner() bool { return r.Kind == KindScanner && r.ScanPath == "" }

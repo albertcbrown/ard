@@ -7,11 +7,11 @@ package roles
 import "embed"
 
 // FS is the starter .ard/ tree `ard init` proposes: config.yaml plus the role
-// directories (scanners/cve, scanners/docs, scanners/error-codes, scanners/lint, scanners/trufflehog, triage/lead, triage/engineer, triage/product-manager, triage/architect, triage/designer, triage/documentation-planner, workers/engineer, reviewers/eng-review, reviewers/license-review, reviewers/product-manager-review and reviewers/security-review); paths are relative to .ard/.
+// directories (scanners/cve, scanners/docs, scanners/error-codes, scanners/lint, scanners/trufflehog, scanners/trufflehog-history, triage/lead, triage/engineer, triage/product-manager, triage/architect, triage/designer, triage/documentation-planner, workers/engineer, reviewers/eng-review, reviewers/license-review, reviewers/product-manager-review and reviewers/security-review); paths are relative to .ard/.
 //
 // scanners/missing-tests is left out until its scan driver exists; re-add it when wiring it in.
 //
-//go:embed config.yaml reviewers scanners/cve scanners/docs scanners/error-codes scanners/lint scanners/trufflehog triage workers
+//go:embed config.yaml reviewers scanners/cve scanners/docs scanners/error-codes scanners/lint scanners/trufflehog scanners/trufflehog-history triage workers
 var FS embed.FS
 
 // ExecutableNames lists base names that must be written 0755.

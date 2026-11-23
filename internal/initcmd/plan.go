@@ -50,6 +50,8 @@ func starter() ([]committer.InitFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read starter files: %w", err)
 	}
+	// WalkDir sorts by entry name, so "trufflehog/" would precede "trufflehog-history/".
+	slices.SortFunc(files, func(a, b committer.InitFile) int { return strings.Compare(a.Path, b.Path) })
 	return files, nil
 }
 

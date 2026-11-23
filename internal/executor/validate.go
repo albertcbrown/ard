@@ -38,6 +38,8 @@ func (j Job) Validate() error {
 		return bad("ref %q", j.Ref)
 	case j.TrustedInput && j.Stage != "scanner":
 		return bad("trusted input is only valid for a scanner job")
+	case j.History && j.Stage != "scanner":
+		return bad("history is only valid for a scanner job")
 	case j.Timeout <= 0:
 		return bad("timeout %s", j.Timeout)
 	}

@@ -116,6 +116,8 @@ func TestRunArgv(t *testing.T) {
 			[]string{"-i", "/sidecar:ro", "/work:ro"}},
 		{"sidecar", func(h *executor.Handle) { h.SidecarDir = "/sc"; h.View.Sidecar = "/sidecar" }, false,
 			[]string{"/sc:/sidecar:ro", "ARD_SIDECAR=/sidecar"}, nil},
+		{"history", func(h *executor.Handle) { h.HistoryDir = "/bare"; h.View.History = "/history" }, false,
+			[]string{"/bare:/history:ro", "ARD_HISTORY=/history", "GIT_CONFIG_KEY_0=safe.directory"}, []string{"/bare:/history"}},
 		{"readonly", func(h *executor.Handle) { h.ReadOnly = true }, false,
 			[]string{"/root-secret/work/o-r/J1:/work:ro"}, nil},
 		{"stdin", func(*executor.Handle) {}, true, []string{"-i"}, nil},
