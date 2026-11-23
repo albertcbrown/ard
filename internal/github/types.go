@@ -152,6 +152,18 @@ func (p Permission) AtLeastTriage() bool {
 	return false
 }
 
+// AtLeastWrite reports whether the user can push to and merge on the repo
+// (role write, maintain or admin). A triage user cannot.
+func (p Permission) AtLeastWrite() bool {
+	switch p.Role {
+	case "admin", "maintain", "write":
+		return true
+	case "":
+		return p.Level == "admin" || p.Level == "write"
+	}
+	return false
+}
+
 // AuthKind says how the client authenticates.
 type AuthKind string
 
@@ -241,6 +253,10 @@ type RequiredCheck struct {
 type RequiredChecksResult struct {
 	Available bool
 	Checks    []RequiredCheck // union over every required_status_checks rule, deduped, sorted
+	// Unevaluated names rule types that apply to the branch and gate merges
+	// but that the client does not turn into checks (workflows, code_scanning,
+	// required_deployments), sorted. Callers should warn: nothing evaluates them.
+	Unevaluated []string
 }
 
 // CheckRun is the latest run of one check on a commit.

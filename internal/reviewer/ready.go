@@ -2,13 +2,12 @@ package reviewer
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
-	"github.com/albertcbrown/ard/internal/state"
+	"github.com/albertcbrown/ard/internal/prgate"
 )
 
 // sweepReady re-checks the open draft worker PRs, so a PR whose last review
@@ -49,35 +48,25 @@ func (t *tick) maybeReady(ctx context.Context, prNumber int) {
 	if pr.State != github.StateOpen || pr.Merged || !pr.Draft || !strings.EqualFold(pr.Author, t.self) || pr.BaseRef != "main" {
 		return
 	}
-	_, issue, ok := parseWorkerBranch(pr.HeadRef)
+	_, issue, ok := prgate.ParseWorkerBranch(pr.HeadRef)
 	if !ok {
 		return
 	}
-	if hasAny(pr.Labels, []string{labels.NeedsHuman, labels.Hold, labels.TestsFailed, labels.ExecutorFailed}) {
-		return
-	}
-	var requested []string
+	var roleNames []string
 	for _, role := range t.cfg.RolesOf(config.KindReviewer) {
-		if !hasLabel(pr.Labels, labels.Request(labels.StageReview, role.Name)) {
-			continue
-		}
-		if !hasLabel(pr.Labels, labels.Done(labels.StageReview, role.Name)) ||
-			hasLabel(pr.Labels, labels.Changes(role.Name)) ||
-			hasLabel(pr.Labels, labels.Running(labels.StageReview, role.Name)) {
-			return
-		}
-		requested = append(requested, role.Name)
+		roleNames = append(roleNames, role.Name)
 	}
-	if len(requested) == 0 {
+	v := prgate.Labels(pr.Labels, roleNames)
+	if !v.OK {
 		return
 	}
-	reviewed, err := t.reviewedHeads(ctx, issue, requested)
+	reviewed, err := prgate.ReviewedHeads(ctx, d.Store, issue, v.Roles)
 	if err != nil {
 		t.log.Warn("review.ready_check_failed", "pr", prNumber, "step", "events", "error", err)
 		return
 	}
 	var fetched bool
-	for _, role := range requested {
+	for _, role := range v.Roles {
 		head := reviewed[role]
 		if head == "" {
 			t.log.Debug("review.ready_head_unknown", "pr", prNumber, "role", role)
@@ -94,12 +83,12 @@ func (t *tick) maybeReady(ctx context.Context, prNumber int) {
 			}
 			fetched = true
 		}
-		changed, err := d.Git.CodeChanged(ctx, d.RepoDir, head, pr.HeadSHA, issueDir(issue))
+		covered, _, err := prgate.Covers(ctx, d.Git, d.RepoDir, head, pr.HeadSHA, "")
 		if err != nil {
 			t.log.Warn("review.ready_check_failed", "pr", prNumber, "step", "diff", "error", err)
 			return
 		}
-		if len(changed) > 0 {
+		if !covered {
 			t.log.Debug("review.ready_head_moved", "pr", prNumber, "role", role)
 			return
 		}
@@ -113,29 +102,4 @@ func (t *tick) maybeReady(ctx context.Context, prNumber int) {
 		return
 	}
 	t.log.Info("review.marked_ready", "pr", prNumber, "issue", issue, "head", pr.HeadSHA)
-}
-
-// reviewedHeads returns, per role, the head recorded by its newest claim.
-func (t *tick) reviewedHeads(ctx context.Context, issue int, roles []string) (map[string]string, error) {
-	evs, err := t.l.d.Store.Events(ctx, state.EventFilter{Kind: state.EventClaim})
-	if err != nil {
-		return nil, err
-	}
-	want := map[string]bool{}
-	for _, r := range roles {
-		want[r] = true
-	}
-	out := map[string]string{}
-	for _, e := range evs { // ascending: later claims overwrite
-		if e.Issue != issue || e.Stage != stageReview || !want[e.Role] {
-			continue
-		}
-		var data struct {
-			Head string `json:"head"`
-		}
-		if json.Unmarshal(e.Data, &data) == nil && data.Head != "" {
-			out[e.Role] = data.Head
-		}
-	}
-	return out, nil
 }

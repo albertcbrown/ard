@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const maxSummaryRunes = 72
@@ -46,4 +47,41 @@ func Message(stage, role string, issue int, summary, jobID string, skipCI bool) 
 		msg += "\n\nArd-Job: " + jobID
 	}
 	return msg, nil
+}
+
+// SquashMessage builds the squash-merge commit of PR pr: the PR title cleaned
+// as CodeMessage cleans a title (whitespace and control characters collapse,
+// skip-CI tokens are defused, closing references neutralised, cut to 72 runes
+// with the suffix) plus " (#<pr>)", and one "Ard-Job: <id>" trailer line per
+// job id. The PR title is untrusted. It is ErrInvalid when the title is empty
+// after cleaning, pr <= 0, there is no job id or any id is not a ULID.
+func SquashMessage(prTitle string, pr int, jobIDs []string) (title, message string, err error) {
+	switch {
+	case pr <= 0:
+		return "", "", fmt.Errorf("%w: pr must be positive", ErrInvalid)
+	case len(jobIDs) == 0:
+		return "", "", fmt.Errorf("%w: no job id", ErrInvalid)
+	}
+	for _, id := range jobIDs {
+		if !jobRe.MatchString(id) {
+			return "", "", fmt.Errorf("%w: bad job id", ErrInvalid)
+		}
+	}
+	t := strings.Join(strings.FieldsFunc(prTitle, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	}), " ")
+	t = NeutraliseRefs(defuseSkip(t))
+	if t == "" {
+		return "", "", fmt.Errorf("%w: empty title", ErrInvalid)
+	}
+	suffix := fmt.Sprintf(" (#%d)", pr)
+	if avail := maxSummaryRunes - utf8.RuneCountInString(suffix); utf8.RuneCountInString(t) > avail {
+		t = strings.TrimSpace(string([]rune(t)[:avail-1])) + "…"
+	}
+	title = t + suffix
+	lines := make([]string, len(jobIDs))
+	for i, id := range jobIDs {
+		lines[i] = "Ard-Job: " + id
+	}
+	return title, strings.Join(lines, "\n"), nil
 }

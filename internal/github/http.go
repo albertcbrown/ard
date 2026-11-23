@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -649,6 +650,7 @@ func rulesUnavailable(err error) bool {
 func (h *HTTP) RequiredChecks(ctx context.Context, branch string) (RequiredChecksResult, error) {
 	opts := &gogh.ListOptions{PerPage: 100}
 	failedPage := 0
+	unevaluated := map[string]bool{}
 	items, err := paginate(0, func(page int) ([]RequiredCheck, int, error) {
 		opts.Page = page
 		rules, resp, err := h.gh.Repositories.ListRulesForBranch(ctx, h.o(), h.r(), branch, opts)
@@ -658,6 +660,15 @@ func (h *HTTP) RequiredChecks(ctx context.Context, branch string) (RequiredCheck
 		}
 		var out []RequiredCheck
 		if rules != nil {
+			if len(rules.Workflows) > 0 {
+				unevaluated["workflows"] = true
+			}
+			if len(rules.CodeScanning) > 0 {
+				unevaluated["code_scanning"] = true
+			}
+			if len(rules.RequiredDeployments) > 0 {
+				unevaluated["required_deployments"] = true
+			}
 			for _, rule := range rules.RequiredStatusChecks {
 				if rule == nil {
 					continue
@@ -680,7 +691,12 @@ func (h *HTTP) RequiredChecks(ctx context.Context, branch string) (RequiredCheck
 		}
 		return RequiredChecksResult{}, err
 	}
-	return RequiredChecksResult{Available: true, Checks: normalizeChecks(items)}, nil
+	res := RequiredChecksResult{Available: true, Checks: normalizeChecks(items)}
+	for k := range unevaluated {
+		res.Unevaluated = append(res.Unevaluated, k)
+	}
+	sort.Strings(res.Unevaluated)
+	return res, nil
 }
 
 func (h *HTTP) ListCheckRuns(ctx context.Context, sha string) ([]CheckRun, error) {

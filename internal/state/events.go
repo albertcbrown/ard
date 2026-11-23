@@ -26,6 +26,8 @@ const (
 	EventHostUntrusted = "host_untrusted"
 	// EventGate: the triage fan-in gate acted; data has verdict, reason and worker.
 	EventGate = "gate"
+	// EventMerge: the merger squash-merged a PR; data has pr, head and merge_sha.
+	EventMerge = "merge"
 )
 
 // Event is one row of the append-only event log. Data holds structured fields
