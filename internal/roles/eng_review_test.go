@@ -84,7 +84,7 @@ func TestEngReviewPromptShape(t *testing.T) {
 		fmt.Sprintf("At most %d findings", closeout.MaxFindings), "300 characters", "2,000 characters",
 		"message: |", "in double quotes", "blocking: true or false", "Never approve with a blocking finding",
 		"inline comments", "1 MiB",
-		"## Checks", "Lint:", "Diff coverage", "mktemp -d",
+		"## Checks", "Lint:", "lint entry point", "make lint", "own choosing", "no repository lint entry point", "Diff coverage", "mktemp -d",
 		"git push", "gh or any other command", "next key", "worker key", "environment variable",
 	} {
 		if !strings.Contains(p, want) {

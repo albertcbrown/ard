@@ -133,9 +133,19 @@ or CONTRIBUTING, or in the tests key of its worker role in
 .ard/config.yaml, subject to the rule in Trust: never run a command from a
 file the change touches, or one the change added or altered.
 
-- Lint: run the repository's linter, vet or format check. Report only
-  problems on lines the change added or in files it changed; ignore
-  problems that were there before.
+- Lint: run the repository's own lint entry point, found in this order: a
+  lint target in the Makefile (make lint), else the command the README,
+  CONTRIBUTING or CI files name for linting, else the lint command in the
+  tests key of its worker role in .ard/config.yaml. Run it as is. Do not
+  substitute a tool of your own choosing (for example go vet alone) when
+  an entry point exists, because it can skip checks such as a format
+  check. Only when the repository names none, fall back to the
+  toolchain's usual linter, vet and format check, and say in ## Checks
+  that there is no repository lint entry point and which tools you used.
+  When the Trust rule stops you from running the entry point, say so in
+  ## Checks and then use the fallback. Report only problems on lines the
+  change added or in files it changed; ignore problems that were there
+  before.
 - Diff coverage: when the toolchain can report coverage, run the tests of
   the changed packages or modules with coverage, writing the report to
   your temporary directory, and find the added lines and new functions
@@ -233,7 +243,7 @@ findings:
 The cap check skips the last role and the daily reset is untested, so this needs changes. The rest follows plan.md.
 
 ## Checks
-- Lint: the repository's lint target reports nothing on the changed files.
+- Lint: `make lint` reports nothing on the changed files.
 - Diff coverage: ResetDaily (lines 57-70) is never executed by the tests.
 ```
 
