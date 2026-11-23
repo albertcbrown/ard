@@ -213,6 +213,9 @@ func TestEnvScrubbed(t *testing.T) {
 			t.Errorf("missing %s", n)
 		}
 	}
+	if got["GOFLAGS"] != "-modcacherw" {
+		t.Errorf("GOFLAGS %q, want -modcacherw", got["GOFLAGS"])
+	}
 	if got["HOME"] != h.Home {
 		t.Errorf("HOME %q", got["HOME"])
 	}

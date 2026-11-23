@@ -79,6 +79,34 @@ func TestCleanupRemovesConfigDir(t *testing.T) {
 	}
 }
 
+// TestCleanupReadOnlyHome: Go's module cache is read-only (0555 dirs, 0444
+// files), so a plain RemoveAll of the job home fails. Cleanup must remove it.
+func TestCleanupReadOnlyHome(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	h, _ := f.run(t, f.job(time.Minute), agent(t, "ok"))
+	mod := filepath.Join(h.Home, "go", "pkg", "mod", "example.com", "m@v1.0.0")
+	if err := os.MkdirAll(filepath.Join(mod, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(mod, "go.mod"), filepath.Join(mod, "sub", "x.go")} {
+		if err := os.WriteFile(p, []byte("x"), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, d := range []string{filepath.Join(mod, "sub"), mod, filepath.Dir(mod)} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.l.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if _, err := os.Lstat(h.Home); !os.IsNotExist(err) {
+		t.Errorf("job home remains: %v", err)
+	}
+}
+
 func TestStartConfigDirChecks(t *testing.T) {
 	tests := []struct {
 		name  string
