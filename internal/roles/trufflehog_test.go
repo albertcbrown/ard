@@ -33,6 +33,9 @@ type thLine map[string]any
 
 func thResultLine(raw, det, file string, line int) thLine {
 	return thLine{"DetectorName": det, "Raw": raw, "RawV2": "v2-marker", "Redacted": "redacted-marker",
+		"SecretParts": []string{"parts-marker"}, "ExtraData": map[string]any{"k": "extra-marker"},
+		"StructuredData": map[string]any{"k": "structured-marker"}, "VerificationError": "verr-marker",
+		"repository":     "repo-marker",
 		"SourceMetadata": map[string]any{"Data": map[string]any{"Filesystem": map[string]any{"file": file, "line": line}}}}
 }
 
@@ -154,7 +157,7 @@ func TestTrufflehogAggregatesAndFingerprints(t *testing.T) {
 			t.Errorf("body lacks %q", s)
 		}
 	}
-	for _, leak := range []string{"canary-raw", "v2-marker", "redacted-marker"} {
+	for _, leak := range []string{"canary-raw", "v2-marker", "redacted-marker", "parts-marker", "extra-marker", "structured-marker", "verr-marker", "repo-marker"} {
 		if strings.Contains(r.stdout+r.stderr, leak) {
 			t.Errorf("%q leaked", leak)
 		}
@@ -289,4 +292,40 @@ func TestTrufflehogDockerfilePins(t *testing.T) {
 	if strings.Contains(string(th), "COPY scan") || strings.Contains(string(th), "findings.jq /") {
 		t.Errorf("Dockerfile must not copy scan files")
 	}
+}
+
+func TestTrufflehogAllow(t *testing.T) {
+	in := thJoin([]thLine{
+		thResultLine("canary-raw-alpha", "Alpha", "a.txt", 1),
+		thResultLine("canary-raw-beta", "Alpha", "a.txt", 2),
+	})
+	role := mustAbs(t, "scanners/trufflehog")
+	cp := t.TempDir()
+	for _, n := range []string{"scan", "findings.jq", "exclude-paths"} {
+		b, _ := os.ReadFile(filepath.Join(role, n))
+		if err := os.WriteFile(filepath.Join(cp, n), b, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// no allow file: both findings kept
+	r := thRunWith(t, cp, in, thSummary(2, 2), 0)
+	if r.code != 0 || strings.Count(r.stdout, "\n") != 2 {
+		t.Fatalf("no allow: exit %d, stdout:\n%s\n%s", r.code, r.stdout, r.stderr)
+	}
+	allow := "# known fixture\n\n  trufflehog:d4bf4d1967fad7b7  # alpha\n"
+	if err := os.WriteFile(filepath.Join(cp, "allow"), []byte(allow), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = thRunWith(t, cp, in, thSummary(2, 2), 0)
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s", r.code, r.stderr)
+	}
+	fs, err := scanner.DecodeFindings(strings.NewReader(r.stdout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != 1 || fs[0].Fingerprint != "trufflehog:ce658c895bb3b307" {
+		t.Fatalf("allowed fingerprint not dropped:\n%s", r.stdout)
+	}
+	thTmpEmpty(t, r.tmp)
 }
