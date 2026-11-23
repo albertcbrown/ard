@@ -49,7 +49,7 @@ roles:
     prompt: .ard/scanners/lint/prompt.txt
     agent: kimi
     timeout: 30m
-    every: 6h
+    every: 1d
     max_open: 5
     group_size: 10
     route: none
