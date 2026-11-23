@@ -66,6 +66,13 @@ func TestCandidates(t *testing.T) {
 			}
 			return n
 		}, false},
+		"running review job": {func(h *harness) int {
+			n := h.issue("t")
+			if _, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "review", Role: "eng-review", Issue: n, PR: 99, Branch: "b"}); err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}, false},
 		"running worker job of another role": {func(h *harness) int {
 			n := h.issue("t")
 			if _, err := h.store.CreateJob(context.Background(), state.NewJob{Stage: "worker", Role: "other", Issue: n}); err != nil {

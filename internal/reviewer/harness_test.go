@@ -143,7 +143,8 @@ type fakeGit struct {
 	patch      string
 	truncated  bool
 	added      map[string][]gitx.LineRange
-	changed    []string // CodeChanged answer
+	changed    []string          // CodeChanged answer
+	files      map[string]string // FileAt answers, by "rev:path"
 	changedEx  []string
 	changedErr error
 	diffCalls  [][]string
@@ -186,6 +187,11 @@ func (g *fakeGit) AddedLinesBetween(context.Context, string, string, string, ...
 func (g *fakeGit) CodeChanged(_ context.Context, _, _, _ string, ex ...string) ([]string, error) {
 	g.changedEx = ex
 	return g.changed, g.changedErr
+}
+
+func (g *fakeGit) FileAt(_ context.Context, _, rev, path string, _ int64) ([]byte, bool, error) {
+	v, ok := g.files[rev+":"+path]
+	return []byte(v), ok, nil
 }
 
 func (g *fakeGit) nFetches() int {

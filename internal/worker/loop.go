@@ -40,6 +40,7 @@ type Reader interface {
 	SearchIssues(ctx context.Context, q string, o github.SearchOpts) ([]github.Issue, error)
 	ListComments(ctx context.Context, n int, since time.Time) ([]github.Comment, error)
 	ListPRs(ctx context.Context, o github.ListPRsOpts) ([]github.PullRequest, error)
+	ListReviewComments(ctx context.Context, n int) ([]github.ReviewComment, error)
 }
 
 // Effects is the part of effects.Effects the loop uses.
@@ -65,6 +66,7 @@ type Store interface {
 	SetBranch(ctx context.Context, id, branch string) error
 	SetPR(ctx context.Context, id string, pr int) error
 	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+	Events(ctx context.Context, f state.EventFilter) ([]state.Event, error)
 	RecordStepUsage(ctx context.Context, jobID, step string, u state.StepUsage) (bool, error)
 }
 
@@ -86,6 +88,7 @@ type Git interface {
 	Snapshot(ctx context.Context, repoDir, wt, base string, opts ...gitx.SnapshotOptions) (*gitx.Snapshot, error)
 	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
 	ChangedPaths(ctx context.Context, dir, from, to string, paths ...string) ([]string, error)
+	FileAt(ctx context.Context, dir, rev, path string, maxBytes int64) ([]byte, bool, error)
 }
 
 // Offerer is *pool.Pool.

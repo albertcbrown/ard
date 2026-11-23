@@ -28,6 +28,8 @@ const (
 	EventGate = "gate"
 	// EventMerge: the merger squash-merged a PR; data has pr, head and merge_sha.
 	EventMerge = "merge"
+	// EventReviewRound: a review fix round changed phase; data has round, phase, reason, pr, head, worker and roles.
+	EventReviewRound = "review_round"
 )
 
 // Event is one row of the append-only event log. Data holds structured fields

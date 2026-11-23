@@ -91,6 +91,16 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 	}
 	// The committed .ard/<n> holds the plan and the earlier role files and logs.
 	untrusted := []string{dir + "/diff.patch", dir + "/issue.md", dir + "/comments.md", fmt.Sprintf(".ard/%d", n)}
+	// A later round also gets the role's report from the round before, read at
+	// the pinned head, which holds that review's close-out commit.
+	if b, ok, err := d.Git.FileAt(ctx, d.RepoDir, p.tip, fmt.Sprintf(".ard/%d/review-%s.md", n, role.Name), 64<<10); err != nil {
+		log.Warn("review.previous_review_failed", "error", err)
+	} else if ok {
+		path := dir + "/previous-review.md"
+		body := agentjob.UntrustedHeader + "Your report from the previous review round on this pull request:\n\n" + string(b)
+		inputs = append(inputs, executor.File{Path: path, Data: []byte(body)})
+		untrusted = append(untrusted, path)
+	}
 
 	// 2. The claim record.
 	data, _ := json.Marshal(map[string]string{"head": p.tip, "base": p.base})

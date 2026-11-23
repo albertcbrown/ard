@@ -64,6 +64,7 @@ internal/limits/    the book of exhausted usage limits the pool consults (the re
 internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/prgate/    reviews-passed-at-head decision shared by the reviewer's mark-ready and the merger: label rule, head Covers, reviewed heads, ParseWorkerBranch
 internal/merger/    the merger loop: gates (reviews, checks from check runs and the rules API, protected-path approval), one update and one squash merge per tick; no slot
+internal/reviewfix/  review fix rounds: the review_round event, Rounds/RequestRound, and the loop that sends :changes PRs back to the worker and reruns reviewers
 internal/reviewer/  the reviewer loop: claims `ard:review:<role>` on ard's own PRs, pins the head, runs the agent on the diff, closes out through the shared Finisher (one PR review)
 internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher
 internal/labels/    the one place that spells an `ard:` label; catalogue from config

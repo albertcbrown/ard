@@ -112,6 +112,17 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		{Path: dir + "/comments.md", Data: agentjob.Comments(comments)},
 	}
 	untrusted := []string{dir + "/issue.md", dir + "/comments.md"}
+	if exists {
+		f, ok, err := l.reviewFeedback(ctx, role, n, branch)
+		if err != nil {
+			log.Error("worker.claim_failed", "step", "review_feedback", "error", err)
+			return
+		}
+		if ok {
+			inputs = append(inputs, f)
+			untrusted = append(untrusted, f.Path)
+		}
+	}
 
 	// 2. The claim record.
 	nj := state.NewJob{Stage: stageWorker, Role: role.Name, Issue: n}
@@ -431,6 +442,8 @@ func (jb *job) triageInputs(wt string) []string {
 	}
 	list(fmt.Sprintf(".ard/%d", n), "triage-")
 	list(fmt.Sprintf(".ard/%d/logs", n), "triage-")
+	list(fmt.Sprintf(".ard/%d", n), "review-")
+	list(fmt.Sprintf(".ard/%d/logs", n), "review-")
 	return out
 }
 

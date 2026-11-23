@@ -83,7 +83,7 @@ func loopNames(loops []controller.Loop) []string {
 
 // knownLoops are the names registerLoops' loops report (Loop.Name), in the
 // order they register.
-var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "merger", "reaper"}
+var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", "reaper"}
 
 // selectLoops keeps the loops named in want, in registration order; an empty
 // want keeps every loop. A name that is not a known loop is a usage error
@@ -446,7 +446,7 @@ var registerLoops = func(w *wiring) []controller.Loop {
 	if l := reviewerLoop(w); l != nil {
 		loops = append(loops, l)
 	}
-	loops = append(loops, mergerLoop(w))
+	loops = append(loops, reviewfixLoop(w), mergerLoop(w))
 	if l := reaperLoop(w); l != nil {
 		loops = append(loops, l)
 	}

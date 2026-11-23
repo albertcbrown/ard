@@ -31,7 +31,7 @@ func (t *tick) candidates(ctx context.Context) ([]candidate, []error) {
 	}
 	busy := map[int]bool{}
 	for _, j := range running {
-		if j.Stage == stageWorker || j.Stage == "triage" {
+		if j.Stage == stageWorker || j.Stage == "triage" || j.Stage == "review" {
 			busy[j.Issue] = true
 		}
 	}
