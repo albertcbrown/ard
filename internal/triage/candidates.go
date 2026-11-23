@@ -102,8 +102,9 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 		t.log.Info("triage.held", "issue", n, "role", role.Name, "waiting_for", dep)
 		return candidate{}, false, nil
 	}
-	c := candidate{role: role, issue: is, reason: intake.ReasonAppAuthored}
+	c := candidate{role: role, issue: is}
 	if strings.EqualFold(is.Author, t.self) { // scanner issues: the App rewrites its own bodies
+		c.reason = intake.ReasonAppAuthored
 		return c, true, nil
 	}
 	hash := agentjob.BodyHash(is)
@@ -119,6 +120,7 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 			t.log.Info("triage.not_admitted", "issue", n, "role", role.Name)
 			return candidate{}, false, nil
 		}
+		c.reason = intake.ReasonAdmitted
 		return c, true, nil
 	}
 	j := t.judge(is)
@@ -149,6 +151,8 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 	c.rec = rec
 	if rec != nil {
 		c.reason = intake.Reason(rec.Reason)
+	} else {
+		c.reason = intake.ReasonAdmitted // passed on the stored admission: the body hash still matches
 	}
 	return c, true, nil
 }
