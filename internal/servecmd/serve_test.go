@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -350,7 +351,7 @@ func TestResolveRepoFromOrigin(t *testing.T) {
 	if err != nil || r.Owner != "Own" || r.Name != "Rep" {
 		t.Fatalf("got %+v, %v", r, err)
 	}
-	gittest.Run(t, clone, "remote", "set-url", "origin", "https://user:secrettoken@example.com/o/r")
+	gittest.Run(t, clone, "remote", "set-url", "origin", (&url.URL{Scheme: "https", User: url.UserPassword("user", "secrettoken"), Host: "example.com", Path: "/o/r"}).String())
 	if _, err := resolveRepo(ctx, "", clone); err == nil || strings.Contains(err.Error(), "secrettoken") {
 		t.Errorf("want error without the URL, got %v", err)
 	}

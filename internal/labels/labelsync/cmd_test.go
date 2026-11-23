@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,7 +218,7 @@ func TestResolveRepo(t *testing.T) {
 	})
 	t.Run("remote with a token is not echoed", func(t *testing.T) {
 		_, c := gittest.NewRemote(t)
-		gittest.Run(t, c, "remote", "set-url", "origin", "https://x:secret@gitlab.com/a/b.git")
+		gittest.Run(t, c, "remote", "set-url", "origin", (&url.URL{Scheme: "https", User: url.UserPassword("x", "secret"), Host: "gitlab.com", Path: "/a/b.git"}).String())
 		e, _ := env(c, false)
 		_, err := resolveRepo(ctx, e, c)
 		if err == nil || strings.Contains(err.Error(), "secret") {

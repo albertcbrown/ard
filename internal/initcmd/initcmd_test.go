@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -440,7 +441,7 @@ func TestInitMissingPieces(t *testing.T) {
 	})
 	t.Run("origin token is not echoed", func(t *testing.T) {
 		_, clone := gittest.NewRemote(t)
-		gittest.Run(t, clone, "remote", "set-url", "origin", "https://x:secret@gitlab.com/a/b.git")
+		gittest.Run(t, clone, "remote", "set-url", "origin", (&url.URL{Scheme: "https", User: url.UserPassword("x", "secret"), Host: "gitlab.com", Path: "/a/b.git"}).String())
 		if _, err := resolveRepo(ctx, "", clone); err == nil || strings.Contains(err.Error(), "secret") {
 			t.Errorf("err = %v", err)
 		}
