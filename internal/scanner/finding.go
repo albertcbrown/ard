@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -123,7 +124,7 @@ func DecodeFindings(r io.Reader) ([]Finding, error) {
 					fail(n, "%v", derr)
 				default:
 					if first, dup := seen[f.Fingerprint]; dup {
-						fail(n, "duplicate fingerprint %q (first on line %d)", f.Fingerprint, first)
+						fail(n, "duplicate fingerprint (first on line %d)", first)
 					} else {
 						seen[f.Fingerprint] = n
 						out = append(out, f)
@@ -200,7 +201,7 @@ func validateFinding(f Finding) error {
 	case len(f.Fingerprint) > MaxFingerprint:
 		return fmt.Errorf("fingerprint longer than %d bytes", MaxFingerprint)
 	case !utf8.ValidString(f.Fingerprint) || hasControl(f.Fingerprint):
-		return fmt.Errorf("fingerprint %q is not valid UTF-8 without control characters", f.Fingerprint)
+		return errors.New("fingerprint: invalid UTF-8 or control characters")
 	case strings.TrimSpace(f.Title) == "":
 		return fmt.Errorf("title is required")
 	case utf8.RuneCountInString(f.Title) > MaxTitleRunes:
@@ -208,7 +209,7 @@ func validateFinding(f Finding) error {
 	case !utf8.ValidString(f.Title) || hasControl(f.Title):
 		return fmt.Errorf("title must be one line of valid UTF-8")
 	case !f.Severity.Valid():
-		return fmt.Errorf("severity %q is not one of critical, high, medium, low, info", f.Severity)
+		return errors.New("severity: not one of critical, high, medium, low, info")
 	case len(f.Group) > MaxGroupBytes || !utf8.ValidString(f.Group) || hasControl(f.Group):
 		return fmt.Errorf("group must be at most %d bytes of one-line valid UTF-8", MaxGroupBytes)
 	case len(f.Files) > MaxFiles:
@@ -229,9 +230,9 @@ func validateFinding(f Finding) error {
 func checkFilePath(p string) error {
 	switch {
 	case p == "" || len(p) > maxPathBytes || !utf8.ValidString(p) || hasControl(p):
-		return fmt.Errorf("file %q is not a valid path", p)
+		return errors.New("file: not a valid path")
 	case path.IsAbs(p) || path.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") || p == ".":
-		return fmt.Errorf("file %q must be a clean repo-relative path without ..", p)
+		return errors.New("file: not repo-relative (absolute, unclean or contains ..)")
 	}
 	return nil
 }
