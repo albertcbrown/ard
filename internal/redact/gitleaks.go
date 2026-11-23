@@ -32,6 +32,9 @@ type gitleaks struct{ o GitleaksOptions }
 // bytes (detect --no-git). It fails closed: a missing binary, an error exit,
 // a timeout or an unreadable report is an error. Findings carry only the
 // rule, line and column, never the matched text.
+// gitleaksWaitDelay is how long Scan waits for the output pipes after the scanner was killed (exec.Cmd.WaitDelay).
+const gitleaksWaitDelay = time.Second
+
 func Gitleaks(o GitleaksOptions) Scanner {
 	if o.Path == "" {
 		o.Path = "gitleaks"
@@ -84,6 +87,9 @@ func (g gitleaks) Scan(ctx context.Context, r io.Reader) ([]Finding, error) {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir}
 	// Output is discarded: it may echo scanned content.
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	// Wait copies that output through pipes, so a child the scanner started that still holds them would keep Wait
+	// blocked after the timeout killed the scanner itself (#198). WaitDelay bounds that wait.
+	cmd.WaitDelay = gitleaksWaitDelay
 	code := 0
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError

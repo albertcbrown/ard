@@ -113,6 +113,21 @@ func TestGitleaksTimeoutAndCancel(t *testing.T) {
 	}
 }
 
+// The scanner's own child keeps the output pipe open after the timeout kills the scanner (#198). Scan must still return
+// within about the timeout plus gitleaksWaitDelay, not when the child exits. Without WaitDelay this takes the full 5 s on
+// Linux (it failed TestGitleaksTimeoutAndCancel in a Debian CI pod, whose /bin/sh is dash); on macOS both pass either way.
+func TestGitleaksTimeoutChildHoldsPipe(t *testing.T) {
+	p := fakeGitleaks(t, `sleep 5 & wait`)
+	start := time.Now()
+	_, err := Gitleaks(GitleaksOptions{Path: p, Timeout: 100 * time.Millisecond}).Scan(context.Background(), strings.NewReader("x"))
+	if err == nil {
+		t.Error("timeout: want error")
+	}
+	if d := time.Since(start); d > gitleaksWaitDelay+2*time.Second {
+		t.Errorf("Scan returned after %v, want about the timeout plus %v", d, gitleaksWaitDelay)
+	}
+}
+
 func TestGitleaksArgs(t *testing.T) {
 	out := t.TempDir()
 	p := fakeGitleaks(t, `echo "$all" > `+out+`/argv; cp "$src" `+out+`/input; echo "$src" > `+out+`/srcpath; echo '[]' > "$report"`)
