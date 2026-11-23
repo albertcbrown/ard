@@ -26,7 +26,7 @@ type CodeRequest struct {
 	Issue  int        // > 0 (dry-run: < 0 allowed, synthetic result, as Request)
 	Role   string     // ^[a-z0-9][a-z0-9-]*$
 	JobID  string     // required: the Ard-Job trailer
-	Type   string     // ^[a-z]{1,16}$, e.g. feat, fix, chore
+	Type   string     // ^[a-z]{1,16}$, e.g. feat, fix; empty means no prefix
 	Title  string     // untrusted issue title
 	Body   string     // untrusted summary, already redacted by the caller
 	Base   string     // 40-hex SHA the job's worktree started from
@@ -51,7 +51,7 @@ var (
 
 // CodeMessage builds:
 //
-//	<type>: <title> (#<issue>)
+//	[<type>: ]<title> (#<issue>)
 //
 //	<body>
 //
@@ -69,7 +69,7 @@ var (
 // No [skip ci]: PR-branch commits always run CI.
 func CodeMessage(typ, title string, issue int, body, jobID string) (string, error) {
 	switch {
-	case !typeRe.MatchString(typ):
+	case typ != "" && !typeRe.MatchString(typ):
 		return "", fmt.Errorf("%w: bad type %q", ErrInvalid, typ)
 	case !jobRe.MatchString(jobID):
 		return "", fmt.Errorf("%w: bad or missing job id", ErrInvalid)
@@ -83,7 +83,10 @@ func CodeMessage(typ, title string, issue int, body, jobID string) (string, erro
 	if t == "" {
 		return "", fmt.Errorf("%w: empty title", ErrInvalid)
 	}
-	prefix, suffix := typ+": ", fmt.Sprintf(" (#%d)", issue)
+	prefix, suffix := "", fmt.Sprintf(" (#%d)", issue)
+	if typ != "" {
+		prefix = typ + ": "
+	}
 	if avail := maxSummaryRunes - utf8.RuneCountInString(prefix+suffix); utf8.RuneCountInString(t) > avail {
 		t = strings.TrimSpace(string([]rune(t)[:avail-1])) + "…"
 	}

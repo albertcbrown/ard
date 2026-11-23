@@ -69,6 +69,17 @@ func TestCodeMessage(t *testing.T) {
 			}
 		}},
 		{name: "empty title", typ: "fix", title: " \n ", job: "j1", invalid: true},
+		{name: "no type", typ: "", title: "t", job: "j1", check: func(t *testing.T, m string) {
+			if m != "t (#12)\n\nArd-Job: j1" {
+				t.Errorf("got %q", m)
+			}
+		}},
+		{name: "no type long", typ: "", title: long, job: "j1", check: func(t *testing.T, m string) {
+			first, _, _ := strings.Cut(m, "\n")
+			if !strings.HasSuffix(first, "… (#12)") || utf8.RuneCountInString(first) != 72 {
+				t.Errorf("first line %q (%d)", first, utf8.RuneCountInString(first))
+			}
+		}},
 		{name: "bad type", typ: "Fix!", title: "t", job: "j1", invalid: true},
 		{name: "no job", typ: "fix", title: "t", invalid: true},
 	}
