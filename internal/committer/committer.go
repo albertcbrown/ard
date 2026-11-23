@@ -200,6 +200,8 @@ type snapFile struct {
 	data []byte
 	exec bool
 	del  bool
+	// merge, when set, rewrites data against the contents at the head.
+	merge func(cur []byte, exists bool, mine []byte) ([]byte, error)
 }
 
 // snap is a validated request in the form the lane applies, whichever lane
@@ -231,7 +233,7 @@ func snapOf(req Request, msg string) snap {
 	s := snap{msg: msg, declared: make([]string, len(req.Files))}
 	for i, f := range req.Files {
 		s.declared[i] = f.Path
-		s.files = append(s.files, snapFile{path: f.Path, data: f.Data, del: f.Delete})
+		s.files = append(s.files, snapFile{path: f.Path, data: f.Data, del: f.Delete, merge: f.Merge})
 	}
 	return s
 }
@@ -325,7 +327,19 @@ func (l *lane) attempt(ctx context.Context, s snap, base string, create bool) (r
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return res, false, fmt.Errorf("mkdir for %s: %w", f.path, err)
 		}
-		if err := os.WriteFile(full, f.data, 0o644); err != nil {
+		data := f.data
+		if f.merge != nil {
+			cur, rerr := os.ReadFile(full)
+			if rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+				return res, false, fmt.Errorf("read %s: %w", f.path, rerr)
+			}
+			merged, merr := f.merge(cur, rerr == nil, f.data)
+			if merr != nil {
+				return res, false, fmt.Errorf("%w: %s: %v", ErrMerge, f.path, merr)
+			}
+			data = merged
+		}
+		if err := os.WriteFile(full, data, 0o644); err != nil {
 			return res, false, fmt.Errorf("write %s: %w", f.path, err)
 		}
 		// WriteFile keeps the mode of an existing file, so set it explicitly.

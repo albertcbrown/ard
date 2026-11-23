@@ -16,6 +16,11 @@ type File struct {
 	Data   []byte // literal contents
 	Src    string // absolute host path; read into memory before the request waits on the lane
 	Delete bool   // remove the path; a path already absent is fine
+	// Merge, optional, is called at apply time with the contents of the path
+	// at the latest head (exists false: absent) and the file's own bytes. Its
+	// result is committed instead. An error fails the commit with ErrMerge.
+	// It may run again on a push retry, against a newer head.
+	Merge func(current []byte, exists bool, mine []byte) ([]byte, error)
 }
 
 // Request is one commit: one issue, one stage:role, one summary, a file set.

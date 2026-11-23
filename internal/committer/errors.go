@@ -14,6 +14,8 @@ var (
 	// ErrConflict means upstream changed one of the request's paths since the
 	// base the request was applied to. It is never retried or overwritten.
 	ErrConflict = errors.New("committer: upstream changed a requested path")
+	// ErrMerge means a File's Merge func rejected the current contents.
+	ErrMerge = errors.New("committer: merge failed")
 	// ErrBranchGone means the remote branch does not exist.
 	ErrBranchGone = errors.New("committer: remote branch does not exist")
 	// ErrInitExists means the ard-init branch already exists on the remote, so
