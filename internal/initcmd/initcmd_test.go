@@ -142,7 +142,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 	return m
 }
 
-var starterTree = []string{".ard/config.yaml", ".ard/reviewers/eng-review/prompt.txt", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan", ".ard/scanners/error-codes/Dockerfile", ".ard/scanners/error-codes/errcodes.jq", ".ard/scanners/error-codes/scan", ".ard/triage/engineer/prompt.txt", ".ard/triage/lead/prompt.txt", ".ard/workers/engineer/prompt.txt"}
+var starterTree = []string{".ard/config.yaml", ".ard/reviewers/eng-review/prompt.txt", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan", ".ard/scanners/docs/Dockerfile", ".ard/scanners/docs/docscan.go", ".ard/scanners/docs/scan", ".ard/scanners/error-codes/Dockerfile", ".ard/scanners/error-codes/errcodes.jq", ".ard/scanners/error-codes/scan", ".ard/triage/engineer/prompt.txt", ".ard/triage/lead/prompt.txt", ".ard/workers/engineer/prompt.txt"}
 
 func TestInitOpensPR(t *testing.T) {
 	h := newHarness(t)
@@ -156,6 +156,9 @@ func TestInitOpensPR(t *testing.T) {
 	}
 	if got := strings.TrimSpace(gittest.Run(t, h.bare, "ls-tree", "-r", "ard-init", "--", ".ard/scanners/cve/scan")); !strings.HasPrefix(got, "100755 ") {
 		t.Errorf("scan = %q, want mode 100755", got)
+	}
+	if got := strings.TrimSpace(gittest.Run(t, h.bare, "ls-tree", "-r", "ard-init", "--", ".ard/scanners/docs/scan")); !strings.HasPrefix(got, "100755 ") {
+		t.Errorf("docs scan = %q, want mode 100755", got)
 	}
 	if !reflect.DeepEqual(snapshot(t, h.clone), before) {
 		t.Error("the working tree changed")
@@ -180,6 +183,10 @@ func TestInitOpensPR(t *testing.T) {
 	cve, _ := cres.Role(config.KindScanner, "cve")
 	if cve.Every != 6*time.Hour || cve.MaxOpen != 10 || cve.GroupSize != 1 || !cve.Autoclose {
 		t.Errorf("cve = %+v", cve)
+	}
+	docs, _ := cres.Role(config.KindScanner, "docs")
+	if docs.Every != 72*time.Hour || docs.MaxOpen != 3 || docs.GroupSize != 10 || !docs.Autoclose {
+		t.Errorf("docs = %+v", docs)
 	}
 
 	prs, err := h.fake.ListPRs(context.Background(), github.ListPRsOpts{})
@@ -208,6 +215,13 @@ func TestInitOpensPR(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("label %s missing: %v", labels.Scanner("cve"), have)
+	}
+	foundDocs := false
+	for _, l := range have {
+		foundDocs = foundDocs || l.Name == labels.Scanner("docs")
+	}
+	if !foundDocs {
+		t.Errorf("label %s missing: %v", labels.Scanner("docs"), have)
 	}
 	names := map[string]bool{}
 	for _, l := range have {
