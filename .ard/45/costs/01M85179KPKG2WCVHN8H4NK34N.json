@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "job": "01M85179KPKG2WCVHN8H4NK34N",
+  "issue": 45,
+  "stage": "triage",
+  "role": "lead",
+  "attempt": 1,
+  "outcome": "needs-human",
+  "models": [
+    "claude-opus-5-5"
+  ],
+  "tokens": {
+    "input": 10,
+    "output": 1964,
+    "cache_write": 15200,
+    "cache_read": 79583
+  },
+  "cost_usd": 0.1768366,
+  "steps": 1,
+  "started_at": "2026-11-23T20:23:09Z",
+  "ended_at": "2026-11-23T20:23:33Z"
+}

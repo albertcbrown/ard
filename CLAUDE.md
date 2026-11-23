@@ -27,60 +27,7 @@ ard is a controller that automates repository development: scanners â†’ triage â
 
 ## Layout
 
-Packages are created as their issues land; keep this list current.
-
-```
-cmd/ard/            CLI entry point; wire a new subcommand by adding one line to handlers()
-internal/cli/       cobra command tree, global flags, slog logging; Handlers is the plug-in point
-internal/botcheck/  tests for the bot-commit audit in .github/workflows/bot-commits.yml
-internal/github/    GitHub client: domain types, Reader/Writer/Client, App auth, retry transport; query/ (search builder), fake/ (test double), clienttest/ (conformance suite)
-internal/config/    .ard/config.yaml + role directory loading into a Resolved value (pure, fs.FS in)
-internal/configcmd/ `ard config check` handler: prints the resolved config, returns validation errors; `--ref` checks a commit
-internal/configsrc/  config from origin/main: a snapshot per SHA under ~/.ard/config/<owner>/<repo>/ (what `ard serve` reads)
-internal/executor/    Executor interface and plain-data job types
-internal/executor/local/  git worktree + host subprocess or docker run, watchdog, logs
-internal/agent/     Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
-internal/agent/claude/  Claude Code adapter (`claude -p`, stream-json parser)
-internal/modelauth/ picks the one model credential (OAuth token or API key) from the controller env and carries its value to the executor; never logged
-internal/state/     SQLite controller and scanner state (sqlitex, scannerdb)
-internal/scanner/   scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
-internal/costblock/ the issue body's ard-owned cost block: render, strict parse, strip (admission), splice, per-issue Locks; leaf, stdlib only
-internal/costs/     the costs Loop: writes each dirty issue's cost table from state; Claims() false so it runs while paused
-internal/scanner/stale/  the stale closer: a plain controller Loop that comments and closes untouched scanner issues
-internal/agentjob/  helpers the agent loops share: untrusted-input snapshot, admission re-check, agent command and executor job builders, handle save, shutdown-aware wait, post-once
-internal/worker/    the worker loop: claim, agent/test/fix steps, diff guard, code-lane push, draft PR, FinishWith
-internal/servecmd/  `ard serve` and `ard rebuild-state`: dependency wiring; registerLoops takes one line per loop
-internal/redact/    log redaction (secrets and host paths), secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
-internal/roles/     starter role directories embedded for ard init (scanners/cve, scanners/docs, scanners/error-codes, scanners/trufflehog, triage/lead, triage/engineer, workers/engineer, reviewers/eng-review, reviewers/license-review, reviewers/security-review)
-internal/pool/      slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
-internal/effects/   the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
-internal/gitx/      git CLI wrapper (Commit, Push, StagedPaths, FileAt); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
-internal/controller/ scheduler, kill switch (pause), leader lock, status issue
-internal/servecmd/  `ard serve` wiring: lock, state, effects, pool adoption, controller
-internal/committer/ the only commit/push path: .ard/<issue#>/ (main lane, per-branch lanes) and worker code on worker/ branches (CommitCode, CheckCodePath)
-internal/closeout/  job close-out: role file or failure cause -> labels, comment, commits (resumable); per-role write allowlist (WritableFor); every job ends through its Closer
-internal/reaper/    the Reaper loop (failed-job detection, retention, :running with no record) and reaper.Finisher, the end-of-job path the loops and the Reaper share
-internal/limits/    the book of exhausted usage limits the pool consults (the reactive half; #63 adds readings and thresholds)
-internal/budget/    the daily dollar-cap gate the pool consults (budget.Gate: role and repo caps from step_usage, UTC day, fails closed)
-internal/intake/    intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
-internal/prgate/    reviews-passed-at-head decision shared by the reviewer's mark-ready and the merger: label rule, head Covers, reviewed heads, ParseWorkerBranch
-internal/janitor/   the janitor loop: prunes .ard/<issue#>/ of issues closed over 90 days ago through the main committer; no slot
-internal/merger/    the merger loop: gates (reviews, checks from check runs and the rules API, protected-path approval), one update and one squash merge per tick; no slot
-internal/reviewfix/  review fix rounds: the review_round event, Rounds/RequestRound, and the loop that sends :changes PRs back to the worker and reruns reviewers
-internal/reviewer/  the reviewer loop: claims `ard:review:<role>` on ard's own PRs, pins the head, runs the agent on the diff, closes out through the shared Finisher (one PR review)
-internal/triage/    the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher
-internal/labels/    the one place that spells an `ard:` label; catalogue from config
-internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
-internal/gitref/    ref-name checks shared by config and executor; leaf, stdlib only
-internal/repopath/  owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
-internal/initcmd/   ard init: proposes the starter .ard/ as a PR on ard-init
-internal/roles/     starter .ard/ tree (config.yaml, role dirs) embedded for ard init
-internal/           config, github, committer, executor, agent, scanner, state, ...
-Dockerfile          the ard image (ghcr.io/albertcbrown/ard): ard plus the cve tools; no RUN on the target platform
-deploy/argocd/      ard-root app-of-apps chart (one Application per target repo); deploy/charts/ard-serve/ one ard serve
-deploy/test-*.sh    chart, image and repo checks for the above (`make chart-test`, `make image-test`)
-docs/proposal.md    design source of truth
-```
+[docs/layout.md](docs/layout.md) lists every directory and package and what it holds. Read it to find where code lives; a PR that adds, removes or renames a directory or package updates that file, not this one.
 
 New subcommands: implement the body in its own package as
 `func(ctx context.Context, e *cli.Env) error`, then add one field to

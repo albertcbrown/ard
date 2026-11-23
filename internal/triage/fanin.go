@@ -46,6 +46,7 @@ const (
 	rApprovalNeeded = "approval-needed"
 	rApprovalBad    = "approval-refused"
 	rStart          = "start"
+	rNoPlan         = "no-plan"
 )
 
 type fanInInput struct {
@@ -246,6 +247,15 @@ func (t *tick) gateIssue(ctx context.Context, n int, busy bool) error {
 		t.log.Info("triage.would_gate", "issue", n, "verdict", res.Verdict.String(), "reason", res.Reason, "worker", res.Worker)
 		return nil
 	}
+	if res.Verdict == fReady && l.d.PlanExists != nil {
+		ok, err := l.d.PlanExists(ctx, n)
+		if err != nil {
+			return fmt.Errorf("triage gate issue %d: check plan: %w", n, err)
+		}
+		if !ok {
+			return t.gateHuman(ctx, n, jobID, fanInResult{Verdict: fHuman, Reason: rNoPlan, Worker: res.Worker})
+		}
+	}
 	if res.Verdict == fHuman {
 		return t.gateHuman(ctx, n, jobID, res)
 	}
@@ -262,6 +272,11 @@ func (t *tick) gateHuman(ctx context.Context, n int, jobID string, res fanInResu
 	case rNoWorker:
 		marker = fmt.Sprintf("<!-- %striage gate=no-worker job=%s -->", labels.Prefix, jobID)
 		text = "Triage finished but the lead named no worker role, so ard will not start one. " + options
+	case rNoPlan:
+		marker = fmt.Sprintf("<!-- %striage gate=no-plan job=%s -->", labels.Prefix, jobID)
+		text = fmt.Sprintf("Triage finished but `.ard/%d/plan.md` does not exist, so ard will not ask for approval or start a worker. "+
+			"A maintainer can re-run triage (remove `%s` and `%s`, re-apply the intake label) or write the plan by hand.",
+			n, labels.Done(labels.StageTriage, leadRole), labels.NeedsHuman)
 	case rWorkerGone:
 		marker = fmt.Sprintf("<!-- %striage gate=worker-gone worker=%s -->", labels.Prefix, res.Worker)
 		text = fmt.Sprintf("The lead chose the `%s` worker, but no such worker role exists now. %s", res.Worker, options)

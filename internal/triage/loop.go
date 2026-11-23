@@ -91,6 +91,9 @@ type Deps struct {
 	Poll     time.Duration        // Status poll interval; default 2s
 	Now      func() time.Time
 	Log      *slog.Logger
+	// PlanExists reports whether .ard/<issue>/plan.md exists on main. The
+	// fan-in gate refuses to ask for approval without it. nil skips the check.
+	PlanExists func(ctx context.Context, issue int) (bool, error)
 }
 
 // Loop is the triage loop. It implements controller.Loop.
