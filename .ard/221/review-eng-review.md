@@ -9,21 +9,23 @@ findings:
     severity: low
     message: |
       noteRun returns silently when p.Log is nil, so no notice is posted at all.
-      The posting logic depends on whether a logger is set, which is surprising. Pipeline
-      has a logger accessor (pipeline.go:128) that handles nil; use it, or fall back to a discard logger.
-      The serve wiring always sets Log, so this does not affect production.
+      Whether a notice is posted should not depend on a logger being set. Use the Pipeline's nil-safe
+      logger accessor or a discard logger. Serve wiring always sets Log, so production is unaffected.
   - file: "internal/servecmd/scanners.go"
     line: 32
     severity: low
     message: |
-      plan.md named a servecmd test that StatusIssue is wired; it was not written, and the worker
-      explained why (scannerLoop needs full executor wiring). If StatusIssue were dropped,
-      nothing would fail and streak notices would silently stop. Consider a small test
-      or extracting the pipeline construction.
+      plan.md named a servecmd test that StatusIssue is wired; none was written. If the field were
+      dropped, nothing would fail and streak notices would silently stop. Add a small test or extract
+      the pipeline construction.
 ---
-The change matches plan.md and the issue: one notice per failure streak and one on recovery, the class is sanitised, state is written only after a successful post, and dry-run is honoured. It has no blocking problems. Two low-severity gaps remain.
+The change matches plan.md and the issue: one notice per streak and one on recovery, a sanitised class, state written only after a successful post, and dry-run honoured. No blocking problems; the two low findings from the previous round remain.
 
 ## Checks
-- Lint: `make lint` (go vet, gofmt) reports only `internal/roles/testdata/docs/skips/src/_x.go`, an intentionally broken fixture the change did not touch. Nothing on the changed files.
-- Tests: `go test -cover ./internal/scanner/ ./internal/servecmd/` passes.
-- Diff coverage: streak.go is at 100% except `noteRun` (87.1%). The uncovered lines are the meta read-error and SetMeta-error log branches.
+- Lint: not re-run this round. The previous round's `make lint` showed nothing on the changed files.
+- Tests: `go test ./internal/scanner/ ./internal/servecmd/` passes.
+- Diff coverage: not re-measured. Last round streak.go was at 100% except `noteRun` (87.1%), whose uncovered lines are the log-only error branches.
+
+## Previous findings
+- internal/scanner/streak.go (nil Log skips posting): still present
+- internal/servecmd/scanners.go (no StatusIssue wiring test): still present
