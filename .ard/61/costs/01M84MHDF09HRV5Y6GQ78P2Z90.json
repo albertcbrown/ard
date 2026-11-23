@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "job": "01M84MHDF09HRV5Y6GQ78P2Z90",
+  "issue": 61,
+  "stage": "triage",
+  "role": "lead",
+  "attempt": 1,
+  "outcome": "retry",
+  "cause": "controller_restart",
+  "models": [],
+  "tokens": null,
+  "cost_usd": null,
+  "steps": 0,
+  "started_at": "2026-11-23T16:41:29Z",
+  "ended_at": "2026-11-23T16:42:03Z"
+}
