@@ -60,6 +60,7 @@ tools_ok() {
   run --entrypoint govulncheck "$tag" -version 2>&1 | grep -q 'govulncheck@v1\.10\.0' || { echo "govulncheck: $(run --entrypoint govulncheck "$tag" -version 2>&1 | head -3)" >&2; return 1; }
   run --entrypoint osv-scanner "$tag" --version 2>&1 | grep -q 'osv-scanner version: 2\.7\.1' || { echo "osv-scanner: $(run --entrypoint osv-scanner "$tag" --version 2>&1 | head -2)" >&2; return 1; }
   [ "$(run --entrypoint jq "$tag" --version)" = "jq-1.8.2" ] || { echo "jq: $(run --entrypoint jq "$tag" --version)" >&2; return 1; }
+  run --entrypoint yq "$tag" --version | grep -q 'version v4\.54\.3$' || { echo "yq: $(run --entrypoint yq "$tag" --version)" >&2; return 1; }
   run --entrypoint git "$tag" --version | grep -q '^git version ' || return 1
   [ "$(run --entrypoint sh "$tag" -c 'command -v ard')" = "/usr/local/bin/ard" ] || return 1
 }
@@ -85,6 +86,19 @@ if run --tmpfs /home/ard:uid=65532,gid=65532,exec --tmpfs /var/tmp:uid=65532,gid
   fi
 else
   fail "cve scan runs in the image as a host subprocess" "exit $?: $(tail -5 "$work/scan.err")"
+fi
+
+# The lts role the same way. It needs network (endoflife.date); empty output and finding lines both pass.
+lts_out="$work/lts.out"
+if run --tmpfs /home/ard:uid=65532,gid=65532,exec --tmpfs /var/tmp:uid=65532,gid=65532,exec \
+     -v "$ROOT:/repo:ro" -w /repo --entrypoint /repo/internal/roles/scanners/lts/scan "$tag" >"$lts_out" 2>"$work/lts.err"; then
+  if [ ! -s "$lts_out" ] || jq -e -s 'all(.[]; type == "object" and has("fingerprint"))' "$lts_out" >/dev/null 2>&1; then
+    pass "lts scan runs in the image as a host subprocess"
+  else
+    fail "lts scan runs in the image as a host subprocess" "stdout is not finding JSON lines: $(head -c 300 "$lts_out")"
+  fi
+else
+  fail "lts scan runs in the image as a host subprocess" "exit $?: $(tail -5 "$work/lts.err")"
 fi
 
 # The same run on a fixture with a known-vulnerable dependency must report it: empty output cannot pass.

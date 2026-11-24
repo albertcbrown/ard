@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "job": "01M86PZKKM9W8XXCGKAK73983Z",
+  "issue": 47,
+  "pr": 309,
+  "stage": "worker",
+  "role": "engineer",
+  "attempt": 1,
+  "outcome": "done",
+  "models": [
+    "claude-sonnet-5-5"
+  ],
+  "tokens": {
+    "input": 62,
+    "output": 42367,
+    "cache_write": 94767,
+    "cache_read": 2146406
+  },
+  "cost_usd": 1.0175026,
+  "steps": 1,
+  "started_at": "2026-11-24T12:02:40Z",
+  "ended_at": "2026-11-24T12:16:15Z"
+}

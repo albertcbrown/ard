@@ -1,5 +1,6 @@
-# ard controller image: the static ard binary plus the cve scanner's tools, so
-# `ard serve` in a container can run the cve role as a host subprocess.
+# ard controller image: the static ard binary plus the cve and lts scanners' tools
+# (jq, osv-scanner, govulncheck, yq), so `ard serve` in a container can run both
+# roles as host subprocesses.
 # Published as ghcr.io/albertcbrown/ard.
 #
 # Builds for both platforms on a host without QEMU/binfmt: every RUN is in a
@@ -8,8 +9,8 @@
 #
 # The base is trixie, not bookworm: git 2.39 breaks the committer's fetches (#163).
 #
-# Tool versions and checksums are the cve scanner's
-# (internal/roles/scanners/cve/Dockerfile); keep them in step.
+# Tool versions and checksums are the cve and lts scanners'
+# (internal/roles/scanners/{cve,lts}/Dockerfile); keep them in step.
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     --build-arg VERSION=$(git describe --tags --always) \
@@ -45,14 +46,18 @@ ARG OSV_SCANNER_SHA256_ARM64=983d22fbad9724514e3fcc6acc83b5fa64c5ffa6b0d9f510028
 ARG JQ_VERSION=1.8.2
 ARG JQ_SHA256_AMD64=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f
 ARG JQ_SHA256_ARM64=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309
+# yq v4.54.3 (mikefarah/yq), checksums from the release checksums file; keep in step with scanners/lts/Dockerfile.
+ARG YQ_VERSION=v4.54.3
+ARG YQ_SHA256_AMD64=129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973
+ARG YQ_SHA256_ARM64=89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67
 # tini v0.19.0 static, checksums from the release's .sha256sum files.
 ARG TINI_VERSION=v0.19.0
 ARG TINI_SHA256_AMD64=c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee
 ARG TINI_SHA256_ARM64=eae1d3aa50c48fb23b8cbdf4e369d0910dfc538566bfd09df89a774aa84a48b9
 RUN set -eu; \
     case "${TARGETARCH}" in \
-      amd64) osv_sha="${OSV_SCANNER_SHA256_AMD64}"; jq_sha="${JQ_SHA256_AMD64}"; tini_sha="${TINI_SHA256_AMD64}" ;; \
-      arm64) osv_sha="${OSV_SCANNER_SHA256_ARM64}"; jq_sha="${JQ_SHA256_ARM64}"; tini_sha="${TINI_SHA256_ARM64}" ;; \
+      amd64) osv_sha="${OSV_SCANNER_SHA256_AMD64}"; jq_sha="${JQ_SHA256_AMD64}"; tini_sha="${TINI_SHA256_AMD64}"; yq_sha="${YQ_SHA256_AMD64}" ;; \
+      arm64) osv_sha="${OSV_SCANNER_SHA256_ARM64}"; jq_sha="${JQ_SHA256_ARM64}"; tini_sha="${TINI_SHA256_ARM64}"; yq_sha="${YQ_SHA256_ARM64}" ;; \
       *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     mkdir /out; \
@@ -60,9 +65,11 @@ RUN set -eu; \
     echo "${osv_sha}  /out/osv-scanner" | sha256sum -c -; \
     curl -fsSL -o /out/jq "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-${TARGETARCH}"; \
     echo "${jq_sha}  /out/jq" | sha256sum -c -; \
+    curl -fsSL -o /out/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}"; \
+    echo "${yq_sha}  /out/yq" | sha256sum -c -; \
     curl -fsSL -o /out/tini "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-${TARGETARCH}"; \
     echo "${tini_sha}  /out/tini" | sha256sum -c -; \
-    chmod 0755 /out/osv-scanner /out/jq /out/tini
+    chmod 0755 /out/osv-scanner /out/jq /out/yq /out/tini
 
 # The final image keeps the Go toolchain (govulncheck loads packages with it);
 # git and ca-certificates are already in the golang image.
@@ -73,6 +80,7 @@ COPY --from=build /out/ard /usr/local/bin/ard
 COPY --from=build /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=tools /out/osv-scanner /usr/local/bin/osv-scanner
 COPY --from=tools /out/jq /usr/local/bin/jq
+COPY --from=tools /out/yq /usr/local/bin/yq
 COPY --from=tools /out/tini /usr/local/bin/tini
 # HOME is the pod's PVC (~/.ard state, the repo clone, Go caches). TMPDIR is
 # exec-capable for the cve scan's toolchain downloads. GOTOOLCHAIN=local: the
