@@ -193,7 +193,9 @@ type Resolved struct {
 	Stale          Stale
 	Redact         Redact
 	Sidecars       map[string]Sidecar
-	Roles          []Role // sorted by Kind then Name
+	RolesRepo      *Sidecar // roles_repo: shared role directories; nil = none
+	RolesSHA       string   // commit of RolesRepo merged into the snapshot; set by configsrc
+	Roles          []Role   // sorted by Kind then Name
 }
 
 // Role returns the role of the given kind and name.

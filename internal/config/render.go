@@ -35,6 +35,7 @@ type resolvedYAML struct {
 	Stale           staleYAML              `yaml:"stale"`
 	Redact          redactYAML             `yaml:"redact"`
 	Sidecars        map[string]sidecarYAML `yaml:"sidecars,omitempty"`
+	RolesRepo       *sidecarYAML           `yaml:"roles_repo,omitempty"`
 	Roles           []roleYAML             `yaml:"roles,omitempty"`
 }
 
@@ -143,6 +144,9 @@ func (r *Resolved) render() resolvedYAML {
 	}
 	for name, sc := range r.Sidecars {
 		out.Sidecars[name] = sidecarYAML{Repo: sc.Repo, Ref: sc.Ref}
+	}
+	if r.RolesRepo != nil {
+		out.RolesRepo = &sidecarYAML{Repo: r.RolesRepo.Repo, Ref: r.RolesRepo.Ref}
 	}
 	for _, role := range r.Roles {
 		ry := roleYAML{

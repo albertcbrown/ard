@@ -704,6 +704,26 @@ func TestLoadErrors(t *testing.T) {
 			want: []wantErr{{".ard/config.yaml", "sidecars.specs.url", "unknown key"}},
 		},
 		{
+			name: "unknown roles_repo field",
+			yaml: "roles_repo: {repo: a/b, url: x}\n",
+			want: []wantErr{{".ard/config.yaml", "roles_repo.url", "unknown key"}},
+		},
+		{
+			name: "bad roles_repo repo",
+			yaml: "roles_repo: {repo: foo}\n",
+			want: []wantErr{{".ard/config.yaml", "roles_repo.repo", `"owner/name"`}},
+		},
+		{
+			name: "bad roles_repo ref",
+			yaml: "roles_repo: {repo: a/b, ref: \"x y\"}\n",
+			want: []wantErr{{".ard/config.yaml", "roles_repo.ref", "invalid ref"}},
+		},
+		{
+			name: "roles_repo wrong type",
+			yaml: "roles_repo: nope\n",
+			want: []wantErr{{".ard/config.yaml", "roles_repo", "must be a mapping"}},
+		},
+		{
 			name: "bad sidecar repo",
 			yaml: "sidecars: {specs: {repo: just-a-name}}\n",
 			want: []wantErr{{".ard/config.yaml", "sidecars.specs.repo", `"owner/name"`}},

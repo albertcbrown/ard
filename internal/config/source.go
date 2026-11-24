@@ -20,6 +20,40 @@ func SourcePaths() []string {
 	return paths
 }
 
+// SharedSourcePaths lists the role-directory trees a shared roles repo
+// contributes: SourcePaths without the config file.
+func SharedSourcePaths() []string { return SourcePaths()[1:] }
+
+// SharedRoles reads only the roles_repo key of the config file in fsys. A
+// missing file or an unset key returns nil, nil. The repo and ref are not
+// validated here; config.Load does that.
+func SharedRoles(fsys fs.FS) (*Sidecar, error) {
+	data, err := fs.ReadFile(fsys, ".ard/config.yaml")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var v struct {
+		RolesRepo *struct {
+			Repo string `yaml:"repo"`
+			Ref  string `yaml:"ref"`
+		} `yaml:"roles_repo"`
+	}
+	if err := yaml.Unmarshal(data, &v); err != nil {
+		return nil, err
+	}
+	if v.RolesRepo == nil {
+		return nil, nil
+	}
+	sc := &Sidecar{Repo: v.RolesRepo.Repo, Ref: v.RolesRepo.Ref}
+	if sc.Ref == "" {
+		sc.Ref = defaultSidecarRef
+	}
+	return sc, nil
+}
+
 // LocalPaused reports whether the config file in fsys (a working tree) says
 // `paused: true`. It reads only that key, and it never fails closed: a file
 // that is missing, unreadable or not valid YAML reports false with the error

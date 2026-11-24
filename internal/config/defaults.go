@@ -208,6 +208,23 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		res.Sidecars[name] = entry
 	}
 
+	if rr := raw.rolesRepo; rr != nil {
+		entry := Sidecar{Ref: defaultSidecarRef}
+		if rr.repo != nil {
+			entry.Repo = *rr.repo
+		}
+		if rr.ref != nil {
+			entry.Ref = *rr.ref
+		}
+		if _, _, err := repopath.Parts(entry.Repo); err != nil {
+			errs = append(errs, &Error{File: cfgPath, Key: "roles_repo.repo", Msg: fmt.Sprintf("must be %q, got %q", "owner/name", entry.Repo)})
+		}
+		if err := gitref.Check(entry.Ref); err != nil {
+			errs = append(errs, &Error{File: cfgPath, Key: "roles_repo.ref", Msg: fmt.Sprintf("invalid ref %q: %v", entry.Ref, err)})
+		}
+		res.RolesRepo = &entry
+	}
+
 	return errs
 }
 
