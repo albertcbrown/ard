@@ -349,6 +349,11 @@ func fetchedOf(raw []rawFetched) ([]Fetched, error) {
 		if err := checkFindingPath(f.Path); err != nil {
 			return nil, malformed("fetched %d: path %v", n, err)
 		}
+		for _, c := range f.Path {
+			if c < ' ' || c == 0x7f || c == '`' || c == '<' || c == '>' {
+				return nil, malformed("fetched %d: path has a control or forbidden character", n)
+			}
+		}
 		out = append(out, f)
 	}
 	return out, nil
