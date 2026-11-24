@@ -435,3 +435,17 @@ func TestSetConfig(t *testing.T) {
 		t.Fatal("missing dir accepted")
 	}
 }
+
+func TestRunDisablesAutoGC(t *testing.T) {
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	for _, c := range [][2]string{{"gc.auto", "0"}, {"maintenance.auto", "false"}} {
+		out, _, err := g.run(context.Background(), clone, nil, "", nil, "config", "--get", c[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(out); got != c[1] {
+			t.Errorf("%s = %q, want %q", c[0], got, c[1])
+		}
+	}
+}
