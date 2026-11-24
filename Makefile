@@ -1,4 +1,4 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test

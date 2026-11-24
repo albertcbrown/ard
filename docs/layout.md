@@ -6,6 +6,7 @@ Every top-level directory and Go package, with what it holds. Keep it current: a
 cmd/ard/                    CLI entry point; wire a new subcommand by adding one line to handlers()
 internal/cli/               cobra command tree, global flags, slog logging; Handlers is the plug-in point
 internal/botcheck/          tests for the bot-commit audit in .github/workflows/bot-commits.yml
+internal/versioncheck/       tests for the version workflow in .github/workflows/version.yml (plan and tag scripts)
 internal/github/            GitHub client: domain types, Reader/Writer/Client, App auth, retry transport; query/ (search builder), fake/ (test double), clienttest/ (conformance suite)
 internal/config/            .ard/config.yaml + role directory loading into a Resolved value (pure, fs.FS in)
 internal/configcmd/         `ard config check` handler: prints the resolved config, returns validation errors; `--ref` checks a commit

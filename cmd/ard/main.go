@@ -5,6 +5,7 @@ package main
 import (
 	"io"
 	"os"
+	"runtime/debug"
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/configcmd"
@@ -21,7 +22,20 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	return cli.Run(args, stdout, stderr, handlers(), version)
+	info, ok := debug.ReadBuildInfo()
+	return cli.Run(args, stdout, stderr, handlers(), resolveVersion(version, info, ok))
+}
+
+// resolveVersion prefers the -X main.version value. Without it, a binary
+// from "go install ...@vX.Y.Z" carries the tag only in its build info.
+func resolveVersion(v string, info *debug.BuildInfo, ok bool) string {
+	if v != "dev" {
+		return v
+	}
+	if ok && info != nil && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
 }
 
 // handlers wires one function per subcommand. Each new command adds one
