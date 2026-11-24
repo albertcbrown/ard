@@ -23,7 +23,7 @@ const (
 	DeniedDuplicate         // same key already held, or earlier in this batch
 	DeniedInvalid           // malformed candidate (caller bug)
 	DeniedLimited           // its account or model family is out of quota until a reset time
-	DeniedBudget            // a daily dollar cap (its role's or the repo's) is reached
+	DeniedBudget            // a daily dollar or token cap is reached
 )
 
 var verdictNames = [...]string{"granted", "full", "outranked", "issue-busy", "duplicate", "invalid", "limited", "budget"}
@@ -62,7 +62,7 @@ type Options struct {
 	// now. nil disables the check. A limited candidate takes no slot and
 	// reserves no demand: it does not hold lower classes back.
 	Limited func(c Candidate) time.Time
-	// Budget reports whether a daily dollar cap forbids starting c, with the
+	// Budget reports whether a daily dollar or token cap forbids starting c, with the
 	// reason. nil disables the check. A refused candidate takes no slot and
 	// reserves no demand; a job already held is never affected.
 	Budget func(c Candidate) (denied bool, reason string)
