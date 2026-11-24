@@ -1,0 +1,25 @@
+{
+  "images": {
+    "golang": "go",
+    "node": "nodejs",
+    "python": "python",
+    "alpine": "alpine-linux",
+    "debian": "debian",
+    "ubuntu": "ubuntu",
+    "postgres": "postgresql",
+    "redis": "redis",
+    "nginx": "nginx",
+    "mysql": "mysql",
+    "mariadb": "mariadb",
+    "ruby": "ruby",
+    "php": "php",
+    "eclipse-temurin": "eclipse-temurin"
+  },
+  "npm": {
+    "@angular/core": "angular",
+    "vue": "vue",
+    "next": "nextjs",
+    "nuxt": "nuxt",
+    "electron": "electron"
+  }
+}

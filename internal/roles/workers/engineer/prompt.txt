@@ -65,7 +65,7 @@ of these holds the change for a human, and nothing is pushed:
   over 1 MiB;
 - more than 256 changed files, or more changed lines across the whole pull
   request (earlier rounds count) than diff_max_lines for workers/engineer in
-  .ard/config.yaml (2,000 when it is not set). Above diff_warn_lines (1,000
+  .ard/config.yaml (3,000 when it is not set). Above diff_warn_lines (2,000
   when not set) the pull request still goes ahead, with a note that it is a
   large change;
 - an added line that looks like a credential: an access key, a token, a
@@ -94,7 +94,7 @@ when plan.md's steps name it; a human must approve those changes.
    - needs-human when:
      - there is no plan and the issue does not say clearly what to change;
      - the change needs anything under "What the controller rejects";
-     - it would exceed the diff_max_lines limit above (2,000 changed lines
+     - it would exceed the diff_max_lines limit above (3,000 changed lines
        when it is not set);
      - a product or design decision is missing;
      - there is nothing to change, because the default branch already does

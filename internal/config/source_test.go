@@ -38,3 +38,31 @@ func TestLocalPaused(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedRoles(t *testing.T) {
+	cfg := func(s string) fstest.MapFS { return fstest.MapFS{".ard/config.yaml": {Data: []byte(s)}} }
+	if sc, err := SharedRoles(fstest.MapFS{}); sc != nil || err != nil {
+		t.Errorf("missing file = %v, %v", sc, err)
+	}
+	if sc, err := SharedRoles(cfg("max_pods: 2\n")); sc != nil || err != nil {
+		t.Errorf("key absent = %v, %v", sc, err)
+	}
+	sc, err := SharedRoles(cfg("roles_repo: {repo: a/b}\n"))
+	if err != nil || sc == nil || sc.Repo != "a/b" || sc.Ref != "" {
+		t.Errorf("default ref = %v, %v", sc, err)
+	}
+	sc, err = SharedRoles(cfg("roles_repo: {repo: a/b, ref: v1}\n"))
+	if err != nil || sc == nil || sc.Ref != "v1" {
+		t.Errorf("explicit ref = %v, %v", sc, err)
+	}
+	if _, err := SharedRoles(cfg("roles_repo: : bad")); err == nil {
+		t.Error("invalid YAML: want an error")
+	}
+}
+
+func TestSharedSourcePaths(t *testing.T) {
+	want := []string{".ard/scanners", ".ard/triage", ".ard/workers", ".ard/reviewers"}
+	if got := SharedSourcePaths(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SharedSourcePaths() = %v, want %v", got, want)
+	}
+}

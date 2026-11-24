@@ -44,6 +44,14 @@ type Intervals struct {
 	Workers   Duration // default 5m
 	Reviewers Duration // default 5m
 	Merger    Duration // default 5m
+	PRWatch   Duration // default 5m
+}
+
+// PRWatch configures the PR watch loop (#267).
+type PRWatch struct {
+	// PendingTimeout is how long required checks may stay pending on one head
+	// before a notice is posted; default 2h, at least intervals.prwatch, at most 7d.
+	PendingTimeout Duration
 }
 
 // Stale configures the built-in stale-issue closer (#25); the schema lives
@@ -97,7 +105,7 @@ type Intake struct {
 // Sidecar is a read-only companion repo mounted into a role's job.
 type Sidecar struct {
 	Repo string // "owner/name"
-	Ref  string // branch, tag or full 40-hex SHA; default "main"
+	Ref  string // branch, tag or full 40-hex SHA; sidecars default "main"; roles_repo empty = remote HEAD
 }
 
 // When gates a reviewer: a nil When means the reviewer runs on every PR.
@@ -145,8 +153,8 @@ type Role struct {
 	// Diff guard thresholds on the PR's changed lines: above DiffWarnLines the
 	// PR proceeds with a "large change" note; above DiffMaxLines it is held
 	// for a human. Both at least 1, DiffWarnLines <= DiffMaxLines.
-	DiffWarnLines int // default 1000
-	DiffMaxLines  int // default 2000
+	DiffWarnLines int // default 2000
+	DiffMaxLines  int // default 3000
 
 	// Reviewer only; nil = always.
 	When *When
@@ -207,9 +215,12 @@ type Resolved struct {
 	Intake         Intake
 	ProtectedPaths []string // merge.protected_paths: "dir/" = directory prefix, else doublestar glob; see Protected
 	Stale          Stale
+	PRWatch        PRWatch
 	Redact         Redact
 	Sidecars       map[string]Sidecar
-	Roles          []Role // sorted by Kind then Name
+	RolesRepo      *Sidecar // roles_repo: shared role directories; nil = none
+	RolesSHA       string   // commit of RolesRepo merged into the snapshot; set by configsrc
+	Roles          []Role   // sorted by Kind then Name
 }
 
 // Role returns the role of the given kind and name.

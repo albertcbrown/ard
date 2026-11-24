@@ -27,6 +27,7 @@ const (
 	// EventGate: the triage fan-in gate acted; data has verdict, reason and worker.
 	EventGate = "gate"
 	// EventMerge: the merger squash-merged a PR; data has pr, head and merge_sha.
+	// prwatch records a human merge the same way, plus actor.
 	EventMerge = "merge"
 	// EventReviewRound: a review fix round changed phase; data has round, phase, reason, pr, head, worker and roles.
 	EventReviewRound = "review_round"
@@ -39,6 +40,10 @@ const (
 	// (2006-01-02, UTC), spent_usd, cap_usd and unpriced. It is also the
 	// marker that stops a second notice for the same scope and day.
 	EventBudgetCapped = "budget_capped"
+	// EventPRWatch: the prwatch loop acted on a PR; data has pr, head and
+	// transition ("closed_unmerged", "pending_timeout", "draft_red"). It is the
+	// marker that stops a second action for the same (pr, head, transition).
+	EventPRWatch = "pr_watch"
 )
 
 // Event is one row of the append-only event log. Data holds structured fields
