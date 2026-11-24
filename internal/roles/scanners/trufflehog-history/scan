@@ -1,0 +1,115 @@
+#!/bin/sh
+# trufflehog-history scanner: files leaked-credential findings for a human,
+# from the full git history.
+#
+# Contract: run with $ARD_HISTORY set to a read-only bare clone with every fetched ref. Sibling
+# files (findings.jq, exclude-paths, allow) are found from this script's own
+# path. Writes only to a temp dir. Needs no token. stdout (JSON lines, one
+# finding each) is printed only at the very end. Exit 0 = ok, 1 = failed
+# (nothing on stdout), 2 = a required tool is missing.
+#
+# Owner rules: no verification (--no-verification: no credential is ever sent
+# to a provider); every commit of every ref (trufflehog git on $ARD_HISTORY); only DetectorName,
+# the file, the line and a hash of the secret leave the project stage: Raw,
+# RawV2, Redacted, SecretParts, ExtraData, StructuredData and the rest never
+# leave this script. The secret exists only in pipes: never in a file, argv,
+# stdout or stderr. --no-ignore-tag: inline trufflehog:ignore is not honoured.
+#
+# Human-owned files next to this script: exclude-paths (regexes) and allow
+# (one trufflehog:<16 hex> fingerprint per line, # comments). A bad allow
+# entry fails the run. .git is always excluded.
+#
+# The commit, author email and timestamp trufflehog reports are dropped too.
+# Fingerprints use the same salt as scanners/trufflehog, so one value is one fingerprint in both.
+#
+# Never pass --since-commit, --max-depth, --branch, --detector-timeout, --archive-timeout,
+# --filter-unverified, --filter-entropy, --filter-* or --results: a partial or
+# load-dependent result would make the pipeline autoclose live findings.
+# Never use set -x: it would print the secret.
+set -eu
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+die() { echo "trufflehog: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || { echo "trufflehog: $1 not found" >&2; exit 2; }; }
+need trufflehog
+need jq
+need git
+if command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum; }
+elif command -v shasum >/dev/null 2>&1; then sha() { shasum -a 256; }
+else echo "trufflehog: sha256sum not found" >&2; exit 2; fi
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ard-trufflehog-history.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+[ -n "${ARD_HISTORY:-}" ] && [ -d "$ARD_HISTORY" ] || { echo "trufflehog: ARD_HISTORY is not a directory" >&2; exit 2; }
+
+echo "trufflehog: $(trufflehog --version 2>&1 | head -n 1 || true)" >&2
+
+# Exclusions: .git always, then the human-owned file without comments or blanks.
+printf '%s\n' '^\.git(/|$)' > "$tmp/exclude"
+if [ -e "$dir/exclude-paths" ]; then
+  grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$dir/exclude-paths" >> "$tmp/exclude" || true
+fi
+allow=$tmp/allow.txt
+: > "$allow"
+[ ! -e "$dir/allow" ] || cat "$dir/allow" > "$allow"
+jq -n -R --rawfile allow "$allow" '$allow | split("\n") | map(sub("#.*$"; "") | gsub("^\\s+|\\s+$"; ""))
+  | map(select(. != "")) | if any(test("^trufflehog:[0-9a-f]{16}$") | not) then error("bad") else empty end' 2>/dev/null \
+  || die "allow: every entry must be trufflehog:<16 hex digits> (comments start with #)"
+
+tab=$(printf '\t')
+# The secret exists only in these pipes: never in a file, argv, stdout or stderr.
+# Each stage records its own status (no pipefail in POSIX sh); "|| rc=$?" keeps
+# set -e from skipping the echo.
+{
+  rc=0
+  trufflehog git "file://$ARD_HISTORY" --bare --json --no-update --no-color --no-verification \
+    --no-ignore-tag --fail-on-scan-errors --concurrency=2 -x "$tmp/exclude" \
+    2>"$tmp/th.err" || rc=$?
+  echo "$rc" > "$tmp/th.rc"
+} | {
+  rc=0
+  # stderr dropped: a jq type error can quote the input, which holds the secret.
+  jq -r --arg stage project --arg allow "" -f "$dir/findings.jq" 2>/dev/null || rc=$?
+  echo "$rc" > "$tmp/project.rc"
+} | {
+  rc=0
+  while IFS=$tab read -r pre rest; do
+    h=$(printf 'ard-trufflehog-v1\000%s' "$pre" | sha | cut -c1-16) || { rc=1; break; }
+    case $h in *[!0-9a-f]*|'') rc=1; break ;; esac
+    [ ${#h} -eq 16 ] || { rc=1; break; }
+    printf '%s\t%s\n' "$h" "$rest"
+  done
+  echo "$rc" > "$tmp/hash.rc"
+} > "$tmp/hashed.tsv"
+
+rcof() { [ -s "$tmp/$1.rc" ] && cat "$tmp/$1.rc" || echo missing; }
+th=$(rcof th)
+if [ "$th" != 0 ]; then
+  jq -r 'select(.level == "error") | "trufflehog: \(.msg // "") \((.error // "") | tostring | .[0:200])"' \
+    "$tmp/th.err" 2>/dev/null | head -n 5 >&2 || true
+  die "trufflehog failed (exit status $th)"
+fi
+[ "$(rcof project)" = 0 ] || die "cannot parse trufflehog results"
+[ "$(rcof hash)" = 0 ] || die "cannot hash a result"
+
+summary=$(jq -c 'select(.msg == "finished scanning") | [.chunks, .verified_secrets, .unverified_secrets]' \
+  "$tmp/th.err" 2>/dev/null | tail -n 1) || die "cannot read trufflehog's log"
+case $summary in
+  \[[0-9]*,[0-9]*,[0-9]*\]) ;;
+  *) die "no \"finished scanning\" summary from trufflehog" ;;
+esac
+set -- $(echo "$summary" | tr -d '[]' | tr ',' ' ')
+chunks=$1 want=$(($2 + $3))
+got=$(wc -l < "$tmp/hashed.tsv" | tr -d ' ')
+echo "trufflehog: $chunks chunk(s), $got result(s)" >&2
+if [ "$chunks" -eq 0 ] && [ -n "$(git --git-dir "$ARD_HISTORY" rev-list -n 1 --all 2>/dev/null)" ]; then
+  die "trufflehog scanned nothing in a repository that has commits"
+fi
+[ "$got" -eq "$want" ] || die "result count $got does not match the summary's $want"
+
+jq -n -R -c --arg stage merge --rawfile allow "$allow" -f "$dir/findings.jq" "$tmp/hashed.tsv" \
+  > "$tmp/out.jsonl" || die "merge failed"
+echo "trufflehog: $(wc -l < "$tmp/out.jsonl" | tr -d ' ') finding(s)" >&2
+cat "$tmp/out.jsonl"

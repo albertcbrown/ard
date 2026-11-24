@@ -790,3 +790,32 @@ func TestCleanupForeignRepoDir(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareHistory(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	j := f.job(time.Minute)
+	j.Stage = "scanner"
+	j.History = true
+	h, err := f.l.Prepare(ctx, j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.l.Cleanup(ctx, h, executor.CleanupOptions{})
+	if h.HistoryDir != f.repo || h.View.History != f.repo {
+		t.Errorf("history dir %q view %q, want %q", h.HistoryDir, h.View.History, f.repo)
+	}
+	if got := strings.Join(ardEnv(h), "\n"); !strings.Contains(got, "ARD_HISTORY="+f.repo) {
+		t.Errorf("ARD_HISTORY missing: %s", got)
+	}
+	j = f.job(time.Minute)
+	j.Stage = "scanner"
+	h2, err := f.l.Prepare(ctx, j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.l.Cleanup(ctx, h2, executor.CleanupOptions{})
+	if h2.HistoryDir != "" || h2.View.History != "" || strings.Contains(strings.Join(ardEnv(h2), "\n"), "ARD_HISTORY") {
+		t.Errorf("a job without History sees history: %+v", h2)
+	}
+}

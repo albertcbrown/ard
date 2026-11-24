@@ -254,6 +254,11 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		return h, fmt.Errorf("create config dir: %w", err)
 	}
 	h.View.ConfigDir = cfg
+	if j.History {
+		// Host mode hands over the live clone: read-only is enforced only by the
+		// Docker mount (:ro), not on the host.
+		h.HistoryDir, h.View.History = j.RepoDir, j.RepoDir
+	}
 	// --- sidecar (#28): the executor clones, pins and mounts it read-only ---
 	if j.Sidecar != (executor.Sidecar{}) {
 		dest := filepath.Join(home, sidecarDirName)
@@ -290,6 +295,9 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 			return h, err
 		}
 		h.View = executor.Paths{Work: "/work", Role: "/role", ConfigDir: "/ard-config"}
+		if h.HistoryDir != "" {
+			h.View.History = "/history"
+		}
 		if h.SidecarDir != "" {
 			h.View.Sidecar = "/sidecar"
 		}

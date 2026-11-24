@@ -51,6 +51,10 @@ type Job struct {
 	// scanner); only valid with Stage "scanner". The zero value means it
 	// does, so a builder that forgets the field gets the host-mode warning.
 	TrustedInput bool
+	// History: the job may read the repository's full git history, read-only
+	// (Docker only; host mode does not enforce it),
+	// at Paths.History (and $ARD_HISTORY). Only valid with Stage "scanner".
+	History bool
 }
 
 // Sidecar is a read-only companion repo the executor clones for the job.
@@ -69,7 +73,13 @@ type File struct {
 // Paths are the locations as the job process sees them. ConfigDir is the
 // job's empty agent-CLI config dir (host: <home>/.claude; Docker:
 // /ard-config); it is empty on a handle stored before it existed.
-type Paths struct{ Work, Role, Sidecar, ConfigDir string }
+//
+// History is the bare clone with all fetched refs, read-only (enforced only by
+// the Docker mount; host mode gives the writable live clone); empty when the
+// job has no History. A Kubernetes executor must supply a read-only copy
+// (for example an init container running git clone --mirror, or a bundle
+// volume) at the same place.
+type Paths struct{ Work, Role, Sidecar, ConfigDir, History string }
 
 // Command is what to run. Paths must come from Handle.View.
 type Command struct {
@@ -106,6 +116,7 @@ type Handle struct {
 	Sidecar             Sidecar // copied from Job; zero on a handle stored before sidecars
 	SidecarSHA          string  // the commit the job sees; "" = no sidecar
 	TrustedInput        bool    // copied from Job by Prepare
+	HistoryDir          string  // host path of the git history mounted read-only, "" = none
 	// Scrubbed lists the Job.Scrub paths Prepare removed from the worktree.
 	// Close-out trusts an unchanged role file only if it is listed here.
 	Scrubbed []string
