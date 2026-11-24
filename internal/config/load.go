@@ -53,7 +53,7 @@ type rawOverride struct {
 	maxOpen, groupSize           *int
 	maxTestFixes, maxRounds      *int
 	diffWarnLines, diffMaxLines  *int
-	autoclose                    *bool
+	autoclose, network           *bool
 	route                        *string
 	after, reviewers             *[]string
 	when                         *rawWhen
@@ -69,7 +69,7 @@ type rawWhen struct {
 // on one kind.
 var commonOverrideKeys = map[string]bool{
 	"agent": true, "model": true, "timeout": true, "sidecar": true,
-	"max_budget_usd": true, "budget_usd_per_day": true,
+	"max_budget_usd": true, "budget_usd_per_day": true, "network": true,
 }
 
 var kindOverrideKeys = map[Kind]map[string]bool{
@@ -190,6 +190,7 @@ func checkPlanSection(s string) string {
 func applyRoleDefaults(res *Resolved, role *Role) {
 	role.Agent = res.Agent
 	role.Timeout = defaultRoleTimeout
+	role.Network = true
 	switch role.Kind {
 	case KindScanner:
 		role.Every = time.Duration(res.Intervals.Scanners)
@@ -294,6 +295,8 @@ func parseOverride(ref rawOverrideRef, kind Kind, cfgPath string) (rawOverride, 
 			case "diff_max_lines":
 				ov.diffMaxLines = &v
 			}
+		case "network":
+			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.network)...)
 		case "autoclose":
 			errs = append(errs, decodeValue(value, cfgPath, fkey, &ov.autoclose)...)
 		case "route":
@@ -411,6 +414,9 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 	}
 	if ov.groupSize != nil {
 		role.GroupSize = *ov.groupSize
+	}
+	if ov.network != nil {
+		role.Network = *ov.network
 	}
 	if ov.autoclose != nil {
 		if *ov.autoclose && role.LLMScanner() {
