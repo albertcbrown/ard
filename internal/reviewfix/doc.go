@@ -13,6 +13,10 @@
 //   - capped: max_review_rounds was reached, or a round changed no code. The
 //     issue got one comment and ard:needs-human.
 //
-// Events are compared by ID, never by time. The merger's conflict rounds will
-// use RequestRound too (a follow-up).
+// Each round has a reason, review or conflict. A conflict round (requested by
+// the merger through RequestRound) lands when the PR head is a merge commit
+// that includes the round's head; a review round lands when code changed.
+// Both count toward max_review_rounds.
+//
+// Events are compared by ID, never by time.
 package reviewfix

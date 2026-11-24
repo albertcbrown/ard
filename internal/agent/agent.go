@@ -59,6 +59,14 @@ type Spec struct {
 	Tools        []string // nil = the adapter's default profile
 	Network      bool     // from the role's network setting; never from issue text
 	Auth         Auth     // required; AuthAPIKey or AuthOAuthToken
+	// WorkerRoles is set for the triage stage only; from the resolved config, never from issue text.
+	WorkerRoles []WorkerNetwork
+}
+
+// WorkerNetwork is one worker role and its network setting.
+type WorkerNetwork struct {
+	Role    string
+	Network bool
 }
 
 // Command is what the executor should run. Argv[0] is the binary; run with

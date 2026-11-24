@@ -50,6 +50,8 @@ type Git interface {
 	FetchRef(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error
 	RevParse(ctx context.Context, dir, ref string) (string, error)
 	CodeChanged(ctx context.Context, repoDir, from, to string, exclude ...string) ([]string, error)
+	IsAncestor(ctx context.Context, repoDir, a, b string) (bool, error)
+	Parents(ctx context.Context, repoDir, rev string) ([]string, error)
 }
 
 // Deps are the loop's collaborators.
@@ -327,22 +329,42 @@ func (t *tick) landing(ctx context.Context, pr github.PullRequest, is github.Iss
 	if tip != pr.HeadSHA {
 		return nil
 	}
-	covered, _, err := prgate.Covers(ctx, d.Git, d.RepoDir, R.Head, pr.HeadSHA, "", n)
-	if err != nil {
-		return fmt.Errorf("pr %d: compare heads: %w", pr.Number, err)
+	var asking []string
+	for _, r := range requested {
+		if prgate.HasLabel(pr.Labels, labels.Changes(r)) {
+			asking = append(asking, r)
+		}
+	}
+	covered := false
+	if R.Reason == ReasonConflict {
+		// A conflict round lands when the head is a merge that includes the
+		// round's head. A merge-only resolution changes no code against
+		// that head, so the no-code check does not apply.
+		applied, err := t.mergeIncludes(ctx, R.Head, pr.HeadSHA)
+		if err != nil {
+			return fmt.Errorf("pr %d: check merge: %w", pr.Number, err)
+		}
+		covered = !applied
+		if covered {
+			if t.dry {
+				t.log.Info("reviewfix.would_cap", "issue", n, "pr", pr.Number, "why", "conflict unresolved")
+				return nil
+			}
+			return t.l.capPath(ctx, n, pr.Number, pr.HeadSHA, worker, Requested(rs), asking, "the last conflict round did not resolve the conflict", ReasonConflict)
+		}
+	} else {
+		var err error
+		covered, _, err = prgate.Covers(ctx, d.Git, d.RepoDir, R.Head, pr.HeadSHA, "", n)
+		if err != nil {
+			return fmt.Errorf("pr %d: compare heads: %w", pr.Number, err)
+		}
 	}
 	if covered {
 		if t.dry {
 			t.log.Info("reviewfix.would_cap", "issue", n, "pr", pr.Number, "why", "no code")
 			return nil
 		}
-		var asking []string
-		for _, r := range requested {
-			if prgate.HasLabel(pr.Labels, labels.Changes(r)) {
-				asking = append(asking, r)
-			}
-		}
-		return t.l.capPath(ctx, n, pr.Number, pr.HeadSHA, worker, Requested(rs), asking, "the last fix round changed no code")
+		return t.l.capPath(ctx, n, pr.Number, pr.HeadSHA, worker, Requested(rs), asking, "the last fix round changed no code", ReasonReview)
 	}
 	if t.dry {
 		t.log.Info("reviewfix.would_apply", "issue", n, "pr", pr.Number)
@@ -362,15 +384,33 @@ func (t *tick) landing(ctx context.Context, pr github.PullRequest, is github.Iss
 	return t.l.appendRound(ctx, n, Round{N: R.N, Phase: PhaseApplied, Reason: R.Reason, PR: pr.Number, Head: pr.HeadSHA, Worker: worker, Roles: requested})
 }
 
+// mergeIncludes reports whether head is a merge commit that has base as an
+// ancestor and is not base itself.
+func (t *tick) mergeIncludes(ctx context.Context, base, head string) (bool, error) {
+	if base == head {
+		return false, nil
+	}
+	d := t.l.d
+	ps, err := d.Git.Parents(ctx, d.RepoDir, head)
+	if err != nil || len(ps) < 2 {
+		return false, err
+	}
+	return d.Git.IsAncestor(ctx, d.RepoDir, base, head)
+}
+
 // capPath hands the issue to a human: one comment (never finding text), the
 // needs-human label, then the capped event. A crash replays the first two.
-func (l *Loop) capPath(ctx context.Context, issue, pr int, head, worker string, count int, roles []string, why string) error {
+func (l *Loop) capPath(ctx context.Context, issue, pr int, head, worker string, count int, roles []string, why, reason string) error {
 	d := l.d
 	marker := "<!-- ard:review-rounds head=" + head + " -->"
-	text := fmt.Sprintf("Review fix rounds stopped on pull request #%d: %s. Reviewers still asking for changes: %s. A person needs to look at it: raise max_review_rounds, or fix the PR and remove the ard:review:<role>:changes labels so reviewers rerun.",
-		pr, why, strings.Join(roles, ", "))
+	kind, fix := "Review fix", "raise max_review_rounds, or fix the PR and remove the ard:review:<role>:changes labels so reviewers rerun"
+	if reason == ReasonConflict {
+		kind, fix = "Conflict", "raise max_review_rounds, or resolve the conflict with main by hand and remove ard:needs-human"
+	}
+	text := fmt.Sprintf("%s rounds stopped on pull request #%d: %s. Reviewers still asking for changes: %s. A person needs to look at it: %s.",
+		kind, pr, why, strings.Join(roles, ", "), fix)
 	if len(roles) == 0 {
-		text = fmt.Sprintf("Review fix rounds stopped on pull request #%d: %s. A person needs to look at it: raise max_review_rounds, or fix the PR and remove the ard:review:<role>:changes labels so reviewers rerun.", pr, why)
+		text = fmt.Sprintf("%s rounds stopped on pull request #%d: %s. A person needs to look at it: %s.", kind, pr, why, fix)
 	}
 	if err := agentjob.PostOnce(ctx, d.Reader, d.Effects, issue, marker, text); err != nil {
 		return err
@@ -378,5 +418,5 @@ func (l *Loop) capPath(ctx context.Context, issue, pr int, head, worker string, 
 	if err := d.Effects.AddLabels(ctx, issue, labels.NeedsHuman); err != nil {
 		return fmt.Errorf("issue %d: add needs-human: %w", issue, err)
 	}
-	return l.appendRound(ctx, issue, Round{N: count, Phase: PhaseCapped, Reason: ReasonReview, PR: pr, Head: head, Worker: worker, Roles: roles})
+	return l.appendRound(ctx, issue, Round{N: count, Phase: PhaseCapped, Reason: reason, PR: pr, Head: head, Worker: worker, Roles: roles})
 }
