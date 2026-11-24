@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,7 +144,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 	return m
 }
 
-var starterTree = []string{".ard/config.yaml", ".ard/reviewers/eng-review/prompt.txt", ".ard/reviewers/license-review/allowlist.txt", ".ard/reviewers/license-review/prompt.txt", ".ard/reviewers/product-manager-review/prompt.txt", ".ard/reviewers/security-review/prompt.txt", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan", ".ard/scanners/docs/Dockerfile", ".ard/scanners/docs/docscan.go", ".ard/scanners/docs/scan", ".ard/scanners/error-codes/Dockerfile", ".ard/scanners/error-codes/errcodes.jq", ".ard/scanners/error-codes/scan", ".ard/scanners/lint/Dockerfile", ".ard/scanners/lint/normalize.jq", ".ard/scanners/lint/scan", ".ard/scanners/lts/Dockerfile", ".ard/scanners/lts/eol.jq", ".ard/scanners/lts/products.json", ".ard/scanners/lts/refs.jq", ".ard/scanners/lts/scan", ".ard/scanners/missing-tests/Dockerfile", ".ard/scanners/missing-tests/missingtests.go", ".ard/scanners/missing-tests/scan", ".ard/scanners/trufflehog-history/Dockerfile", ".ard/scanners/trufflehog-history/exclude-paths", ".ard/scanners/trufflehog-history/findings.jq", ".ard/scanners/trufflehog-history/history", ".ard/scanners/trufflehog-history/scan", ".ard/scanners/trufflehog/Dockerfile", ".ard/scanners/trufflehog/exclude-paths", ".ard/scanners/trufflehog/findings.jq", ".ard/scanners/trufflehog/scan", ".ard/triage/architect/prompt.txt", ".ard/triage/designer/prompt.txt", ".ard/triage/documentation-planner/prompt.txt", ".ard/triage/engineer/prompt.txt", ".ard/triage/lead/prompt.txt", ".ard/triage/product-manager/prompt.txt", ".ard/workers/engineer/prompt.txt"}
+var starterTree = []string{".ard/PRODUCT.md", ".ard/TECH_STACK.md", ".ard/VISION.md", ".ard/config.yaml", ".ard/reviewers/eng-review/prompt.txt", ".ard/reviewers/license-review/allowlist.txt", ".ard/reviewers/license-review/prompt.txt", ".ard/reviewers/product-manager-review/prompt.txt", ".ard/reviewers/security-review/prompt.txt", ".ard/scanners/cve/Dockerfile", ".ard/scanners/cve/merge.jq", ".ard/scanners/cve/scan", ".ard/scanners/docs/Dockerfile", ".ard/scanners/docs/docscan.go", ".ard/scanners/docs/scan", ".ard/scanners/error-codes/Dockerfile", ".ard/scanners/error-codes/errcodes.jq", ".ard/scanners/error-codes/scan", ".ard/scanners/lint/Dockerfile", ".ard/scanners/lint/normalize.jq", ".ard/scanners/lint/scan", ".ard/scanners/lts/Dockerfile", ".ard/scanners/lts/eol.jq", ".ard/scanners/lts/products.json", ".ard/scanners/lts/refs.jq", ".ard/scanners/lts/scan", ".ard/scanners/missing-tests/Dockerfile", ".ard/scanners/missing-tests/missingtests.go", ".ard/scanners/missing-tests/scan", ".ard/scanners/trufflehog-history/Dockerfile", ".ard/scanners/trufflehog-history/exclude-paths", ".ard/scanners/trufflehog-history/findings.jq", ".ard/scanners/trufflehog-history/history", ".ard/scanners/trufflehog-history/scan", ".ard/scanners/trufflehog/Dockerfile", ".ard/scanners/trufflehog/exclude-paths", ".ard/scanners/trufflehog/findings.jq", ".ard/scanners/trufflehog/scan", ".ard/triage/architect/prompt.txt", ".ard/triage/designer/prompt.txt", ".ard/triage/documentation-planner/prompt.txt", ".ard/triage/engineer/prompt.txt", ".ard/triage/lead/prompt.txt", ".ard/triage/product-manager/prompt.txt", ".ard/workers/engineer/prompt.txt"}
 
 func TestInitOpensPR(t *testing.T) {
 	h := newHarness(t)
@@ -536,12 +537,13 @@ func TestDefaultProtectedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.ProtectedPaths) != 17 || res.ProtectedPaths[0] != ".github/" || res.ProtectedPaths[12] != ".mcp.json" || res.ProtectedPaths[16] != "**/.golangci.json" {
+	if len(res.ProtectedPaths) != 20 || res.ProtectedPaths[0] != ".github/" || res.ProtectedPaths[6] != ".ard/PRODUCT.md" || res.ProtectedPaths[8] != ".ard/TECH_STACK.md" || res.ProtectedPaths[15] != ".mcp.json" || res.ProtectedPaths[19] != "**/.golangci.json" {
 		t.Errorf("ProtectedPaths = %v", res.ProtectedPaths)
 	}
 	yes := []string{".github/workflows/ci.yml", ".ard/config.yaml", ".ard/triage/x/prompt.txt", "CODEOWNERS", "docs/CODEOWNERS",
-		".github/CODEOWNERS", "CLAUDE.md", "pkg/CLAUDE.md", "AGENTS.md", "a/b/AGENTS.md", ".claude/settings.json", ".mcp.json", ".golangci.yml", "sub/.golangci.toml"}
-	no := []string{".ard/12/issue.md", "main.go", "docs/CODEOWNERS.md", "pkg/.mcp.json"}
+		".github/CODEOWNERS", "CLAUDE.md", "pkg/CLAUDE.md", "AGENTS.md", "a/b/AGENTS.md", ".claude/settings.json", ".mcp.json", ".golangci.yml", "sub/.golangci.toml",
+		".ard/PRODUCT.md", ".ard/VISION.md", ".ard/TECH_STACK.md"}
+	no := []string{".ard/NOTES.md", "docs/PRODUCT.md", ".ard/12/issue.md", "main.go", "docs/CODEOWNERS.md", "pkg/.mcp.json"}
 	for _, p := range yes {
 		if !res.Protected(p) {
 			t.Errorf("Protected(%q) = false, want true", p)
@@ -589,5 +591,85 @@ func TestPlan(t *testing.T) {
 		if (op.Act == actOverwrite) != (op.File.Path == ".ard/scanners/cve/scan") {
 			t.Errorf("force: op %+v", op)
 		}
+	}
+}
+
+func TestPlanContextFiles(t *testing.T) {
+	files, err := starter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := ContextPaths()
+	for _, force := range []bool{false, true} {
+		// absent: created
+		ops, err := plan(fstest.MapFS{}, files, force)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range ops {
+			if slices.Contains(ctx, o.File.Path) && o.Act != actCreate {
+				t.Errorf("force=%v absent %s: act %s, want add", force, o.File.Path, o.Act)
+			}
+		}
+		// present with other content, even executable: left alone, no conflict
+		existing := fstest.MapFS{}
+		for _, p := range ctx {
+			existing[p] = &fstest.MapFile{Data: []byte("mine\n"), Mode: 0o755}
+		}
+		ops, err = plan(existing, files, force)
+		if err != nil {
+			t.Fatalf("force=%v: %v", force, err)
+		}
+		for _, o := range ops {
+			if slices.Contains(ctx, o.File.Path) && o.Act != actUnchanged {
+				t.Errorf("force=%v present %s: act %s, want unchanged", force, o.File.Path, o.Act)
+			}
+		}
+	}
+}
+
+func TestInitContextFiles(t *testing.T) {
+	has := func(tree []string, p string) bool { return slices.Contains(tree, p) }
+	for _, force := range []bool{false, true} {
+		// all present with different content: none proposed, none overwritten
+		h := newHarness(t)
+		h.commitMain(t, map[string]string{".ard/PRODUCT.md": "mine\n", ".ard/VISION.md": "mine\n", ".ard/TECH_STACK.md": "mine\n"})
+		if _, err := h.run(t, force, false); err != nil {
+			t.Fatalf("force=%v: %v", force, err)
+		}
+		tree := h.tree(t, "ard-init")
+		for _, p := range ContextPaths() {
+			if !has(h.tree(t, "main"), p) {
+				t.Fatalf("%s missing on main", p)
+			}
+			_ = tree
+		}
+		if got := gittest.Run(t, h.bare, "diff", "--name-only", "main", "ard-init"); strings.Contains(got, "PRODUCT.md") || strings.Contains(got, "VISION.md") || strings.Contains(got, "TECH_STACK.md") {
+			t.Errorf("force=%v: ard-init changes context files:\n%s", force, got)
+		}
+		if got := gittest.Run(t, h.bare, "show", "ard-init:.ard/PRODUCT.md"); got != "mine\n" {
+			t.Errorf("force=%v: PRODUCT.md = %q", force, got)
+		}
+
+		// one present, two absent: only the two are proposed
+		h = newHarness(t)
+		h.commitMain(t, map[string]string{".ard/VISION.md": "mine\n"})
+		if _, err := h.run(t, force, false); err != nil {
+			t.Fatalf("force=%v: %v", force, err)
+		}
+		if got := gittest.Run(t, h.bare, "diff", "--name-only", "main", "ard-init"); strings.Contains(got, "VISION.md") || !strings.Contains(got, ".ard/PRODUCT.md") || !strings.Contains(got, ".ard/TECH_STACK.md") {
+			t.Errorf("force=%v: diff:\n%s", force, got)
+		}
+	}
+}
+
+func TestInitBodyProtectedPathsHint(t *testing.T) {
+	res, err := loadStarter(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := initBody(nil, res)
+	if !strings.Contains(body, "merge.protected_paths") || !strings.Contains(body, "`.ard/TECH_STACK.md`") {
+		t.Errorf("body lacks the protected_paths instruction:\n%s", body)
 	}
 }

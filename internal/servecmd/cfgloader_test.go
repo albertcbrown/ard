@@ -113,3 +113,12 @@ func TestReportReplacesHostPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestWarnHostAgentImage(t *testing.T) {
+	var logs, errs bytes.Buffer
+	c := &cfgLoader{log: slog.New(slog.NewTextHandler(&logs, nil)), stderr: &errs, agentImage: true}
+	c.warnHost(&config.Resolved{Executor: "local", Roles: []config.Role{{Kind: config.KindTriage, Name: "lead"}}})
+	if logs.Len() != 0 || errs.Len() != 0 {
+		t.Errorf("warned with an agent image: %q %q", logs.String(), errs.String())
+	}
+}

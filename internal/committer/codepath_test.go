@@ -5,7 +5,7 @@ import "testing"
 func TestCheckCodePath(t *testing.T) {
 	refused := []string{
 		".github/workflows/ci.yml", ".github/CODEOWNERS", ".GitHub/x",
-		".ard/config.yaml", ".ard/workers/engineer/prompt.txt", ".ard/12/worker-engineer.md", ".ARD/Config.yaml",
+		".ard/config.yaml", ".ard/PRODUCT.md", ".ard/VISION.md", ".ard/TECH_STACK.md", ".ard/workers/engineer/prompt.txt", ".ard/12/worker-engineer.md", ".ARD/Config.yaml",
 		".ard-input/12/issue.md", "a/.git/hooks/x", "a/.GIT/x", ".gitmodules", "sub/.gitmodules", ".gitattributes", "sub/.gitattributes", "a/.GitAttributes",
 		".", "..", "../x", "a/../../x", "../../etc/passwd", ".git\u200c/x", ".github\u200b/x", "a\ufffd", "./a", "a//b", "/abs", "a\\b", "a\x01b", "", ".github", ".ard",
 		// secret-shaped
