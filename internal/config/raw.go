@@ -28,18 +28,20 @@ type rawConfig struct {
 	protectedPaths         []string // merge.protected_paths
 	haveMerge              bool
 	stale                  rawStale
+	prWatchPendingTimeout  *Duration // pr_watch.pending_timeout
 	haveStale              bool
 	gitleaksEnabled        *bool // redact.gitleaks.enabled
 	gitleaksPath           *string
 	gitleaksBlockAutoclose *bool // redact.gitleaks.block_autoclose_when_missing
 	sidecars               map[string]rawSidecar
+	rolesRepo              *rawSidecar
 	overrides              []rawOverrideRef
 }
 
 // rawIntervals keeps every interval optional so defaults can tell "unset"
 // apart from an explicit value.
 type rawIntervals struct {
-	scanners, triage, workers, reviewers, merger *Duration
+	scanners, triage, workers, reviewers, merger, prwatch *Duration
 }
 
 // rawIntake keeps both keys optional so defaults can tell "unset" apart
@@ -126,10 +128,14 @@ func parseConfigDoc(doc *yaml.Node, cfgPath string) (rawConfig, Errors) {
 			errs = append(errs, raw.parseMerge(value, cfgPath)...)
 		case "stale":
 			errs = append(errs, raw.parseStale(value, cfgPath)...)
+		case "pr_watch":
+			errs = append(errs, raw.parsePRWatch(value, cfgPath)...)
 		case "redact":
 			errs = append(errs, raw.parseRedact(value, cfgPath)...)
 		case "sidecars":
 			errs = append(errs, raw.parseSidecars(value, cfgPath)...)
+		case "roles_repo":
+			errs = append(errs, raw.parseRolesRepo(value, cfgPath)...)
 		case "overrides":
 			errs = append(errs, raw.parseOverrides(value, cfgPath)...)
 		default:
@@ -176,12 +182,13 @@ func (ri *rawIntervals) parse(n *yaml.Node, file, prefix string) Errors {
 	set("workers", &ri.workers)
 	set("reviewers", &ri.reviewers)
 	set("merger", &ri.merger)
+	set("prwatch", &ri.prwatch)
 	for i := 0; i < len(n.Content); i += 2 {
 		name := n.Content[i].Value
 		switch name {
-		case "scanners", "triage", "workers", "reviewers", "merger":
+		case "scanners", "triage", "workers", "reviewers", "merger", "prwatch":
 		default:
-			errs = append(errs, &Error{File: file, Key: prefix + "." + name, Msg: "unknown key (want one of scanners, triage, workers, reviewers, merger)"})
+			errs = append(errs, &Error{File: file, Key: prefix + "." + name, Msg: "unknown key (want one of scanners, triage, workers, reviewers, merger, prwatch)"})
 		}
 	}
 	return errs
@@ -266,6 +273,31 @@ func (raw *rawConfig) parseStale(n *yaml.Node, file string) Errors {
 	return errs
 }
 
+func (raw *rawConfig) parsePRWatch(n *yaml.Node, file string) Errors {
+	var errs Errors
+	if n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return Errors{{File: file, Key: "pr_watch", Msg: "must be a mapping"}}
+	}
+	for i := 0; i < len(n.Content); i += 2 {
+		key, value := n.Content[i], n.Content[i+1]
+		switch key.Value {
+		case "pending_timeout":
+			var d *Duration
+			bad := decodeValue(value, file, "pr_watch.pending_timeout", &d)
+			errs = append(errs, bad...)
+			if len(bad) == 0 {
+				raw.prWatchPendingTimeout = d
+			}
+		default:
+			errs = append(errs, &Error{File: file, Key: "pr_watch." + key.Value, Msg: "unknown key (want pending_timeout)"})
+		}
+	}
+	return errs
+}
+
 func (raw *rawConfig) parseRedact(n *yaml.Node, file string) Errors {
 	var errs Errors
 	if n.Tag == "!!null" {
@@ -334,6 +366,30 @@ func (raw *rawConfig) parseSidecars(n *yaml.Node, file string) Errors {
 		}
 		raw.sidecars[name] = sc
 	}
+	return errs
+}
+
+func (raw *rawConfig) parseRolesRepo(n *yaml.Node, file string) Errors {
+	var errs Errors
+	if n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return Errors{{File: file, Key: "roles_repo", Msg: "must be a mapping with repo and ref"}}
+	}
+	var rr rawSidecar
+	for j := 0; j < len(n.Content); j += 2 {
+		fkey, fval := n.Content[j], n.Content[j+1]
+		switch fkey.Value {
+		case "repo":
+			errs = append(errs, decodeValue(fval, file, "roles_repo.repo", &rr.repo)...)
+		case "ref":
+			errs = append(errs, decodeValue(fval, file, "roles_repo.ref", &rr.ref)...)
+		default:
+			errs = append(errs, &Error{File: file, Key: "roles_repo." + fkey.Value, Msg: "unknown key (want repo or ref)"})
+		}
+	}
+	raw.rolesRepo = &rr
 	return errs
 }
 

@@ -26,6 +26,8 @@ Durations are Go-style strings such as `30m` or `4h`; `d` is not accepted, so wr
 | `intervals.workers` | `5m` | Worker loop poll |
 | `intervals.reviewers` | `5m` | Reviewer loop poll |
 | `intervals.merger` | `5m` | Merger loop poll |
+| `intervals.prwatch` | `5m` | PR watch loop poll (minimum `1m`): checks ard's open pull requests for human merges, closes without merge, long-pending checks and red drafts |
+| `pr_watch.pending_timeout` | `2h` | How long a required check may stay pending before the PR watch flags it (at least the interval, at most `7d`) |
 
 The Reaper runs every minute and is not configurable.
 
@@ -67,6 +69,7 @@ A sidecar is a read-only reference repository mounted for a role. `<name>` is yo
 | --- | --- | --- |
 | `sidecars.<name>.repo` | required | `owner/repo` of the sidecar |
 | `sidecars.<name>.ref` | `main` | Branch, tag or commit to mount |
+| `roles_repo` | none | Optional shared roles repository: `{repo: owner/name, ref: <branch, tag or commit>}`. Its role directories load beneath the repo's own `.ard/`, and a local role of the same name wins. With no `ref` it follows the shared repo's default branch |
 
 ## Overrides
 

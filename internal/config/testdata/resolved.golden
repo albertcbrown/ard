@@ -13,6 +13,7 @@ intervals:
   workers: 5m
   reviewers: 5m
   merger: 5m
+  prwatch: 10m
 intake:
   mode: label
 protected_paths:
@@ -20,6 +21,8 @@ protected_paths:
 stale:
   inactive_for: 30d
   suppress_for: 90d
+pr_watch:
+  pending_timeout: 3h
 redact:
   gitleaks:
     enabled: false
@@ -91,7 +94,7 @@ roles:
     reviewers:
       - security-review
     diff_warn_lines: 800
-    diff_max_lines: 2000
+    diff_max_lines: 3000
   - name: eng-review
     kind: reviewer
     dir: .ard/reviewers/eng-review

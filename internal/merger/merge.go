@@ -147,11 +147,11 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		t.fail(n, "app_id", err)
 		return false
 	}
-	switch st, names := evalChecks(t.required, runs, statuses, graceOver); st {
-	case checksPending:
+	switch st, names := prgate.EvalChecks(t.required, runs, statuses, graceOver); st {
+	case prgate.ChecksPending:
 		t.log.Info("merge.waiting_checks", "pr", n, "head", head, "checks", strings.Join(names, ","), "grace_over", graceOver)
 		return false
-	case checksRed:
+	case prgate.ChecksRed:
 		return t.needsHuman(ctx, pr, "checks_failed", checkList(names))
 	}
 

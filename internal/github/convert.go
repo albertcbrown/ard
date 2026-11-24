@@ -73,6 +73,7 @@ func prFrom(p *gogh.PullRequest) PullRequest {
 		State:          State(p.GetState()),
 		Draft:          p.GetDraft(),
 		Merged:         p.GetMerged() || p.MergedAt != nil,
+		MergedBy:       login(p.MergedBy),
 		Author:         login(p.User),
 		Labels:         labelNames(p.Labels),
 		MergeableState: p.GetMergeableState(),

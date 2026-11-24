@@ -74,8 +74,8 @@ wrote one).
    - "### Size": S (under about 50 changed lines), M (under 300), L (up to
      the worker's block limit) or XL (over it), plus the files touched. The
      block limit is diff_max_lines for the worker role in .ard/config.yaml,
-     2,000 changed lines when it is not set; the worker still goes ahead
-     above diff_warn_lines (1,000 when not set), with a large-change note.
+     3,000 changed lines when it is not set; the worker still goes ahead
+     above diff_warn_lines (2,000 when not set), with a large-change note.
 5. When the status is blocked or needs-human, leave plan.md untouched.
 6. Write .ard/N/triage-engineer.md last.
 

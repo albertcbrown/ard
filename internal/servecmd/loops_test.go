@@ -37,6 +37,7 @@ func TestSelectLoops(t *testing.T) {
 		{"empty keeps every loop", nil, knownLoops},
 		{"soak set, in registration order", []string{"reaper", "scanners", "stale"}, []string{"scanners", "stale", "reaper"}},
 		{"spaces trimmed, duplicates once", []string{" stale", "stale"}, []string{"stale"}},
+		{"prwatch is selectable", []string{"prwatch", "merger"}, []string{"merger", "prwatch"}},
 		{"a known loop that is not registered is not an error", []string{"triage"}, []string{"triage"}},
 	}
 	for _, tc := range tests {
@@ -62,7 +63,7 @@ func TestSelectLoopsUnknownName(t *testing.T) {
 	if !errors.As(err, &ee) || ee.Code != 2 {
 		t.Fatalf("err = %v, want ExitError code 2", err)
 	}
-	for _, s := range []string{`"scaners"`, "scanners, stale, triage, workers, reviewers, reviewfix, merger, janitor, reaper, budget"} {
+	for _, s := range []string{`"scaners"`, "scanners, stale, triage, workers, reviewers, reviewfix, merger, prwatch, janitor, reaper, budget"} {
 		if !strings.Contains(err.Error(), s) {
 			t.Errorf("error %q does not name %s", err, s)
 		}
@@ -81,7 +82,7 @@ func TestServeUnknownLoopFailsFirst(t *testing.T) {
 
 // The loop names registerLoops' constructors report are the known names.
 func TestKnownLoopsMatchLoopNames(t *testing.T) {
-	want := []string{"scanners", "stale", "triage", "workers", "reviewers", "reviewfix", "merger", "janitor", "reaper", "budget"}
+	want := []string{"scanners", "stale", "triage", "workers", "reviewers", "reviewfix", "merger", "prwatch", "janitor", "reaper", "budget"}
 	if !reflect.DeepEqual(knownLoops, want) {
 		t.Errorf("knownLoops = %v, want %v", knownLoops, want)
 	}
