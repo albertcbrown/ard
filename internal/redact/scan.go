@@ -96,7 +96,11 @@ func scanLine(data []byte, line, base int, emit func(Finding)) {
 				continue
 			}
 			for _, m := range ru.re.FindAllSubmatchIndex(data, -1) {
-				v := data[m[2]:m[3]]
+				quoted := m[3] > m[2]
+				v := data[m[4]:m[5]]
+				if !quoted && (codeRef(v) || numeric(v)) {
+					continue
+				}
 				if placeholder(v) || entropy(v) < entropyThreshold {
 					continue
 				}
