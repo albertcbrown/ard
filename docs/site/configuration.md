@@ -92,5 +92,5 @@ A sidecar is a read-only reference repository mounted for a role. `<name>` is yo
 | `max_test_fixes` | `2` | workers | Fix attempts after a red test run |
 | `max_review_rounds` | `3` | workers | Review rounds before `needs-human` |
 | `reviewers` | all reviewer roles | workers | Reviewer roles requested for this worker's PRs |
-| `diff_warn_lines` | `1000` | workers | Changed lines above which the PR carries a large-change note |
-| `diff_max_lines` | `2000` | workers | Changed lines above which the change is held for a human |
+| `diff_warn_lines` | `2000` | workers | Changed lines above which the PR carries a large-change note |
+| `diff_max_lines` | `3000` | workers | Changed lines above which the change is held for a human |
