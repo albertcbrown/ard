@@ -77,7 +77,7 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 	if h.View.ConfigDir != "" {
 		a = append(a, "-v", filepath.Join(h.Home, configDirName)+":/ard-config")
 	}
-	a = append(a, "-w", "/work", "-e", "HOME=/tmp", "-e", "LANG=C.UTF-8", "-e", "GIT_TERMINAL_PROMPT=0")
+	a = append(a, "-w", "/work", "-e", "HOME=/tmp", "-e", "GOFLAGS=-buildvcs=false", "-e", "LANG=C.UTF-8", "-e", "GIT_TERMINAL_PROMPT=0")
 	for _, kv := range ardEnv(h) {
 		a = append(a, "-e", kv)
 	}
@@ -122,6 +122,29 @@ func (l *Local) ensureImage(ctx context.Context, j executor.Job, logPath string)
 		return "", fmt.Errorf("docker build %s: %w", tag, err)
 	}
 	return tag, nil
+}
+
+// ensurePulled makes the default agent image available. A local image (an
+// image ID, or a digest already pulled) is used as is; otherwise a digest ref
+// is pulled. Output is appended to logPath.
+func (l *Local) ensurePulled(ctx context.Context, ref, logPath string) error {
+	if _, err := l.docker(ctx, "image", "inspect", ref); err == nil {
+		return nil
+	}
+	if !strings.Contains(ref, "@") {
+		return fmt.Errorf("agent image %s is not present locally and cannot be pulled", ref)
+	}
+	pctx, cancel := context.WithTimeout(ctx, l.buildTimeout)
+	defer cancel()
+	out, err := l.docker(pctx, "pull", ref)
+	if f, ferr := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600); ferr == nil {
+		f.Write(out)
+		f.Close()
+	}
+	if err != nil {
+		return fmt.Errorf("docker pull %s: %w", ref, err)
+	}
+	return nil
 }
 
 func (l *Local) dockerKill(sig string, h executor.Handle) {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -114,6 +115,12 @@ func selectLoops(loops []controller.Loop, want []string) ([]controller.Loop, err
 	return out, nil
 }
 
+// dockerProbe checks that the Docker daemon answers. A variable so tests can
+// fake it. It uses the same "docker" binary name as local.Options.DockerBin's default.
+var dockerProbe = func(ctx context.Context) ([]byte, error) {
+	return exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
+}
+
 func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []string) error {
 	if _, err := selectLoops(nil, wantLoops); err != nil {
 		return err
@@ -211,8 +218,19 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 		log.Warn("serve.pause_dir_failed", "path", filepath.Dir(pausePath), "error", err)
 	}
 
+	agentImage := os.Getenv(EnvAgentImage)
+	if agentImage != "" {
+		if err := executor.CheckImageRef(agentImage); err != nil {
+			return fmt.Errorf("ard serve: %s: %w", EnvAgentImage, err)
+		}
+		if out, err := dockerProbe(ctx); err != nil {
+			return fmt.Errorf("ard serve: %s is set but Docker is not available: %w: %s", EnvAgentImage, err, strings.TrimSpace(string(out)))
+		}
+		log.Info("serve.agent_image", "image", agentImage)
+	}
+
 	w := &wiring{
-		Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: config.DefaultMaxPods,
+		AgentImage: agentImage, Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: config.DefaultMaxPods,
 		Repo: repo, Root: clone, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners, Model: d.Model,
 		StateDir: stateDir, Started: time.Now(),
 	}
@@ -221,7 +239,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	if perr != nil {
 		log.Error("serve.config_error_paths", "error", perr)
 	}
-	loader := &cfgLoader{paths: paths, src: src, fx: d.Effects, log: log, stderr: e.Stderr, issue: func() int { return int(w.statusIssue.Load()) }}
+	loader := &cfgLoader{paths: paths, src: src, fx: d.Effects, log: log, stderr: e.Stderr, agentImage: agentImage != "", issue: func() int { return int(w.statusIssue.Load()) }}
 
 	// An origin/main whose config cannot be loaded does not abort startup:
 	// serve starts paused, tells the status issue, and retries every tick.
@@ -319,14 +337,16 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 // pool-adopt startup hook builds it inside Run), so loops must call Pool()
 // at tick time, never in their constructors.
 type wiring struct {
-	Log     *slog.Logger
-	Reader  github.Reader
-	Effects effects.Effects
-	Store   *state.Store
-	MaxPods int
-	Repo    github.Repo
-	Root    string // absolute path of the controller's own bare clone (~/.ard/repos/<owner>/<repo>.git); every committer and executor worktree is cut from it. Never the operator's checkout.
-	Home    string // the user's home directory; ~/.ard holds state, logs and worktrees
+	// AgentImage is the default agent image (ARD_AGENT_IMAGE); "" = host mode for roles without a Dockerfile.
+	AgentImage string
+	Log        *slog.Logger
+	Reader     github.Reader
+	Effects    effects.Effects
+	Store      *state.Store
+	MaxPods    int
+	Repo       github.Repo
+	Root       string // absolute path of the controller's own bare clone (~/.ard/repos/<owner>/<repo>.git); every committer and executor worktree is cut from it. Never the operator's checkout.
+	Home       string // the user's home directory; ~/.ard holds state, logs and worktrees
 	// RemoteURL is where main is fetched from and pushed to.
 	RemoteURL string
 	Token     gitx.TokenFunc
@@ -395,6 +415,9 @@ func (w *wiring) hostPaths() closeout.HostPaths {
 	return closeout.HostPaths{Home: w.Home, ArdRoot: w.ardRoot(), TempDir: os.TempDir()}
 }
 
+// EnvAgentImage is the host setting naming the default agent image.
+const EnvAgentImage = "ARD_AGENT_IMAGE"
+
 // newExecutor builds the local executor every loop uses; its host-mode hook
 // appends a state.EventHostUntrusted row to the controller database. Every
 // loop that runs jobs (scanners, and later triage, workers and reviewers)
@@ -410,7 +433,7 @@ func (w *wiring) newExecutor() (*local.Local, error) {
 		return w.exec, nil
 	}
 	ex, err := local.New(local.Options{
-		Root: w.ardRoot(), Log: w.Log, SidecarToken: w.Token, CloneDir: w.Root,
+		Root: w.ardRoot(), AgentImage: w.AgentImage, Log: w.Log, SidecarToken: w.Token, CloneDir: w.Root,
 		OnHostUntrusted: recordHostUntrusted(w.Store),
 	})
 	if err != nil {

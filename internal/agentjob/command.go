@@ -47,7 +47,7 @@ func AgentCommand(reg *agent.Registry, cfg *config.Resolved, role config.Role, s
 	spec := agent.Spec{
 		Stage: stage, Role: role.Name, Issue: n,
 		PromptFile: h.View.Role + "/prompt.txt", Untrusted: untrusted,
-		ConfigDir: h.View.ConfigDir, Model: role.Model, MaxBudgetUSD: budget, Auth: cred.Auth,
+		ConfigDir: h.View.ConfigDir, Model: role.Model, MaxBudgetUSD: budget, Auth: cred.Auth, Network: role.Network,
 	}
 	if h.View.Sidecar != "" {
 		spec.ReadDirs = []string{h.View.Sidecar}
@@ -69,6 +69,9 @@ func ExecJob(cfg *config.Resolved, role config.Role, j executor.Job) executor.Jo
 	}
 	if sc, ok := cfg.SidecarFor(role); ok {
 		j.Sidecar = executor.Sidecar{Name: role.Sidecar, Repo: sc.Repo, Ref: sc.Ref}
+	}
+	if !role.Network {
+		j.Network = executor.NetworkAdvisory
 	}
 	return j
 }

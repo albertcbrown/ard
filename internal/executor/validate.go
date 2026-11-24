@@ -40,6 +40,8 @@ func (j Job) Validate() error {
 		return bad("trusted input is only valid for a scanner job")
 	case j.History && j.Stage != "scanner":
 		return bad("history is only valid for a scanner job")
+	case j.Network != NetworkOn && j.Network != NetworkAdvisory && j.Network != NetworkNone:
+		return bad("network %q", j.Network)
 	case j.Timeout <= 0:
 		return bad("timeout %s", j.Timeout)
 	}
@@ -112,4 +114,19 @@ func CheckInputPath(p string) error {
 		return fmt.Errorf("path %q is inside .git", p)
 	}
 	return nil
+}
+
+var (
+	imageDigestRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$`)
+	imageIDRe     = regexp.MustCompile(`^sha256:[0-9a-f]{12,64}$`)
+)
+
+// CheckImageRef validates an agent image reference before it reaches
+// `docker run` argv: either <name>@sha256:<64 hex> or a local image ID
+// sha256:<12..64 hex>. Tags are refused because they are mutable.
+func CheckImageRef(ref string) error {
+	if imageDigestRe.MatchString(ref) || imageIDRe.MatchString(ref) {
+		return nil
+	}
+	return fmt.Errorf("%w: want <name>@sha256:<64 hex> or sha256:<hex> (12-64 digits)", ErrImageRef)
 }
