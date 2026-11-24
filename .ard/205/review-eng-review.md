@@ -9,16 +9,16 @@ findings:
     severity: low
     blocking: false
     message: |
-      The agent timeout is shortened only when the job's timeout is above zero, so a role with no limit does not count the aid time. The one-minute floor is not tested either.
-      This is fine for the starter roles (default 30m). Add a test where the aid uses nearly all of a short timeout.
+      The agent timeout is shortened only when the job's timeout is above zero, and the one-minute floor is still not tested.
+      The test at aid_test.go:83 only checks that the timeout lies between the floor and 30m, so it passes without the floor or the subtraction. Add a case where the aid's Elapsed is nearly the whole timeout and assert the agent gets exactly minAgentTime.
 ---
-The aid step matches the issue and plan.md: output is validated and redacted, a gitleaks hit on an added line blocks in code, and a failed aid cannot approve. Tests for the changed packages pass; one low finding remains and does not block.
+The aid step matches the issue and plan.md: output is validated and redacted, a gitleaks hit on an added line blocks in code, and a failed aid cannot approve. Tests pass. One low finding from the previous round remains, and it does not block.
 
 ## Checks
-- Lint: not re-run. The previous round's `make lint` (`go vet ./...`) stopped on an untouched testdata file and reported nothing on the changed files.
+- Lint: not re-run. The previous round's `make lint` stopped on an untouched testdata file and reported nothing on the changed files.
 - Tests: `go test ./internal/reviewer ./internal/closeout ./internal/config` pass.
-- Diff coverage: not re-run; the previous round measured the new functions at 85–100%.
+- Diff coverage: not re-run; the previous round measured the new functions at 85-100%.
 - Not run: the Docker integration test and the real aid script, which need Docker and the pinned tools.
 
 ## Previous findings
-- internal/reviewer/run.go (agent timeout only shortened when the timeout is above zero; no floor test): still present, low, now at line 173.
+- internal/reviewer/run.go (agent timeout floor untested; only shortened when the timeout is above zero): still present, low, at line 173.
