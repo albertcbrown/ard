@@ -12,9 +12,11 @@ import (
 	"github.com/albertcbrown/ard/internal/agentjob"
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/committer"
+	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/prgate"
+	"github.com/albertcbrown/ard/internal/reviewfix"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -122,7 +124,7 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		return false
 	}
 	if !*pr.Mergeable || pr.MergeableState == "dirty" {
-		return t.needsHuman(ctx, pr, "conflict", "")
+		return t.conflict(ctx, pr, issue, v.Roles)
 	}
 
 	// h. Behind main.
@@ -132,7 +134,7 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 		return false
 	}
 	if behind(changed) {
-		t.updateBranch(ctx, pr, issue)
+		t.updateBranch(ctx, pr, issue, v.Roles)
 		return false
 	}
 
@@ -297,9 +299,56 @@ func checkList(names []string) string {
 	return ": " + strings.Join(q, ", ")
 }
 
+// conflict handles a PR that conflicts with main. With Deps.Rounds set and a
+// configured worker it asks for a conflict round (once per head, counted
+// against max_review_rounds); otherwise it is needs-human. It never merges.
+func (t *tick) conflict(ctx context.Context, pr github.PullRequest, issue int, roles []string) bool {
+	d := t.l.d
+	if d.Rounds == nil {
+		return t.needsHuman(ctx, pr, "conflict", "")
+	}
+	worker, _, ok := prgate.ParseWorkerBranch(pr.HeadRef)
+	if !ok {
+		return t.needsHuman(ctx, pr, "conflict", "")
+	}
+	wr, ok := t.cfg.Role(config.KindWorker, worker)
+	if !ok {
+		return t.needsHuman(ctx, pr, "conflict", "")
+	}
+	rs, err := reviewfix.Rounds(ctx, d.Store, issue)
+	if err != nil {
+		t.fail(pr.Number, "conflict_rounds", err)
+		return false
+	}
+	if len(rs) > 0 {
+		if last := rs[len(rs)-1]; last.Head == pr.HeadSHA {
+			switch last.Phase {
+			case reviewfix.PhaseRequested:
+				t.log.Info("merge.conflict_round_pending", "pr", pr.Number, "issue", issue, "head", pr.HeadSHA)
+				return false
+			case reviewfix.PhaseCapped:
+				return false // a human owns it
+			}
+		}
+	}
+	if t.dry {
+		t.log.Info("merge.would_request_conflict_round", "pr", pr.Number, "issue", issue, "head", pr.HeadSHA)
+		return false
+	}
+	started, err := d.Rounds.RequestRound(ctx, reviewfix.Request{Issue: issue, PR: pr.Number, Head: pr.HeadSHA, Worker: worker, Reason: reviewfix.ReasonConflict, Roles: roles, Max: wr.MaxReviewRounds})
+	if err != nil {
+		t.fail(pr.Number, "conflict_round", err)
+		return false
+	}
+	if started {
+		t.log.Info("merge.conflict_round", "pr", pr.Number, "issue", issue, "head", pr.HeadSHA)
+	}
+	return false
+}
+
 // updateBranch merges main into the PR branch, at most once per tick. The
 // checks run again next tick on the new head.
-func (t *tick) updateBranch(ctx context.Context, pr github.PullRequest, issue int) {
+func (t *tick) updateBranch(ctx context.Context, pr github.PullRequest, issue int, roles []string) {
 	d := t.l.d
 	if t.updated {
 		t.log.Info("merge.waiting_update", "pr", pr.Number, "reason", "another branch was updated this tick")
@@ -321,7 +370,7 @@ func (t *tick) updateBranch(ctx context.Context, pr github.PullRequest, issue in
 			return
 		}
 		if cur.HeadSHA == pr.HeadSHA && cur.Mergeable != nil && (!*cur.Mergeable || cur.MergeableState == "dirty") {
-			t.needsHuman(ctx, pr, "conflict", "")
+			t.conflict(ctx, pr, issue, roles)
 			return
 		}
 		t.log.Info("merge.update_deferred", "pr", pr.Number, "head", cur.HeadSHA)
