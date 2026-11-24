@@ -41,6 +41,7 @@ roles:
       - osv.toml
     agent: kimi
     timeout: 30m
+    network: true
     every: 12h
     max_open: 10
     group_size: 1
@@ -52,6 +53,7 @@ roles:
     prompt: .ard/scanners/lint/prompt.txt
     agent: kimi
     timeout: 30m
+    network: true
     every: 1d
     max_open: 5
     group_size: 10
@@ -62,6 +64,7 @@ roles:
     prompt: .ard/triage/architect/prompt.txt
     agent: kimi
     timeout: 30m
+    network: true
     plan_section: Design
   - name: engineer
     kind: triage
@@ -69,6 +72,7 @@ roles:
     prompt: .ard/triage/engineer/prompt.txt
     agent: kimi
     timeout: 30m
+    network: true
     plan_section: Implementation
   - name: lead
     kind: triage
@@ -77,6 +81,7 @@ roles:
     agent: kimi
     timeout: 30m
     sidecar: vpe-specs
+    network: true
     after:
       - architect
   - name: engineer
@@ -88,6 +93,7 @@ roles:
       - scripts/test.sh
     agent: kimi
     timeout: 30m
+    network: true
     tests: make test
     max_test_fixes: 2
     max_review_rounds: 3
@@ -101,12 +107,14 @@ roles:
     prompt: .ard/reviewers/eng-review/prompt.txt
     agent: kimi
     timeout: 30m
+    network: true
   - name: license-review
     kind: reviewer
     dir: .ard/reviewers/license-review
     prompt: .ard/reviewers/license-review/prompt.txt
     agent: kimi
     timeout: 30m
+    network: true
     when:
       paths:
         - go.mod
@@ -116,3 +124,4 @@ roles:
     prompt: .ard/reviewers/security-review/prompt.txt
     agent: kimi
     timeout: 30m
+    network: true

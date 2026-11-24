@@ -237,6 +237,9 @@ func (jb *job) exec(ctx context.Context) {
 func (jb *job) agentStep(ctx context.Context, id, ref string, extra []executor.File) (step, bool) {
 	n := jb.is.Number
 	ej := jb.execJob(id, ref, jb.stepTimeout())
+	if !jb.role.Network {
+		ej.Network = executor.NetworkAdvisory
+	}
 	ej.Inputs = append(append([]executor.File(nil), jb.inputs...), extra...)
 	ej.Scrub = []string{agent.RoleFilePath(n, stageWorker, jb.role.Name)}
 	untrusted := append([]string(nil), jb.untrusted...)

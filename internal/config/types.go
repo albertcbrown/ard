@@ -130,6 +130,7 @@ type Role struct {
 	Model   string        // optional
 	Timeout time.Duration // default 30m
 	Sidecar string        // key in Resolved.Sidecars; "" = none
+	Network bool          // default true; false is advisory in this part
 
 	// Scanner only.
 	Every     time.Duration // default Intervals.Scanners
