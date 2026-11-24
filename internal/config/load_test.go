@@ -943,3 +943,23 @@ func TestLLMScannerRules(t *testing.T) {
 		})
 	}
 }
+
+func TestReadsHistory(t *testing.T) {
+	fsys := baseFS()
+	fsys[".ard/scanners/cve/history"] = &fstest.MapFile{Data: nil, Mode: 0o644}
+	fsys[".ard/scanners/lint/history"] = &fstest.MapFile{Data: nil, Mode: 0o644} // LLM scanner: ignored
+	fsys[".ard/triage/lead/history"] = &fstest.MapFile{Data: nil, Mode: 0o644}   // not a scanner: ignored
+	res := mustLoad(t, fsys)
+	got := map[string]bool{}
+	for _, r := range res.Roles {
+		got[string(r.Kind)+"/"+r.Name] = r.ReadsHistory()
+	}
+	for k, v := range got {
+		if want := k == "scanner/cve"; v != want {
+			t.Errorf("%s ReadsHistory = %v, want %v", k, v, want)
+		}
+	}
+	if !got["scanner/cve"] {
+		t.Errorf("scanner/cve with a history file must read history: %v", got)
+	}
+}

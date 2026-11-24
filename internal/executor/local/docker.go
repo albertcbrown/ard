@@ -69,6 +69,11 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 	if h.SidecarDir != "" {
 		a = append(a, "-v", h.SidecarDir+":/sidecar:ro")
 	}
+	if h.HistoryDir != "" {
+		// Never writable. git needs safe.directory for a mount owned by another user.
+		a = append(a, "-v", h.HistoryDir+":/history:ro",
+			"-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=/history")
+	}
 	if h.View.ConfigDir != "" {
 		a = append(a, "-v", filepath.Join(h.Home, configDirName)+":/ard-config")
 	}

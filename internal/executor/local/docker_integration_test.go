@@ -86,3 +86,29 @@ func mustRead(t *testing.T, p string) []byte {
 	}
 	return b
 }
+
+func TestDockerHistory(t *testing.T) {
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker unavailable")
+	}
+	f := newFixture(t)
+	sh(t, f.repo, "git", "commit", "-q", "--allow-empty", "-m", "second")
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	sh(t, f.repo, "git", "clone", "-q", "--bare", f.repo, bare)
+	df := filepath.Join(f.roleDir, "Dockerfile")
+	os.WriteFile(df, []byte("FROM alpine:3\nRUN apk add --no-cache git\n"), 0o644)
+	os.WriteFile(filepath.Join(f.roleDir, "hist.sh"), []byte("#!/bin/sh\n"+
+		"set -e\n[ \"$ARD_HISTORY\" = /history ]\n"+
+		"[ \"$(git --git-dir /history log --all --format=%H | wc -l)\" -gt 1 ]\n"+
+		"! touch /history/probe\n"), 0o755)
+	j := f.job(2 * time.Minute)
+	j.Stage, j.Role, j.History, j.RepoDir, j.Dockerfile = "scanner", "hist", true, bare, df
+	h, st := f.run(t, j, executor.Command{Path: "/role/hist.sh"})
+	if st.State != executor.Exited || st.ExitCode != 0 {
+		t.Fatalf("%+v stderr %q", st, readFile(t, h.StdoutPath))
+	}
+	if _, err := os.Stat(filepath.Join(bare, "probe")); err == nil {
+		t.Error("write to read-only /history reached the host")
+	}
+	f.l.Cleanup(context.Background(), h, executor.CleanupOptions{})
+}
