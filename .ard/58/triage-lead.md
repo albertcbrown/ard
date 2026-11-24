@@ -1,13 +1,16 @@
 ---
 role: lead
-status: blocked
+status: done
 attempt: 1
+next: [triage:engineer]
+worker: engineer
 ---
-The daily digest is a clear change, but spend is one of its required figures. Spend per role and repository comes from the budgets work in issue 57, and docs/TODO.md still lists that issue as open, so this one stays blocked until it lands. Issue 15, the other dependency, is no longer in the open list.
+The budgets work this issue waited on has landed: both parts of issue 57 are on main (commits 319be49 and 48af6fe), so spend per role and repository is now available. The daily digest on the status issue can start. It covers queue depth by label, jobs run, failures and spend, all read from the events table. The engineer plans it and the engineer worker builds it.
 
 ## Routing
-None until the dependency lands. After that, the expected routing is triage:engineer with worker engineer. The digest adds a recurring post to the status issue, which users will see, but the product-manager and documentation-planner roles do not exist in this repository.
+- triage:engineer: plan a daily digest loop in the serve controller, next to the existing status-issue and budget notice code in internal/servecmd. It reads queue depth, job counts, failures and spend from the events table. The plan also needs a test plan.
+- worker engineer: the code change with unit tests.
 
 ## Open issues
-- Blocked on issue 57 (daily dollar caps per role and repo), which supplies the spend data the digest reports.
-- A maintainer could split the work: ship the digest without spend now and add spend after issue 57 lands. If they do, this issue can be re-triaged as done.
+- The digest adds a recurring post to the status issue, which users will see. This repository has no product-manager or documentation-planner role, so the engineer's plan should say whether docs/proposal.md or the README needs an update.
+- docs/TODO.md still lists the budgets work as open. A maintainer reported that this is stale, and the git history confirms it.

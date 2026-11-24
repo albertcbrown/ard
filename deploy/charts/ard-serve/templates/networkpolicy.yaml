@@ -1,5 +1,8 @@
-{{- /* No ingress. Egress to cluster DNS and the public internet only (GitHub, the Go module proxy and checksum DB,
-osv.dev and vuln.go.dev for the cve scan, endoflife.date for the lts scan), never other namespaces, private or CGNAT ranges, or link-local metadata. */ -}}
+{{- /* No ingress. Egress to cluster DNS and the public internet only, never other namespaces, private or CGNAT
+ranges, or link-local metadata. "Public internet" is broad on purpose: it covers GitHub, the model API, the Go
+module proxy and checksum DB, osv.dev and vuln.go.dev for the cve scan, endoflife.date for the lts scan, and anything an agent with network fetches.
+This policy is per pod, not per role: a role's `network: false` (#276) is advisory here and is not enforced for
+agent steps; per-job egress comes with the Kubernetes executor (#54). See docs/proposal.md, Guardrails. */ -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

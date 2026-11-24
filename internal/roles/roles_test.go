@@ -32,7 +32,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/product-manager-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/lint/Dockerfile", "scanners/lint/normalize.jq", "scanners/lint/scan", "scanners/lts/Dockerfile", "scanners/lts/eol.jq", "scanners/lts/products.json", "scanners/lts/refs.jq", "scanners/lts/scan", "scanners/missing-tests/Dockerfile", "scanners/missing-tests/missingtests.go", "scanners/missing-tests/scan", "scanners/trufflehog/Dockerfile", "scanners/trufflehog/exclude-paths", "scanners/trufflehog/findings.jq", "scanners/trufflehog/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
+	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/product-manager-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/lint/Dockerfile", "scanners/lint/normalize.jq", "scanners/lint/scan", "scanners/lts/Dockerfile", "scanners/lts/eol.jq", "scanners/lts/products.json", "scanners/lts/refs.jq", "scanners/lts/scan", "scanners/missing-tests/Dockerfile", "scanners/missing-tests/missingtests.go", "scanners/missing-tests/scan", "scanners/trufflehog-history/Dockerfile", "scanners/trufflehog-history/exclude-paths", "scanners/trufflehog-history/findings.jq", "scanners/trufflehog-history/history", "scanners/trufflehog-history/scan", "scanners/trufflehog/Dockerfile", "scanners/trufflehog/exclude-paths", "scanners/trufflehog/findings.jq", "scanners/trufflehog/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
@@ -46,7 +46,7 @@ func TestFSContents(t *testing.T) {
 // embed.FS reports 0444 for everything, so the exec bit must be checked on disk
 // to catch a mode lost in git.
 func TestScanIsExecutableOnDisk(t *testing.T) {
-	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/lint/scan", "scanners/lts/scan", "scanners/missing-tests/scan", "scanners/trufflehog/scan"} {
+	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/lint/scan", "scanners/missing-tests/scan", "scanners/trufflehog/scan", "scanners/trufflehog-history/scan", "scanners/lts/scan"} {
 		fi, err := os.Stat(p)
 		if err != nil {
 			t.Fatal(err)
@@ -240,6 +240,41 @@ func TestEmbeddedMissingTestsRoleLoadsAsScanner(t *testing.T) {
 		return
 	}
 	t.Fatal("no scanner role missing-tests")
+}
+
+func TestEmbeddedTrufflehogHistoryRoleLoadsAsScanner(t *testing.T) {
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
+	if err != nil {
+		t.Fatalf("LoadFS: %v", err)
+	}
+	for _, r := range res.Roles {
+		if r.Kind != config.KindScanner || r.Name != "trufflehog-history" {
+			continue
+		}
+		if r.ScanPath != ".ard/scanners/trufflehog-history/scan" || r.Autoclose || r.Every != 168*time.Hour || r.GroupSize != 1 || r.MaxOpen != 5 || r.Timeout != 60*time.Minute {
+			t.Errorf("unexpected role: %+v", r)
+		}
+		if r.Route != config.RouteNeedsHuman || r.Dockerfile != ".ard/scanners/trufflehog-history/Dockerfile" {
+			t.Errorf("Route %v, Dockerfile %q", r.Route, r.Dockerfile)
+		}
+		if !r.ReadsHistory() {
+			t.Errorf("ReadsHistory = false; Extra = %v", r.Extra)
+		}
+		return
+	}
+	t.Fatal("no scanner role trufflehog-history")
+}
+
+func TestHeadTrufflehogDoesNotReadHistory(t *testing.T) {
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res.Roles {
+		if r.Name != "trufflehog-history" && r.ReadsHistory() {
+			t.Errorf("role %s reads history", r.Name)
+		}
+	}
 }
 
 func TestEmbeddedLtsRoleLoadsAsScanner(t *testing.T) {

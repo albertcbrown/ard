@@ -122,6 +122,7 @@ func (x *ExecEngine) Scan(ctx context.Context, cfg *config.Resolved, role config
 		RoleDir: filepath.Join(cfg.Repo, filepath.FromSlash(role.Dir)),
 	}
 	ej.TrustedInput = !role.ReadsUntrusted()
+	ej.History = role.ReadsHistory()
 	if role.Dockerfile != "" {
 		ej.Dockerfile = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dockerfile))
 	}
