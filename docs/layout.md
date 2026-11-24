@@ -55,5 +55,5 @@ deploy/test-*.sh            chart, image and repo checks for the above (`make ch
 docs/proposal.md            design source of truth
 docs/layout.md              this file: every directory and package
 docs/TODO.md                open issues by phase, generated from the milestones
-docs/runbooks/              operator runbooks (gate runs, live checks)
+docs/runbooks/              operator runbooks (gate runs, live checks, repo onboarding)
 ```
