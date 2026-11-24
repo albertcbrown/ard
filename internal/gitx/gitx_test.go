@@ -496,3 +496,43 @@ func TestWorktreeAdminWithAutoGC(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestIsAncestorAndParents(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	_, clone := gittest.NewRemote(t)
+	commit := func(name string) string {
+		if err := os.WriteFile(filepath.Join(clone, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gittest.Run(t, clone, "add", name)
+		gittest.Run(t, clone, "commit", "-q", "-m", name)
+		return strings.TrimSpace(gittest.Run(t, clone, "rev-parse", "HEAD"))
+	}
+	base := commit("a")
+	gittest.Run(t, clone, "checkout", "-q", "-b", "side")
+	side := commit("b")
+	gittest.Run(t, clone, "checkout", "-q", "-")
+	other := commit("c")
+	gittest.Run(t, clone, "merge", "-q", "--no-ff", "-m", "merge", "side")
+	merge := strings.TrimSpace(gittest.Run(t, clone, "rev-parse", "HEAD"))
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{{base, side, true}, {side, side, true}, {side, other, false}, {side, merge, true}, {merge, side, false}} {
+		got, err := g.IsAncestor(ctx, clone, tc.a, tc.b)
+		if err != nil || got != tc.want {
+			t.Errorf("IsAncestor(%.7s, %.7s) = %v, %v; want %v", tc.a, tc.b, got, err, tc.want)
+		}
+	}
+	if _, err := g.IsAncestor(ctx, clone, "nope", side); err == nil {
+		t.Error("want error for an unknown commit")
+	}
+	ps, err := g.Parents(ctx, clone, merge)
+	if err != nil || len(ps) != 2 {
+		t.Errorf("merge parents = %v, %v", ps, err)
+	}
+	if ps, err = g.Parents(ctx, clone, other); err != nil || len(ps) != 1 || ps[0] != base {
+		t.Errorf("parents = %v, %v", ps, err)
+	}
+}
