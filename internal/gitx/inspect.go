@@ -69,3 +69,39 @@ func (g *Git) MergeBase(ctx context.Context, repoDir, a, b string) (string, erro
 	}
 	return strings.TrimSpace(out), nil
 }
+
+// Parents returns the parent commits of rev (none for a root commit).
+func (g *Git) Parents(ctx context.Context, repoDir, rev string) ([]string, error) {
+	out, _, err := g.run(ctx, repoDir, nil, "", nil, "--git-dir="+gitDirOf(repoDir), "rev-list", "--parents", "-n", "1", rev)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: parents %.12s: %w", rev, err)
+	}
+	f := strings.Fields(out)
+	if len(f) == 0 {
+		return nil, fmt.Errorf("gitx: parents %.12s: no output", rev)
+	}
+	return f[1:], nil
+}
+
+// PatchID returns the stable patch id (git patch-id --stable) of the change to
+// path between commits from and to. An empty diff is an error: there is
+// nothing to compare.
+func (g *Git) PatchID(ctx context.Context, repoDir, from, to, path string) (string, error) {
+	env := []string{"GIT_ATTR_SOURCE=" + emptyTree, "GIT_OPTIONAL_LOCKS=0"}
+	diff, _, err := g.run(ctx, repoDir, env, "", nil, "--git-dir="+gitDirOf(repoDir), "diff", "--no-ext-diff", "--no-textconv", "--no-renames", from, to, "--", path)
+	if err != nil {
+		return "", fmt.Errorf("gitx: patch diff %.12s %.12s: %w", from, to, err)
+	}
+	if strings.TrimSpace(diff) == "" {
+		return "", fmt.Errorf("gitx: patch id %.12s %.12s %s: empty diff", from, to, path)
+	}
+	out, _, err := g.run(ctx, repoDir, nil, diff, nil, "--git-dir="+gitDirOf(repoDir), "patch-id", "--stable")
+	if err != nil {
+		return "", fmt.Errorf("gitx: patch-id: %w", err)
+	}
+	f := strings.Fields(out)
+	if len(f) == 0 {
+		return "", fmt.Errorf("gitx: patch-id %.12s %.12s %s: no output", from, to, path)
+	}
+	return f[0], nil
+}

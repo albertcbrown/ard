@@ -469,3 +469,62 @@ func TestChangedPathsRenames(t *testing.T) {
 		t.Errorf("paths = %v, want %v", got, want)
 	}
 }
+
+func TestPatchIDAndParents(t *testing.T) {
+	_, dir := gittest.NewRemote(t)
+	g := New("")
+	ctx := context.Background()
+	run := func(args ...string) string { return strings.TrimSpace(gittest.Run(t, dir, args...)) }
+	body := func(first, last string) []byte {
+		return []byte(first + "\n" + strings.Repeat("x\n", 30) + last + "\n")
+	}
+	write := func(b []byte) {
+		if err := os.WriteFile(filepath.Join(dir, "f.txt"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", "f.txt")
+	}
+	write(body("a", "z"))
+	run("commit", "-q", "-m", "one")
+	c1 := run("rev-parse", "HEAD")
+	write(body("a", "Z"))
+	run("commit", "-q", "-m", "two")
+	c2 := run("rev-parse", "HEAD")
+	write(body("A", "Z"))
+	run("commit", "-q", "-m", "three")
+	c3 := run("rev-parse", "HEAD")
+	// The same change to the last line at shifted offsets.
+	write([]byte("new\nnew\n" + string(body("A", "Z"))))
+	run("commit", "-q", "-m", "shift")
+	c4 := run("rev-parse", "HEAD")
+	write([]byte("new\nnew\n" + string(body("A", "Q"))))
+	run("commit", "-q", "-m", "other")
+	c5 := run("rev-parse", "HEAD")
+
+	a, err := g.PatchID(ctx, dir, c1, c2, "f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := g.PatchID(ctx, dir, c1, c2, "f.txt"); err != nil || a != b {
+		t.Fatalf("same diff: %q %q %v", a, b, err)
+	}
+	if b, err := g.PatchID(ctx, dir, c3, c4, "f.txt"); err != nil || a == b {
+		t.Fatalf("different diff must differ: %q %q %v", a, b, err)
+	}
+	if b, err := g.PatchID(ctx, dir, c4, c5, "f.txt"); err != nil || a == b {
+		t.Fatalf("changed line must differ: %q %q %v", a, b, err)
+	}
+	if _, err := g.PatchID(ctx, dir, c1, c1, "f.txt"); err == nil {
+		t.Error("empty diff: want error")
+	}
+	if _, err := g.PatchID(ctx, dir, c1, "nope", "f.txt"); err == nil {
+		t.Error("bad rev: want error")
+	}
+	ps, err := g.Parents(ctx, dir, c2)
+	if err != nil || len(ps) != 1 || ps[0] != c1 {
+		t.Fatalf("parents = %v %v", ps, err)
+	}
+	if _, err := g.Parents(ctx, dir, "nope"); err == nil {
+		t.Error("parents of bad rev: want error")
+	}
+}

@@ -63,6 +63,9 @@ type Git interface {
 	FetchRef(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error
 	RevParse(ctx context.Context, dir, ref string) (string, error)
 	MergeBaseAll(ctx context.Context, repoDir, a, b string) ([]string, error)
+	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
+	Parents(ctx context.Context, repoDir, rev string) ([]string, error)
+	PatchID(ctx context.Context, repoDir, from, to, path string) (string, error)
 	CodeChanged(ctx context.Context, repoDir, from, to string, exclude ...string) ([]string, error)
 }
 

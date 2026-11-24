@@ -86,12 +86,16 @@ func (t *tick) consider(ctx context.Context, listed github.PullRequest) (merged 
 				"hint", "the review has not passed on this PR; it re-runs when the role label is requested")
 			return false
 		}
-		ok, broken, err := prgate.Covers(ctx, d.Git, d.RepoDir, reviewed, head, base, issue)
+		cov, err := prgate.CoversDetail(ctx, d.Git, d.RepoDir, reviewed, head, base, issue)
 		if err != nil {
 			t.fail(n, "review_cover", err)
 			return false
 		}
-		if !ok {
+		broken := cov.Broken
+		if len(cov.PatchEqual) > 0 {
+			t.log.Info("merge.cover_patch_equal", "pr", n, "issue", issue, "role", role, "reviewed", reviewed, "head", head, "paths", strings.Join(cov.PatchEqual, ","))
+		}
+		if !cov.OK {
 			t.log.Info("merge.reviews_stale", "pr", n, "issue", issue, "role", role, "reviewed", reviewed, "head", head, "paths", len(broken),
 				"hint", "the merger re-requests this review once per head")
 			t.rerequestReview(ctx, pr, issue, role, reviewed, head)
@@ -225,12 +229,15 @@ func (t *tick) hasApproval(ctx context.Context, pr github.PullRequest, head, bas
 		covers: func(ctx context.Context, at string) (bool, error) {
 			// An approval given at a commit the clone does not have (a
 			// force-pushed tip) cannot be compared: it is not covered.
-			ok, _, err := prgate.Covers(ctx, d.Git, d.RepoDir, at, head, base, issue)
+			cov, err := prgate.CoversDetail(ctx, d.Git, d.RepoDir, at, head, base, issue)
 			if err != nil {
 				t.log.Debug("merge.approval_not_comparable", "pr", pr.Number, "at", at, "error", err)
 				return false, nil
 			}
-			return ok, nil
+			if len(cov.PatchEqual) > 0 {
+				t.log.Info("merge.cover_patch_equal", "pr", pr.Number, "issue", issue, "at", at, "head", head, "paths", strings.Join(cov.PatchEqual, ","))
+			}
+			return cov.OK, nil
 		},
 	})
 }
