@@ -145,8 +145,8 @@ type Role struct {
 	// Diff guard thresholds on the PR's changed lines: above DiffWarnLines the
 	// PR proceeds with a "large change" note; above DiffMaxLines it is held
 	// for a human. Both at least 1, DiffWarnLines <= DiffMaxLines.
-	DiffWarnLines int // default 1000
-	DiffMaxLines  int // default 2000
+	DiffWarnLines int // default 2000
+	DiffMaxLines  int // default 3000
 
 	// Reviewer only; nil = always.
 	When *When

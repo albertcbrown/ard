@@ -71,7 +71,7 @@ func TestWorkerEngineerPromptShape(t *testing.T) {
 		"## " + config.BuiltinPlanSections["engineer"],
 		"role: engineer", "attempt: 1", "UNTRUSTED",
 		"git push", "gh or any other command", "verdict", "worker key",
-		".github/", ".gitmodules", ".gitattributes", "diff_max_lines", "2,000", "diff_warn_lines", "256", "1 MiB", "symlink", "binary", "at run time",
+		".github/", ".gitmodules", ".gitattributes", "diff_max_lines", "3,000", "diff_warn_lines", "256", "1 MiB", "symlink", "binary", "at run time",
 		"## Changes", "## Testing", "## Open issues", "environment variable",
 	} {
 		if !strings.Contains(p, want) {
