@@ -44,6 +44,14 @@ type Intervals struct {
 	Workers   Duration // default 5m
 	Reviewers Duration // default 5m
 	Merger    Duration // default 5m
+	PRWatch   Duration // default 5m
+}
+
+// PRWatch configures the PR watch loop (#267).
+type PRWatch struct {
+	// PendingTimeout is how long required checks may stay pending on one head
+	// before a notice is posted; default 2h, at least intervals.prwatch, at most 7d.
+	PendingTimeout Duration
 }
 
 // Stale configures the built-in stale-issue closer (#25); the schema lives
@@ -207,6 +215,7 @@ type Resolved struct {
 	Intake         Intake
 	ProtectedPaths []string // merge.protected_paths: "dir/" = directory prefix, else doublestar glob; see Protected
 	Stale          Stale
+	PRWatch        PRWatch
 	Redact         Redact
 	Sidecars       map[string]Sidecar
 	RolesRepo      *Sidecar // roles_repo: shared role directories; nil = none

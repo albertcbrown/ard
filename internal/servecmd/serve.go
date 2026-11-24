@@ -37,6 +37,7 @@ import (
 	"github.com/albertcbrown/ard/internal/limits"
 	"github.com/albertcbrown/ard/internal/modelauth"
 	"github.com/albertcbrown/ard/internal/pool"
+	"github.com/albertcbrown/ard/internal/prwatch"
 	"github.com/albertcbrown/ard/internal/reaper"
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/repopath"
@@ -86,7 +87,7 @@ func loopNames(loops []controller.Loop) []string {
 // knownLoops are the names registerLoops' loops report (Loop.Name), in the
 // order they register. "budget" selects the status-issue notice loop; the
 // claim gate itself is built into the pool whatever --loops says.
-var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", janitor.Name, "reaper", "budget"}
+var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", prwatch.Name, janitor.Name, "reaper", "budget"}
 
 // selectLoops keeps the loops named in want, in registration order; an empty
 // want keeps every loop. A name that is not a known loop is a usage error
@@ -458,7 +459,7 @@ var registerLoops = func(w *wiring) []controller.Loop {
 	if l := reviewerLoop(w); l != nil {
 		loops = append(loops, l)
 	}
-	loops = append(loops, reviewfixLoop(w), mergerLoop(w), janitorLoop(w))
+	loops = append(loops, reviewfixLoop(w), mergerLoop(w), prwatchLoop(w), janitorLoop(w))
 	if l := reaperLoop(w); l != nil {
 		loops = append(loops, l)
 	}

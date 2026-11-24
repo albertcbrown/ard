@@ -13,7 +13,8 @@ var updateGolden = flag.Bool("update", false, "rewrite golden files")
 func TestRenderGolden(t *testing.T) {
 	fsys := withConfig(t, `
 agent: kimi
-intervals: {scanners: 6h}
+intervals: {scanners: 6h, prwatch: 10m}
+pr_watch: {pending_timeout: 3h}
 merge: {protected_paths: [infra/]}
 sidecars:
   vpe-specs: {repo: acme/specs, ref: v1}

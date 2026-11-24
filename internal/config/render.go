@@ -33,6 +33,7 @@ type resolvedYAML struct {
 	Intake          intakeYAML             `yaml:"intake"`
 	ProtectedPaths  []string               `yaml:"protected_paths,omitempty"`
 	Stale           staleYAML              `yaml:"stale"`
+	PRWatch         prWatchYAML            `yaml:"pr_watch"`
 	Redact          redactYAML             `yaml:"redact"`
 	Sidecars        map[string]sidecarYAML `yaml:"sidecars,omitempty"`
 	RolesRepo       *sidecarYAML           `yaml:"roles_repo,omitempty"`
@@ -45,6 +46,7 @@ type intervalsYAML struct {
 	Workers   Duration `yaml:"workers"`
 	Reviewers Duration `yaml:"reviewers"`
 	Merger    Duration `yaml:"merger"`
+	PRWatch   Duration `yaml:"prwatch"`
 }
 
 type intakeYAML struct {
@@ -55,6 +57,10 @@ type intakeYAML struct {
 type staleYAML struct {
 	InactiveFor Duration `yaml:"inactive_for"`
 	SuppressFor Duration `yaml:"suppress_for"`
+}
+
+type prWatchYAML struct {
+	PendingTimeout Duration `yaml:"pending_timeout"`
 }
 
 type redactYAML struct {
@@ -132,6 +138,7 @@ func (r *Resolved) render() resolvedYAML {
 			Workers:   r.Intervals.Workers,
 			Reviewers: r.Intervals.Reviewers,
 			Merger:    r.Intervals.Merger,
+			PRWatch:   r.Intervals.PRWatch,
 		},
 		Intake:         intakeYAML{Mode: r.Intake.Mode, Label: r.Intake.Label},
 		ProtectedPaths: r.ProtectedPaths,
@@ -139,6 +146,7 @@ func (r *Resolved) render() resolvedYAML {
 			InactiveFor: r.Stale.InactiveFor,
 			SuppressFor: r.Stale.SuppressFor,
 		},
+		PRWatch:  prWatchYAML{PendingTimeout: r.PRWatch.PendingTimeout},
 		Redact:   redactYAML{Gitleaks: gitleaksYAML{Enabled: r.Redact.Gitleaks.Enabled, Path: r.Redact.Gitleaks.Path, BlockAutocloseWhenMissing: r.Redact.Gitleaks.BlockAutocloseWhenMissing}},
 		Sidecars: map[string]sidecarYAML{},
 	}
