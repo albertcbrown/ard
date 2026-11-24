@@ -2,7 +2,7 @@
 
 Gate 2 proves triage, worker and review on real issues before the merger takes
 over. ard runs live with the local executor on the owner's Mac, and a human
-merges every PR. See [docs/proposal.md: Rollout](../proposal.md#rollout).
+merges every PR. See [docs/proposal.md: Rollout](https://github.com/albertcbrown/ard/blob/main/docs/proposal.md#rollout).
 
 **Done when** (from #39):
 

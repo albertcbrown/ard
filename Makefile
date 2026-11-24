@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test
+.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test docs-check
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ard ./cmd/ard
@@ -56,6 +56,12 @@ lint-scanner-fixtures:
 	docker build -t ard-lint-fixtures internal/roles/scanners/lint
 	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
 	  -v "$$PWD/internal/roles:/roles" -w /roles ard-lint-fixtures sh testdata/lint/regen.sh
+
+# Builds the user docs site strictly (needs mkdocs-material: pip install -r
+# docs/site/requirements.txt) and runs the docs drift test (part of `make test`).
+docs-check:
+	mkdocs build --strict -d /tmp/ard-site
+	go test ./internal/docscheck/...
 
 clean:
 	rm -rf bin
