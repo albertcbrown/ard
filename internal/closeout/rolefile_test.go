@@ -125,3 +125,112 @@ func TestReadRoleFile(t *testing.T) {
 		t.Errorf("regular: %q %v", b, err)
 	}
 }
+
+func fetchedDoc(entry string) []byte {
+	return []byte("---\nrole: engineer\nstatus: done\nattempt: 1\nfetched:\n" + entry + "---\nbody\n")
+}
+
+func TestParseFetched(t *testing.T) {
+	sha := strings.Repeat("a1", 32)
+	e := func(over map[string]string, drop string) string {
+		f := map[string]string{
+			"url": "https://example.com/a.json", "date": "2026-11-23", "status": "200", "sha256": sha,
+			"verified_by": "https://example.com/sums.txt", "path": "testdata/a.json",
+		}
+		for k, v := range over {
+			f[k] = v
+		}
+		delete(f, drop)
+		s := ""
+		first := true
+		for _, k := range []string{"url", "date", "status", "sha256", "verified_by", "path"} {
+			v, ok := f[k]
+			if !ok {
+				continue
+			}
+			p := "    "
+			if first {
+				p = "  - "
+				first = false
+			}
+			s += p + k + ": " + v + "\n"
+		}
+		return s
+	}
+	o := map[string]string{}
+	rf, err := Parse(fetchedDoc(e(o, "")))
+	if err != nil || len(rf.Fetched) != 1 || rf.Fetched[0] != (Fetched{"https://example.com/a.json", "2026-11-23", 200, sha, "https://example.com/sums.txt", "testdata/a.json"}) {
+		t.Fatalf("valid: %+v %v", rf.Fetched, err)
+	}
+	if _, err := Parse(fetchedDoc(e(map[string]string{"verified_by": "none"}, ""))); err != nil {
+		t.Errorf("none: %v", err)
+	}
+	if rf, err := Parse([]byte("---\nrole: engineer\nstatus: done\nattempt: 1\n---\nx\n")); err != nil || rf.Fetched != nil {
+		t.Errorf("absent: %v %v", rf.Fetched, err)
+	}
+	if _, err := Parse(fetchedDoc(strings.Repeat(e(o, ""), 50))); err != nil {
+		t.Errorf("50 entries: %v", err)
+	}
+	bad := map[string]string{
+		"51 entries":      strings.Repeat(e(o, ""), 51),
+		"http":            e(map[string]string{"url": "http://example.com/a"}, ""),
+		"ftp":             e(map[string]string{"url": "ftp://example.com/a"}, ""),
+		"userinfo":        e(map[string]string{"url": "https://u:p@example.com/a"}, ""),
+		"no host":         e(map[string]string{"url": "https:///a"}, ""),
+		"backtick":        e(map[string]string{"url": `"https://example.com/a` + "`" + `b"`}, ""),
+		"space":           e(map[string]string{"url": `"https://example.com/a b"`}, ""),
+		"missing url":     e(o, "url"),
+		"missing date":    e(o, "date"),
+		"missing status":  e(o, "status"),
+		"missing sha256":  e(o, "sha256"),
+		"missing by":      e(o, "verified_by"),
+		"missing path":    e(o, "path"),
+		"sha 63":          e(map[string]string{"sha256": sha[:63]}, ""),
+		"sha 65":          e(map[string]string{"sha256": sha + "a"}, ""),
+		"sha non-hex":     e(map[string]string{"sha256": strings.Repeat("zz", 32)}, ""),
+		"sha upper":       e(map[string]string{"sha256": strings.ToUpper(sha)}, ""),
+		"sha all digits":  e(map[string]string{"sha256": strings.Repeat("12", 32)}, ""),
+		"date month 13":   e(map[string]string{"date": "2026-13-40"}, ""),
+		"date word":       e(map[string]string{"date": "yesterday"}, ""),
+		"status 99":       e(map[string]string{"status": "99"}, ""),
+		"status 600":      e(map[string]string{"status": "600"}, ""),
+		"status string":   e(map[string]string{"status": `"200"`}, ""),
+		"by http":         e(map[string]string{"verified_by": "http://example.com/s"}, ""),
+		"by not url":      e(map[string]string{"verified_by": "someone"}, ""),
+		"path absolute":   e(map[string]string{"path": "/etc/x"}, ""),
+		"path dotdot":     e(map[string]string{"path": "a/../b"}, ""),
+		"path backslash":  e(map[string]string{"path": `"a\\b"`}, ""),
+		"path empty":      e(map[string]string{"path": `""`}, ""),
+		"path backtick":   e(map[string]string{"path": "\"a`b\""}, ""),
+		"path newline":    e(map[string]string{"path": `"a\nb"`}, ""),
+		"path angle":      e(map[string]string{"path": `"a<b>"`}, ""),
+		"unknown key":     e(o, "") + "    extra: x\n",
+		"not a list":      "  url: https://example.com/a\n",
+		"entry not a map": "  - just text\n",
+	}
+	for name, ent := range bad {
+		_, err := Parse(fetchedDoc(ent))
+		if !errors.Is(err, ErrMalformed) {
+			t.Errorf("%s: err = %v, want ErrMalformed", name, err)
+		}
+	}
+	if _, err := Parse(fetchedDoc(e(o, "") + e(map[string]string{"status": "99"}, ""))); err == nil || !strings.Contains(err.Error(), "fetched 2") {
+		t.Errorf("message must name the entry: %v", err)
+	}
+}
+
+func TestCheckFetchedStage(t *testing.T) {
+	rf := RoleFile{Role: "r", Fetched: []Fetched{{}}}
+	for stage, ok := range map[string]bool{StageWorker: true, StageReview: false, StageTriage: false} {
+		err := rf.check(Job{Role: "r", Stage: stage})
+		if stage == StageReview && err != nil && !errors.Is(err, ErrMalformed) {
+			t.Errorf("%s: %v", stage, err)
+		}
+		if ok && err != nil {
+			t.Errorf("%s: %v", stage, err)
+		}
+		if !ok && !errors.Is(err, ErrMalformed) {
+			t.Errorf("%s: err = %v, want malformed", stage, err)
+		}
+	}
+}
