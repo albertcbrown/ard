@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -49,5 +50,31 @@ func TestInitOutsideRepoExitsOne(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".ard")); err == nil {
 		t.Error("init wrote .ard/")
+	}
+}
+
+func TestResolveVersion(t *testing.T) {
+	info := func(v string) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Version: v}}
+	}
+	tests := []struct {
+		name string
+		v    string
+		info *debug.BuildInfo
+		ok   bool
+		want string
+	}{
+		{"ldflag wins", "v1.2.3", info("v9.9.9"), true, "v1.2.3"},
+		{"build info tag", "dev", info("v1.4.0"), true, "v1.4.0"},
+		{"devel", "dev", info("(devel)"), true, "dev"},
+		{"empty", "dev", info(""), true, "dev"},
+		{"no build info", "dev", nil, false, "dev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveVersion(tt.v, tt.info, tt.ok); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
