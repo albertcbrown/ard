@@ -237,6 +237,16 @@ func newLtsEnv(t *testing.T, withYq bool) *ltsEnv {
 	if withYq {
 		tools = append(tools, "yq")
 	}
+	if !withYq {
+		// run puts /usr/bin and /bin on PATH for the shell utilities, so a
+		// system-wide yq there (GitHub's Ubuntu runners ship one) cannot be
+		// hidden; skip rather than report a false failure.
+		for _, d := range []string{"/usr/bin", "/bin"} {
+			if _, err := os.Stat(filepath.Join(d, "yq")); err == nil {
+				t.Skipf("yq is installed in %s and cannot be hidden from the scan", d)
+			}
+		}
+	}
 	for _, n := range tools {
 		p, err := exec.LookPath(n)
 		if err != nil {

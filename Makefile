@@ -1,7 +1,7 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test
+.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ard ./cmd/ard
@@ -25,6 +25,16 @@ chart-test:
 # network; not part of `make test`).
 image-test:
 	deploy/test-image.sh
+
+# Builds the default ard-agent image for this host as ard-agent:dev and prints its
+# ID. Local only, never published. Needs Docker and network; not part of `make test`.
+agent-image:
+	docker build -t ard-agent:dev deploy/agent
+	docker image inspect --format '{{.Id}}' ard-agent:dev
+
+# Checks ard-agent:dev (needs Docker; run `make agent-image` first; not part of `make test`).
+agent-image-test:
+	deploy/test-agent-image.sh ard-agent:dev
 
 # Regenerates the real cve scanner fixtures inside the pinned tool image.
 # Needs Docker and network; not part of `make test`.
