@@ -3,6 +3,7 @@
 package local
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,5 +153,14 @@ func TestRunArgv(t *testing.T) {
 				t.Error("command missing")
 			}
 		})
+	}
+}
+
+func TestExecGitDisablesAutoGC(t *testing.T) {
+	args := strings.Join(execGit{bin: "git"}.command(context.Background(), "/r", "status").Args, " ")
+	for _, want := range []string{"-c gc.auto=0", "-c maintenance.auto=false"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args %q lack %q", args, want)
+		}
 	}
 }

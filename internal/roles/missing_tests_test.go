@@ -303,3 +303,124 @@ func TestMissingTestsHelperVets(t *testing.T) {
 		t.Fatalf("gofmt -l: %v %s", err, out)
 	}
 }
+
+func mtScript(t *testing.T) string {
+	t.Helper()
+	p, err := filepath.Abs("scanners/missing-tests/scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// mtRole copies the role dir and adds the named human-owned files to it.
+func mtRole(t *testing.T, extra map[string]string) string {
+	t.Helper()
+	role := t.TempDir()
+	copyTree(t, "scanners/missing-tests", role)
+	for name, src := range extra {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(role, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return role
+}
+
+func TestMissingTestsScanScript(t *testing.T) {
+	gover := strings.TrimSpace(string(mtGo(t, t.TempDir(), "env", "GOVERSION")))
+	for _, name := range mtCases(t) {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			copyTree(t, filepath.Join(mtFixtures, name), repo)
+			extra := map[string]string{}
+			for _, f := range []string{"no-coverage", "ignore"} {
+				if _, err := os.Stat(filepath.Join(repo, f)); err == nil {
+					extra[f] = filepath.Join(repo, f)
+				}
+			}
+			script := filepath.Join(mtRole(t, extra), "scan")
+			want := strings.ReplaceAll(readFile(t, filepath.Join(mtFixtures, name, "want.jsonl")), "go1.test", gover)
+			out, se, code := runDocsScript(t, script, repo)
+			if code != 0 || out != want {
+				t.Fatalf("exit %d\nstdout: %s\nwant: %s\nstderr: %s", code, out, want, se)
+			}
+			if _, err := scanner.DecodeFindings(strings.NewReader(out)); err != nil {
+				t.Errorf("decode: %v", err)
+			}
+			again, _, _ := runDocsScript(t, script, repo)
+			if again != out {
+				t.Error("runs differ")
+			}
+		})
+	}
+}
+
+func TestMissingTestsScanFailures(t *testing.T) {
+	script := mtScript(t)
+	t.Run("failing test", func(t *testing.T) {
+		repo := mtModule(t, map[string]string{
+			"p/p.go":      "package p\n\nfunc F() int { return 1 }\n",
+			"p/p_test.go": "package p\n\nimport \"testing\"\n\nfunc TestF(t *testing.T) { t.Fatal(\"boom\") }\n",
+		})
+		out, se, code := runDocsScript(t, script, repo)
+		if code != 1 || out != "" || !strings.Contains(se, "go test failed in .") {
+			t.Fatalf("exit %d, stdout %q, stderr %s", code, out, se)
+		}
+	})
+	t.Run("build error", func(t *testing.T) {
+		repo := mtModule(t, map[string]string{"p/p.go": "package p\n\nfunc F() int { return \"x\" }\n"})
+		out, se, code := runDocsScript(t, script, repo)
+		if code != 1 || out != "" {
+			t.Fatalf("exit %d, stdout %q, stderr %s", code, out, se)
+		}
+	})
+	t.Run("no go", func(t *testing.T) {
+		sh, err := exec.LookPath("sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(sh, script)
+		cmd.Dir = t.TempDir()
+		cmd.Env = []string{"PATH=" + t.TempDir()}
+		var se bytes.Buffer
+		cmd.Stderr = &se
+		err = cmd.Run()
+		ee, ok := err.(*exec.ExitError)
+		if !ok || ee.ExitCode() != 2 || !strings.Contains(se.String(), "go not found") {
+			t.Fatalf("err %v, stderr %s", err, se.String())
+		}
+	})
+	t.Run("no modules", func(t *testing.T) {
+		out, se, code := runDocsScript(t, script, t.TempDir())
+		if code != 0 || out != "" {
+			t.Fatalf("exit %d, stdout %q, stderr %s", code, out, se)
+		}
+	})
+}
+
+func TestMissingTestsScanNestedModule(t *testing.T) {
+	repo := mtModule(t, map[string]string{
+		"a.go":       "package mt\n\nfunc Root() int { return 1 }\n",
+		"sub/go.mod": "module example.com/sub\n\ngo 1.22\n",
+		"sub/s.go":   "package sub\n\nfunc Nested() int { return 1 }\n",
+	})
+	out, se, code := runDocsScript(t, mtScript(t), repo)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, se)
+	}
+	found, err := scanner.DecodeFindings(strings.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]bool{}
+	for _, f := range found {
+		files[f.Files[0]] = true
+	}
+	if !files["a.go"] || !files["sub/s.go"] {
+		t.Errorf("files %v, want a.go and sub/s.go\n%s", files, out)
+	}
+}

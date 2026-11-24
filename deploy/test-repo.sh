@@ -75,10 +75,12 @@ delivery_ok() {
 check "proposal has a Delivery section" delivery_ok
 check "proposal says release tags are annotated" \
   grep -Fq 'Release tags are annotated because Jenkins builds only tags at most a day old and dates a lightweight tag by its commit' "$P"
-claude_ok() {
-  local layout; layout="$(awk '/^## Layout$/{f=1;next} /^## /{f=0} f' CLAUDE.md)"
+layout_ok() {
+  # The package layout moved from CLAUDE.md to docs/layout.md (PR #274); CLAUDE.md must point to it.
+  grep -Fq '(docs/layout.md)' CLAUDE.md || { echo "CLAUDE.md does not point to docs/layout.md" >&2; return 1; }
+  local layout; layout="$(cat docs/layout.md)"
   printf '%s' "$layout" | grep -Eq '^deploy/argocd/ ' && printf '%s' "$layout" | grep -Eq '^Dockerfile ' && ! printf '%s' "$layout" | grep -q 'Jenkinsfile'
 }
-check "CLAUDE.md lists deploy/ and Dockerfile" claude_ok
+check "docs/layout.md lists deploy/ and Dockerfile" layout_ok
 
 [ "$failures" -eq 0 ] || { echo "$failures case(s) failed" >&2; exit 1; }
