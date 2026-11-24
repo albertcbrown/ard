@@ -75,7 +75,8 @@ type job struct {
 
 	summary  string // redacted summary of the latest role file
 	withheld bool
-	large    string // the diff guard's latest "Large change" note; "" when under diff_warn_lines
+	fetched  []closeout.Fetched // validated fetched inputs of the latest role file; nil when withheld
+	large    string             // the diff guard's latest "Large change" note; "" when under diff_warn_lines
 
 	stepBudget float64 // max_budget_usd the current agent step runs with
 }
@@ -507,6 +508,37 @@ func (jb *job) setSummary(ctx context.Context, h executor.Handle, raw string) {
 	jb.summary, jb.withheld = s, false
 }
 
+// setFetched keeps the fetched inputs of the role file for the PR body. The
+// rendered fields get the same redaction and scan as the summary; any change
+// by redaction, a scan hit or an error drops the whole list.
+func (jb *job) setFetched(ctx context.Context, h executor.Handle, fs []closeout.Fetched) {
+	jb.fetched = nil
+	if len(fs) == 0 {
+		return
+	}
+	d := jb.l.d
+	var text strings.Builder
+	for _, f := range fs {
+		fmt.Fprintf(&text, "%s %s %d %s %s %s\n", f.URL, f.Date, f.Status, f.SHA256, f.VerifiedBy, f.Path)
+	}
+	sec, err := d.Secrets().WithPaths(closeout.PathRules(h.Worktree, h.Home, d.HostPaths)...)
+	if err != nil {
+		jb.log.Error("worker.fetched_withheld", "cause", "path rules", "error", err)
+		return
+	}
+	raw := text.String()
+	if sec.String(raw) != raw {
+		jb.log.Error("worker.fetched_withheld", "cause", "redacted")
+		return
+	}
+	found, err := d.Scanner.Scan(ctx, strings.NewReader(raw))
+	if err != nil || len(found) > 0 {
+		jb.log.Error("worker.fetched_withheld", "cause", "scan")
+		return
+	}
+	jb.fetched = fs
+}
+
 // round decides one finished agent step: the role file, the diff guard and the
 // push. head is the commit the tests run on. done means the job has been
 // finished (or stopped) here; noCode means the step changed nothing to commit.
@@ -519,6 +551,7 @@ func (jb *job) round(ctx context.Context, s step) (head string, noCode, done boo
 		return "", false, true
 	}
 	jb.setSummary(ctx, s.h, rf.Summary)
+	jb.setFetched(ctx, s.h, rf.Fetched)
 	stage, err := os.MkdirTemp("", "ard-code-")
 	if err == nil {
 		defer os.RemoveAll(stage)
@@ -802,6 +835,7 @@ func (jb *job) openPR(ctx context.Context, res *closeout.WorkerResult) bool {
 	n := jb.is.Number
 	res.Reviewers = jb.reviewers(ctx)
 	res.Large = jb.large
+	res.Fetched = jb.fetched
 	title, err := Title(CommitType(jb.is.Labels), jb.is.Title, n, jb.sj.ID)
 	if err != nil {
 		jb.log.Error("worker.pr_failed", "step", "title", "error", err)
