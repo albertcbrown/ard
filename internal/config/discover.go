@@ -100,6 +100,7 @@ func inspectRole(fsys fs.FS, kind Kind, name, dir string, errs *Errors) (Role, b
 
 	promptInfo, hasPrompt := files["prompt.txt"]
 	scanInfo, hasScan := files["scan"]
+	aidInfo, hasAid := files["aid"]
 	if _, hasDockerfile := files["Dockerfile"]; hasDockerfile {
 		role.Dockerfile = dir + "/Dockerfile"
 		delete(extras, "Dockerfile")
@@ -107,6 +108,10 @@ func inspectRole(fsys fs.FS, kind Kind, name, dir string, errs *Errors) (Role, b
 
 	switch kind {
 	case KindScanner:
+		if hasAid {
+			*errs = append(*errs, &Error{File: dir, Key: "aid", Msg: "only reviewers may have an aid script"})
+			return Role{}, false
+		}
 		switch {
 		case hasPrompt && hasScan:
 			*errs = append(*errs, &Error{File: dir, Msg: "has both scan and prompt.txt; a scanner is exactly one of them"})
@@ -130,6 +135,18 @@ func inspectRole(fsys fs.FS, kind Kind, name, dir string, errs *Errors) (Role, b
 			return Role{}, false
 		}
 	default:
+		if hasAid {
+			if kind != KindReviewer {
+				*errs = append(*errs, &Error{File: dir, Key: "aid", Msg: "only reviewers may have an aid script"})
+				return Role{}, false
+			}
+			if !isExecutable(aidInfo) {
+				*errs = append(*errs, &Error{File: dir, Key: "aid", Msg: "must be executable (chmod +x)"})
+				return Role{}, false
+			}
+			role.AidPath = dir + "/aid"
+			delete(extras, "aid")
+		}
 		if hasScan {
 			*errs = append(*errs, &Error{File: dir, Key: "scan", Msg: "only scanners may have a scan script"})
 			return Role{}, false

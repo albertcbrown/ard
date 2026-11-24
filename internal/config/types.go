@@ -123,6 +123,7 @@ type Role struct {
 
 	PromptPath string   // Dir + "/prompt.txt"; "" for a deterministic scanner
 	ScanPath   string   // Dir + "/scan"; "" for LLM roles
+	AidPath    string   // Dir + "/aid"; reviewers only, "" = none
 	Dockerfile string   // Dir + "/Dockerfile"; "" => default ard-agent image
 	Extra      []string // other files, relative to Dir, sorted, mounted read-only
 
