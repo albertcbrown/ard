@@ -28,6 +28,7 @@ type rawConfig struct {
 	protectedPaths         []string // merge.protected_paths
 	haveMerge              bool
 	stale                  rawStale
+	prWatchPendingTimeout  *Duration // pr_watch.pending_timeout
 	haveStale              bool
 	gitleaksEnabled        *bool // redact.gitleaks.enabled
 	gitleaksPath           *string
@@ -39,7 +40,7 @@ type rawConfig struct {
 // rawIntervals keeps every interval optional so defaults can tell "unset"
 // apart from an explicit value.
 type rawIntervals struct {
-	scanners, triage, workers, reviewers, merger *Duration
+	scanners, triage, workers, reviewers, merger, prwatch *Duration
 }
 
 // rawIntake keeps both keys optional so defaults can tell "unset" apart
@@ -126,6 +127,8 @@ func parseConfigDoc(doc *yaml.Node, cfgPath string) (rawConfig, Errors) {
 			errs = append(errs, raw.parseMerge(value, cfgPath)...)
 		case "stale":
 			errs = append(errs, raw.parseStale(value, cfgPath)...)
+		case "pr_watch":
+			errs = append(errs, raw.parsePRWatch(value, cfgPath)...)
 		case "redact":
 			errs = append(errs, raw.parseRedact(value, cfgPath)...)
 		case "sidecars":
@@ -176,12 +179,13 @@ func (ri *rawIntervals) parse(n *yaml.Node, file, prefix string) Errors {
 	set("workers", &ri.workers)
 	set("reviewers", &ri.reviewers)
 	set("merger", &ri.merger)
+	set("prwatch", &ri.prwatch)
 	for i := 0; i < len(n.Content); i += 2 {
 		name := n.Content[i].Value
 		switch name {
-		case "scanners", "triage", "workers", "reviewers", "merger":
+		case "scanners", "triage", "workers", "reviewers", "merger", "prwatch":
 		default:
-			errs = append(errs, &Error{File: file, Key: prefix + "." + name, Msg: "unknown key (want one of scanners, triage, workers, reviewers, merger)"})
+			errs = append(errs, &Error{File: file, Key: prefix + "." + name, Msg: "unknown key (want one of scanners, triage, workers, reviewers, merger, prwatch)"})
 		}
 	}
 	return errs
@@ -261,6 +265,31 @@ func (raw *rawConfig) parseStale(n *yaml.Node, file string) Errors {
 			errs = append(errs, decodeValue(value, file, "stale.suppress_for", &raw.stale.suppressFor)...)
 		default:
 			errs = append(errs, &Error{File: file, Key: "stale." + key.Value, Msg: "unknown key (want inactive_for or suppress_for)"})
+		}
+	}
+	return errs
+}
+
+func (raw *rawConfig) parsePRWatch(n *yaml.Node, file string) Errors {
+	var errs Errors
+	if n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return Errors{{File: file, Key: "pr_watch", Msg: "must be a mapping"}}
+	}
+	for i := 0; i < len(n.Content); i += 2 {
+		key, value := n.Content[i], n.Content[i+1]
+		switch key.Value {
+		case "pending_timeout":
+			var d *Duration
+			bad := decodeValue(value, file, "pr_watch.pending_timeout", &d)
+			errs = append(errs, bad...)
+			if len(bad) == 0 {
+				raw.prWatchPendingTimeout = d
+			}
+		default:
+			errs = append(errs, &Error{File: file, Key: "pr_watch." + key.Value, Msg: "unknown key (want pending_timeout)"})
 		}
 	}
 	return errs

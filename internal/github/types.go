@@ -66,6 +66,7 @@ type PullRequest struct {
 	Title, Body    string
 	State          State
 	Draft, Merged  bool
+	MergedBy       string // login; set by GetPR only, GitHub omits it from lists
 	Author         string
 	Labels         []string
 	HeadRef        string

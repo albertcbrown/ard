@@ -38,6 +38,7 @@ type item struct {
 	isPR         bool
 	draft        bool
 	merged       bool
+	mergedBy     string
 	headRef      string
 	headSHA      string
 	baseRef      string
@@ -123,7 +124,7 @@ func (f *Fake) SeedPR(pr github.PullRequest) int {
 	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
 	it := &item{
-		isPR: true, draft: pr.Draft, merged: pr.Merged,
+		isPR: true, draft: pr.Draft, merged: pr.Merged, mergedBy: pr.MergedBy,
 		headRef: pr.HeadRef, headSHA: pr.HeadSHA, baseRef: pr.BaseRef, mergeSt: pr.MergeableState,
 		issue: github.Issue{
 			Number: pr.Number, NodeID: pr.NodeID, Title: pr.Title, Body: pr.Body, State: pr.State,
@@ -405,7 +406,7 @@ func (it *item) copyPR() github.PullRequest {
 	is := it.issue
 	pr := github.PullRequest{
 		Number: is.Number, NodeID: is.NodeID, Title: is.Title, Body: is.Body, State: is.State,
-		Draft: it.draft, Merged: it.merged, Author: is.Author,
+		Draft: it.draft, Merged: it.merged, MergedBy: it.mergedBy, Author: is.Author,
 		Labels:  append([]string(nil), is.Labels...),
 		HeadRef: it.headRef, HeadSHA: it.headSHA, BaseRef: it.baseRef,
 		MergeableState: it.mergeSt, URL: is.URL,
@@ -640,7 +641,9 @@ func (f *Fake) ListPRs(ctx context.Context, o github.ListPRsOpts) ([]github.Pull
 		if o.Base != "" && it.baseRef != o.Base {
 			continue
 		}
-		out = append(out, it.copyPR())
+		pr := it.copyPR()
+		pr.MergedBy = "" // GitHub omits merged_by from lists
+		out = append(out, pr)
 	}
 	return out, nil
 }
@@ -1036,6 +1039,7 @@ func (f *Fake) MergePR(ctx context.Context, n int, in github.MergeInput) (github
 	}
 	now := f.s.now()
 	it.merged = true
+	it.mergedBy = f.actor.Login
 	it.issue.State = github.StateClosed
 	it.issue.ClosedAt = &now
 	it.issue.StateReason = github.ReasonCompleted

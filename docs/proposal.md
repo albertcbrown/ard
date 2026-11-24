@@ -78,7 +78,7 @@ stateDiagram-v2
 | `ard:<stage>:<role>:done` | Controller on close-out | Finished; output is in `.ard/<issue#>/` |
 | `ard:review:<role>:changes` | Controller on close-out | Reviewer found blocking issues; sends the PR back to the worker |
 | `ard:executor:failed` | Reaper or close-out | Job died or ran over time; resources kept 24 h |
-| `ard:needs-human` | Controller, from the agent's result, or a scanner at filing (`route: needs-human`) | Agent reported it is blocked; automation stops |
+| `ard:needs-human` | Controller, from the agent's result, a scanner at filing (`route: needs-human`), the merger, or the PR watch loop (a PR closed without merging while its issue is open) | Agent reported it is blocked, or the PR is gone; automation stops |
 | `ard:needs-approval` | Merger | PR touches a protected path; merges after a write-access human approves its head with a GitHub review |
 | `ard:hold` | Human | Controller ignores this issue or PR entirely |
 
@@ -385,11 +385,25 @@ Only ready (non-draft) PRs the App opened on `worker/<role>-<issue#>-<slug>` wit
 
 A protected path needs a GitHub review in state `APPROVED`, from a user who is not an App and has write, maintain or admin permission, that stands at a commit the current head still covers (the same rule as for reviews). A later `CHANGES_REQUESTED` or `DISMISSED` review by the same person voids it, a plain comment does not. A triage user cannot push or merge on GitHub, so their approval does not authorise a change to `.github/`, config or agent instructions. The label is not the approval: `ard:needs-approval` is informational, the merger adds it and posts one comment per head, and removing it changes nothing.
 
-It squash-merges with the PR title plus ` (#<pr>)` (cleaned: whitespace and control characters collapsed, skip-CI tokens defused, closing references neutralised, at most 72 characters) and one `Ard-Job: <id>` trailer line per worker job of the branch, guarded by the head SHA. It then deletes the branch, so `.ard/<issue#>/` and its logs land on `main` with the code, and the `Closes #<issue>` line closes the issue. A merge records a `merge` event in the state store.
+Checks that stay pending are reported by the PR watch loop (below), not here. It squash-merges with the PR title plus ` (#<pr>)` (cleaned: whitespace and control characters collapsed, skip-CI tokens defused, closing references neutralised, at most 72 characters) and one `Ard-Job: <id>` trailer line per worker job of the branch, guarded by the head SHA. It then deletes the branch, so `.ard/<issue#>/` and its logs land on `main` with the code, and the `Closes #<issue>` line closes the issue. A merge records a `merge` event in the state store.
 
 **Pause and dry-run.** The merger loop is skipped while the controller is paused: no merges, no branch updates and no review re-requests. In `--dry-run` it runs the same gates, writes only to the effects ledger and logs `merge.would_merge`, `merge.would_update` and `merge.would_rerequest`. `ard serve --loops` can leave it out.
 
 **Branch protection and the bot.** The committer pushes `.ard/<issue#>/` commits straight to `main` with `[skip ci]`, which neither a "require a pull request" rule nor a required status check can admit, so the App must be on the bypass list of `main`'s ruleset (mode Always). GitHub's bypass covers the whole ruleset, not single rules (found on Gate 2, #39). ard keeps that bypass narrow itself: the committer refuses any path outside `.ard/<issue#>/`, the merger merges only when every review passed and required checks are green on the current head (checked in code, not left to GitHub), and the bot-commit audit flags any bot commit on `main` that touches anything else. GitHub enforces nothing on the App's merges, so the merger reads the required checks itself from the branch rules API. A squash merge has GitHub (`noreply@github.com`) as committer and the App as author, so the audit, which keys on the committer, does not cover merges: the merger's gates do.
+
+## PR watch loop
+
+A PR can change state behind ard's back, or stop moving, and the merger sees only ready, open PRs. `internal/prwatch` is a controller loop, not an agent, and takes no slot. Every `intervals.prwatch` (default 5m) it reads ard's PRs (App-authored `worker/` branches with base `main`: draft, ready, merged and closed) and **only observes, records and notifies**. It never merges, updates a branch, re-requests a review or starts a round: those belong to the merger, to #252 (stale reviews), #255 (conflicts) and `reviewfix` (#41), and the loop's effects interface has no such call. It is skipped while the controller is paused, like the merger.
+
+| Change | Action |
+|---|---|
+| A human closes the PR without merging while its issue is open | `ard:needs-human` on the issue and one comment on how to retry (remove `ard:worker:<role>:done`) or close it. Once per PR. Nothing if the issue is closed, a merge is recorded, or another PR of the issue is open |
+| Required checks pending on one head longer than `pr_watch.pending_timeout` (default 2h) | One status-issue notice per (PR, head) naming the pending checks. No label. A new head restarts the clock. The merger's `waiting_checks` gets this answer instead of only a log line (#256) |
+| A human merges the PR | A `merge` event whose data has `pr`, `head` and `actor` (the human), for the digest and the gate counts. Logged, no comment. A merge by the App is not recorded again: the merger already wrote its event |
+| A draft PR's required checks go red | One PR comment per head naming the failed checks. No label. Ready PRs with red checks are the merger's |
+| Head moved, conflicts, requested changes, comments, label edits | Logged only |
+
+Checks are judged by `prgate.EvalChecks`, the same function the merger uses, so the two cannot read one set of checks differently. The loop acts only on PRs it has seen open: it keeps a row per PR in the `pr_watch` table of `_controller.db` (head, checks state, when the head was first seen, and what was notified), so installing it does not replay history. Per tick it makes one `ListPRs(state=all, base=main)` call and reads `RequiredChecks` once, and check runs and commit statuses only for open PRs whose head is not settled; a green or red result is kept per head, so an unchanged head costs no check calls (at most 1+2N calls). A PR with a running worker or review job is skipped. Each action runs at most once per (PR, head, transition): the loop checks the row, a `pr_watch` event `{pr, head, transition}` and a marker comment (`<!-- ard:prwatch <transition> pr=<n> head=<sha> -->`) before it acts, and writes the event and row after the effect, so a restart or a failed write posts nothing twice. Check names come from CI and are untrusted: they are sanitized and printed in code spans, and no PR or issue body text or `@` is ever copied. In `--dry-run` the loop keeps its state in memory, appends no events and writes only to the effects ledger. `ard serve --loops` can leave it out.
 
 ## Configuration
 
@@ -418,7 +432,8 @@ budget_usd_per_day: 50       # whole repo, UTC day, blocks at spent >= cap; a ro
 max_budget_usd: 5            # per job; provisional, same recalibration
 global_max_open: 30          # open scanner issues across all scanners
 paused: false
-intervals: { scanners: 4h, triage: 15m, workers: 5m, reviewers: 5m, merger: 5m }
+intervals: { scanners: 4h, triage: 15m, workers: 5m, reviewers: 5m, merger: 5m, prwatch: 5m }
+pr_watch: { pending_timeout: 2h }   # at least intervals.prwatch, at most 7d
 intake: { mode: label }     # mode: all | label; label (label mode only) defaults to ard:pending, must start with ard: and must not be one of ard's own labels
 merge:                       # defaults written by `ard init`; the list is the only source (no floor in code)
   protected_paths: [.github/, .ard/config.yaml, .ard/scanners/, .ard/triage/, .ard/workers/, .ard/reviewers/, "**/CODEOWNERS", CLAUDE.md, "**/CLAUDE.md", AGENTS.md, "**/AGENTS.md", .claude/, .mcp.json, "**/.golangci.yml", "**/.golangci.yaml", "**/.golangci.toml", "**/.golangci.json"]

@@ -84,6 +84,7 @@ func TestLoadDefaults(t *testing.T) {
 		Workers:   Duration(5 * time.Minute),
 		Reviewers: Duration(5 * time.Minute),
 		Merger:    Duration(5 * time.Minute),
+		PRWatch:   Duration(5 * time.Minute),
 	}
 	if res.Intervals != wantIntervals {
 		t.Errorf("Intervals = %+v, want %+v", res.Intervals, wantIntervals)
@@ -93,6 +94,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if res.Stale.InactiveFor != Duration(30*24*time.Hour) || res.Stale.SuppressFor != Duration(90*24*time.Hour) {
 		t.Errorf("Stale = %+v", res.Stale)
+	}
+	if res.PRWatch.PendingTimeout != Duration(2*time.Hour) {
+		t.Errorf("PRWatch = %+v", res.PRWatch)
 	}
 	if len(res.Sidecars) != 0 || len(res.ProtectedPaths) != 0 {
 		t.Errorf("Sidecars = %v, ProtectedPaths = %v", res.Sidecars, res.ProtectedPaths)
@@ -672,6 +676,31 @@ func TestLoadErrors(t *testing.T) {
 			name: "unknown interval key",
 			yaml: "intervals: {scannerz: 4h}\n",
 			want: []wantErr{{".ard/config.yaml", "intervals.scannerz", "unknown key"}},
+		},
+		{
+			name: "prwatch interval below minimum",
+			yaml: "intervals: {prwatch: 30s}\n",
+			want: []wantErr{{".ard/config.yaml", "intervals.prwatch", "must be at least 1m"}},
+		},
+		{
+			name: "pending timeout below interval",
+			yaml: "intervals: {prwatch: 10m}\npr_watch: {pending_timeout: 5m}\n",
+			want: []wantErr{{".ard/config.yaml", "pr_watch.pending_timeout", "at least intervals.prwatch"}},
+		},
+		{
+			name: "pending timeout above 7d",
+			yaml: "pr_watch: {pending_timeout: 8d}\n",
+			want: []wantErr{{".ard/config.yaml", "pr_watch.pending_timeout", "at most 7d"}},
+		},
+		{
+			name: "bad pending timeout type",
+			yaml: "pr_watch: {pending_timeout: 2x}\n",
+			want: []wantErr{{".ard/config.yaml", "pr_watch.pending_timeout", `invalid duration "2x"`}},
+		},
+		{
+			name: "unknown pr_watch key",
+			yaml: "pr_watch: {nope: 1h}\n",
+			want: []wantErr{{".ard/config.yaml", "pr_watch.nope", "unknown key"}},
 		},
 		{
 			name: "bad stale duration",

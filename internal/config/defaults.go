@@ -28,6 +28,10 @@ const (
 	defaultIntervalWorkers   = Duration(5 * time.Minute)
 	defaultIntervalReviewers = Duration(5 * time.Minute)
 	defaultIntervalMerger    = Duration(5 * time.Minute)
+	defaultIntervalPRWatch   = Duration(5 * time.Minute)
+
+	defaultPRWatchPendingTimeout = Duration(2 * time.Hour)
+	maxPRWatchPendingTimeout     = Duration(7 * 24 * time.Hour)
 
 	defaultRoleTimeout = 30 * time.Minute
 
@@ -68,8 +72,10 @@ func newResolved(repoRoot string) *Resolved {
 			Workers:   defaultIntervalWorkers,
 			Reviewers: defaultIntervalReviewers,
 			Merger:    defaultIntervalMerger,
+			PRWatch:   defaultIntervalPRWatch,
 		},
-		Intake: Intake{Mode: defaultIntakeMode},
+		PRWatch: PRWatch{PendingTimeout: defaultPRWatchPendingTimeout},
+		Intake:  Intake{Mode: defaultIntakeMode},
 		Stale: Stale{
 			InactiveFor: defaultStaleInactiveFor,
 			SuppressFor: defaultStaleSuppressFor,
@@ -138,6 +144,7 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 	res.Intervals.Workers = intervalOr(raw.intervals.workers, res.Intervals.Workers)
 	res.Intervals.Reviewers = intervalOr(raw.intervals.reviewers, res.Intervals.Reviewers)
 	res.Intervals.Merger = intervalOr(raw.intervals.merger, res.Intervals.Merger)
+	res.Intervals.PRWatch = intervalOr(raw.intervals.prwatch, res.Intervals.PRWatch)
 	for _, iv := range []struct {
 		key string
 		d   Duration
@@ -147,10 +154,18 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		{"intervals.workers", res.Intervals.Workers},
 		{"intervals.reviewers", res.Intervals.Reviewers},
 		{"intervals.merger", res.Intervals.Merger},
+		{"intervals.prwatch", res.Intervals.PRWatch},
 	} {
 		if iv.d < minLoopInterval {
 			errs = append(errs, &Error{File: cfgPath, Key: iv.key, Msg: fmt.Sprintf("must be at least 1m (the Reaper alone runs every minute), got %s", iv.d)})
 		}
+	}
+
+	if raw.prWatchPendingTimeout != nil {
+		res.PRWatch.PendingTimeout = *raw.prWatchPendingTimeout
+	}
+	if pt := res.PRWatch.PendingTimeout; pt < res.Intervals.PRWatch || pt > maxPRWatchPendingTimeout {
+		errs = append(errs, &Error{File: cfgPath, Key: "pr_watch.pending_timeout", Msg: fmt.Sprintf("must be at least intervals.prwatch (%s) and at most 7d, got %s", res.Intervals.PRWatch, pt)})
 	}
 
 	errs = append(errs, applyIntake(res, raw.intake, cfgPath)...)
