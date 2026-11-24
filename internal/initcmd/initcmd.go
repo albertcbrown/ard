@@ -151,7 +151,7 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 		return fmt.Errorf("ard init: %w", err)
 	}
 	snap := filepath.Join(tmp, "main")
-	if err := gitx.New("").ExportPaths(ctx, root, base, snap, config.SourcePaths()...); err != nil {
+	if err := gitx.New("").ExportPaths(ctx, root, base, snap, append(config.SourcePaths(), ContextPaths()...)...); err != nil {
 		return fmt.Errorf("ard init: read main's .ard/: %w", err)
 	}
 	existing := os.DirFS(snap)
@@ -159,7 +159,7 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 	if err != nil {
 		return fmt.Errorf("ard init: %w", err)
 	}
-	merged, err := overlay(existing, files)
+	merged, err := overlay(existing, changed(ops))
 	if err != nil {
 		return fmt.Errorf("ard init: %w", err)
 	}
