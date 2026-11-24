@@ -1,0 +1,113 @@
+# Release: build ard with GoReleaser and attach the archives and checksums to
+# the notes-only release version.yml created for a v* tag, then update the
+# Homebrew cask in albertcbrown/homebrew-tap.
+#
+# Inert until switched on: it does nothing unless the repository variable
+# ARD_VERSIONING is "on" and the release environment holds TAP_GITHUB_TOKEN
+# (a token that can push to albertcbrown/homebrew-tap only). Without the token
+# it says so and stops; it never half-publishes.
+#
+# Only the newest v* tag is released on a tag push, so version.yml's backfill
+# of many historical tags does not publish one release per tag. Use
+# workflow_dispatch with a tag to build an older one on purpose.
+#
+# Settings and recovery: docs/runbooks/release.md. Design: docs/proposal.md
+# (Delivery) and #177.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (vX.Y.Z); must already have a release
+        required: true
+        type: string
+
+# One release at a time; never cancel one that is uploading.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write # upload assets to the existing release only
+    env:
+      ENABLED: ${{ vars.ARD_VERSIONING }}
+      EVENT: ${{ github.event_name }}
+      PUSHED_TAG: ${{ github.ref_name }}
+      INPUT_TAG: ${{ inputs.tag }}
+      HAS_TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN != '' }}
+    steps:
+      - name: Decide
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          skip() { echo "::notice title=release::$1"; echo "run=false" >>"$GITHUB_OUTPUT"; exit 0; }
+          [[ "${ENABLED:-}" == on ]] || skip "ARD_VERSIONING is not on; nothing to release"
+          [[ "${HAS_TAP_TOKEN:-}" == true ]] || skip "the release environment has no TAP_GITHUB_TOKEN; create the tap token first (docs/runbooks/release.md)"
+          if [[ "$EVENT" == workflow_dispatch ]]; then tag=$INPUT_TAG; else tag=$PUSHED_TAG; fi
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error title=release::not a vX.Y.Z tag: $tag"; exit 2; }
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "run=true" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.decide.outputs.run == 'true'
+        with:
+          ref: refs/tags/${{ steps.decide.outputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Newest tag only on push
+        id: newest
+        if: steps.decide.outputs.run == 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          newest=$(git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n 1)
+          if [[ "$EVENT" == push && "$TAG" != "$newest" ]]; then
+            echo "::notice title=release::$TAG is not the newest tag ($newest); skipping (dispatch with tag=$TAG to build it)"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Release exists
+        if: steps.newest.outputs.run == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null \
+            || { echo "::error title=release::no release for $TAG; version.yml creates it first"; exit 2; }
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        if: steps.newest.outputs.run == 'true'
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        if: steps.newest.outputs.run == 'true'
+        with:
+          distribution: goreleaser
+          version: v2.20.3
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.decide.outputs.tag }}
