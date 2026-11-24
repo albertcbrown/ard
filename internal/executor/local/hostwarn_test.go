@@ -132,3 +132,18 @@ func TestPrepareCopiesTrustedInput(t *testing.T) {
 		t.Error("Prepare dropped TrustedInput")
 	}
 }
+
+func TestHostTextMentionsAgentImage(t *testing.T) {
+	txt := HostRoleText("triage", "lead")
+	if !strings.Contains(txt, "ARD_AGENT_IMAGE is not set") || !strings.Contains(txt, hostHint) || !strings.HasSuffix(txt, "\n") {
+		t.Errorf("HostRoleText = %q", txt)
+	}
+	if !strings.Contains(hostHint, "ARD_AGENT_IMAGE") {
+		t.Errorf("hostHint = %q", hostHint)
+	}
+	var buf bytes.Buffer
+	WarnHostRole(slog.New(slog.NewTextHandler(&buf, nil)), "triage", "lead")
+	if !strings.Contains(buf.String(), EventHostUntrusted) || !strings.Contains(buf.String(), "ARD_AGENT_IMAGE") {
+		t.Errorf("WarnHostRole log = %q", buf.String())
+	}
+}

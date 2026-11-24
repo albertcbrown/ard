@@ -3,7 +3,9 @@ package executor
 import "errors"
 
 var (
-	ErrInvalidJob     = errors.New("invalid job")
+	ErrInvalidJob = errors.New("invalid job")
+	// ErrImageRef marks an agent image reference that is neither digest-pinned nor a local image ID.
+	ErrImageRef       = errors.New("invalid agent image reference")
 	ErrExists         = errors.New("job workspace already exists")
 	ErrForbiddenEnv   = errors.New("forbidden environment entry")
 	ErrNotPrepared    = errors.New("job not prepared")
