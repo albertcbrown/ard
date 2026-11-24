@@ -94,7 +94,7 @@ roles:
     reviewers:
       - security-review
     diff_warn_lines: 800
-    diff_max_lines: 2000
+    diff_max_lines: 3000
   - name: eng-review
     kind: reviewer
     dir: .ard/reviewers/eng-review

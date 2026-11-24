@@ -149,8 +149,8 @@ func TestLoadDefaults(t *testing.T) {
 	if eng.Tests != "make test" || eng.MaxTestFixes != 2 || eng.MaxReviewRounds != 3 {
 		t.Errorf("worker defaults = tests %q fixes %d rounds %d", eng.Tests, eng.MaxTestFixes, eng.MaxReviewRounds)
 	}
-	if eng.DiffWarnLines != 1000 || eng.DiffMaxLines != 2000 {
-		t.Errorf("worker diff defaults = warn %d max %d, want 1000 and 2000", eng.DiffWarnLines, eng.DiffMaxLines)
+	if eng.DiffWarnLines != 2000 || eng.DiffMaxLines != 3000 {
+		t.Errorf("worker diff defaults = warn %d max %d, want 2000 and 3000", eng.DiffWarnLines, eng.DiffMaxLines)
 	}
 	if strings.Join(eng.Extra, ",") != "allowlist.txt,scripts/test.sh" {
 		t.Errorf("worker extra = %v", eng.Extra)
@@ -490,13 +490,13 @@ func TestLoadErrors(t *testing.T) {
 		},
 		{
 			name: "diff_warn_lines above the default diff_max_lines",
-			yaml: "overrides: {workers/engineer: {diff_warn_lines: 2001}}\n",
-			want: []wantErr{{".ard/config.yaml", `overrides["workers/engineer"].diff_warn_lines`, "must not exceed diff_max_lines (2000), got 2001"}},
+			yaml: "overrides: {workers/engineer: {diff_warn_lines: 3001}}\n",
+			want: []wantErr{{".ard/config.yaml", `overrides["workers/engineer"].diff_warn_lines`, "must not exceed diff_max_lines (3000), got 3001"}},
 		},
 		{
 			name: "diff_max_lines below the default diff_warn_lines",
-			yaml: "overrides: {workers/engineer: {diff_max_lines: 999}}\n",
-			want: []wantErr{{".ard/config.yaml", `overrides["workers/engineer"].diff_warn_lines`, "must not exceed diff_max_lines (999), got 1000"}},
+			yaml: "overrides: {workers/engineer: {diff_max_lines: 1999}}\n",
+			want: []wantErr{{".ard/config.yaml", `overrides["workers/engineer"].diff_warn_lines`, "must not exceed diff_max_lines (1999), got 2000"}},
 		},
 		{
 			name: "diff_max_lines on a scanner",
