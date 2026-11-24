@@ -3,21 +3,25 @@ role: engineer
 status: done
 attempt: 1
 ---
-Adds an `ARD_AGENT_IMAGE` host setting so the local executor runs roles without a Dockerfile in the default image, with startup validation and no fallback to host mode. This round adds the tests the reviewer found missing.
+Adds an `ARD_AGENT_IMAGE` host setting: the local executor runs untrusted-input roles that have no Dockerfile in that pinned image under Docker, never falls back to the host, and the host warning no longer fires for covered roles. Startup and `ard config check` reject an invalid ref.
 
 ## Changes
-- `internal/servecmd/serve.go`: the Docker startup probe is now the injectable `dockerProbe` variable.
-- `internal/servecmd/serve_test.go`: `TestServeAgentImageValidation` covers an invalid ref (wraps `ErrImageRef`, probe not run), Docker down ("Docker is not available") and a valid ref logging `serve.agent_image`.
-- `internal/executor/local/hostwarn_test.go`: `TestHostTextMentionsAgentImage` covers the changed `hostHint`, `HostRoleText` and `WarnHostRole` wording.
-- Earlier rounds (unchanged): executor, config, servecmd and configcmd code, and docs/proposal.md.
+- `internal/executor`: `ErrImageRef` and `CheckImageRef` (digest or local image ID only).
+- `internal/executor/local`: `Options.AgentImage`, `ensurePulled`, a shared Docker setup for the default image, and updated host-warning wording.
+- `internal/config`: `HostUntrustedWith`.
+- `internal/servecmd`, `internal/configcmd`: read and validate the variable, probe Docker at serve startup, skip warnings for covered roles, log `serve.agent_image`.
+- `docs/proposal.md`: documents the setting, precedence and no-fallback rule.
+- Tests for all of the above.
+- Review round: `internal/configcmd/config_test.go` now clears `ARD_AGENT_IMAGE` in the two tests that expect the host warning, so they hold on a host that sets it.
 
 ## Testing
-Ran `go test` on internal/servecmd, internal/executor/..., and internal/configcmd; all pass. `make lint` was not rerun; it fails on a pre-existing fixture under internal/roles/testdata (gofmt reports it) that this change does not touch.
+Ran `go test` on `./internal/executor/...`, `./internal/servecmd`, `./internal/configcmd` and `./internal/config`; all pass.
 
 ## Review findings
-- serve.go:214 (blocking): fixed. Added the three servecmd startup tests via an injectable probe.
-- serve.go:219 (low): not changed. The probe and the executor both use "docker", and DockerBin is not configurable today. A comment records the link.
-- hostwarn.go:15 (medium): fixed for the wording tests. The unset-keeps-warning cases already exist in `TestCheckWarnsHostUntrusted` (configcmd) and `TestWarnHost` (servecmd cfgloader).
+- `internal/servecmd/serve.go:214` (blocking): not changed. `TestServeAgentImageValidation` in `serve_test.go` already covers an invalid ref (`ErrImageRef`, probe not run), Docker down ("Docker is not available") and a valid ref logging `serve.agent_image`. The Docker probe is already injectable through `dockerProbe`.
+- `internal/servecmd/serve.go:219` (low): not changed. Both use `docker` today, so there is nothing to share yet.
+- `internal/executor/local/hostwarn.go:15` (medium): partly fixed. `TestHostTextMentionsAgentImage` in `hostwarn_test.go` already covers the `hostHint` and `HostRoleText` wording. The unset-variable warning is checked by `TestCheckValid` and `TestCheckWarnsHostUntrustedAtErrorLevel` in `internal/configcmd/config_test.go`, now hermetic.
 
 ## Open issues
-- The Docker integration test and live Mac check are for a human.
+- `make lint` fails on a fixture under `internal/roles/testdata` that this change does not touch.
+- The Docker integration test and the live Mac check are for a human.
