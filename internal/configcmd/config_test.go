@@ -52,6 +52,7 @@ func writeRepo(t *testing.T, config string) string {
 }
 
 func TestCheckValid(t *testing.T) {
+	t.Setenv("ARD_AGENT_IMAGE", "") // unset keeps the host warning
 	root := writeRepo(t, "max_pods: 5\noverrides: {scanners/cve: {every: 6h}}\n")
 	e, stdout, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
 
@@ -72,6 +73,7 @@ func TestCheckValid(t *testing.T) {
 }
 
 func TestCheckWarnsHostUntrustedAtErrorLevel(t *testing.T) {
+	t.Setenv("ARD_AGENT_IMAGE", "")
 	root := writeRepo(t, "max_pods: 5\n")
 	e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
 	var logs bytes.Buffer
