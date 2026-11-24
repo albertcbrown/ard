@@ -5,16 +5,20 @@ attempt: 1
 verdict: approve
 findings:
   - file: "internal/reviewer/run.go"
-    line: 176
+    line: 173
     severity: low
     blocking: false
     message: |
-      The agent timeout is only shortened when the job's timeout is above zero. If a role's effective timeout can be 0 (no limit), the aid time is not counted.
-      This is fine for the starter roles (default 30m). Consider a test for the floor of one minute, since the aid consuming nearly all of a short role timeout is not exercised.
+      The agent timeout is shortened only when the job's timeout is above zero, so a role with no limit does not count the aid time. The one-minute floor is not tested either.
+      This is fine for the starter roles (default 30m). Add a test where the aid uses nearly all of a short timeout.
 ---
-The aid step matches the issue and proposal. The output is validated and redacted, a gitleaks hit on an added line blocks in code, and a failed aid cannot approve. The tests of the changed packages pass.
+The aid step matches the issue and plan.md: output is validated and redacted, a gitleaks hit on an added line blocks in code, and a failed aid cannot approve. Tests for the changed packages pass; one low finding remains and does not block.
 
 ## Checks
-- Lint: `make lint` runs `go vet ./...`. It stopped on `internal/roles/testdata/docs/skips/src/_x.go` (a deliberately malformed testdata file), which this change does not touch. No problem was reported on the changed files.
-- Tests with coverage: `go test` of reviewer, closeout, config, roles and initcmd all pass. In the new code, `aidAdjust`, `aidInput`, `reason` and `inAdded` are at 100%, `validateAid` at 89%, `runAid` at 85% and `validAidPath` at 88%. The remaining gaps are failure branches of the executor calls.
-- Not run: the Docker integration test and the real aid script, since they need Docker and the pinned tools.
+- Lint: not re-run. The previous round's `make lint` (`go vet ./...`) stopped on an untouched testdata file and reported nothing on the changed files.
+- Tests: `go test ./internal/reviewer ./internal/closeout ./internal/config` pass.
+- Diff coverage: not re-run; the previous round measured the new functions at 85–100%.
+- Not run: the Docker integration test and the real aid script, which need Docker and the pinned tools.
+
+## Previous findings
+- internal/reviewer/run.go (agent timeout only shortened when the timeout is above zero; no floor test): still present, low, now at line 173.
