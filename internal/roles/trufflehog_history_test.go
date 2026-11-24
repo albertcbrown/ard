@@ -91,7 +91,7 @@ func TestTrufflehogHistoryArgv(t *testing.T) {
 		t.Fatalf("exit %d: %s", r.code, r.stderr)
 	}
 	argv := strings.TrimSpace(r.argv)
-	if !strings.HasPrefix(argv, "git file://"+hist+" --json --no-update --no-color --no-verification --no-ignore-tag --fail-on-scan-errors --concurrency=2 -x ") {
+	if !strings.HasPrefix(argv, "git file://"+hist+" --bare --json --no-update --no-color --no-verification --no-ignore-tag --fail-on-scan-errors --concurrency=2 -x ") {
 		t.Errorf("argv = %q", argv)
 	}
 	for _, f := range []string{"--since-commit", "--max-depth", "--branch", "--filter-", "--results", "--detector-timeout", "--archive-timeout"} {
@@ -176,4 +176,54 @@ func TestTrufflehogHistoryDockerfileAndSalt(t *testing.T) {
 	if string(ex1) != string(ex2) {
 		t.Errorf("exclude-paths differ")
 	}
+}
+
+// Runs the real trufflehog (skipped when it is not installed) against a bare repo
+// whose refs live only under refs/ard/*, like the controller's clone.
+func TestTrufflehogHistoryRealBinary(t *testing.T) {
+	needTools(t, "sh", "jq", "git", "trufflehog")
+	git := func(dir string, args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	src := t.TempDir()
+	git(src, "init", "-q", "-b", "main")
+	// Credential-shaped values are built at run time so no token-shaped string is in the source.
+	id := "AK" + "IA" + strings.Repeat("QYLPMN5HHHFPZAM", 1) + "7"
+	key := strings.Repeat("wJalrXUtnFEMI/K7MDENG/bPxRfiCY", 1) + "EXAMPLEKEY"
+	body := "aws_access_key_id = " + id + "\naws_secret_access_key = " + key + "\n"
+	os.WriteFile(filepath.Join(src, "creds.txt"), []byte(body), 0o644)
+	git(src, "add", ".")
+	git(src, "commit", "-q", "-m", "add")
+	git(src, "rm", "-q", "creds.txt")
+	git(src, "commit", "-q", "-m", "remove")
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	git(src, "init", "-q", "--bare", bare)
+	git(src, "push", "-q", bare, "main:refs/ard/main")
+	git(bare, "symbolic-ref", "HEAD", "refs/ard/nonexistent")
+	work := t.TempDir()
+	tmp := filepath.Join(work, "tmp")
+	os.Mkdir(tmp, 0o755)
+	cmd := exec.Command("sh", filepath.Join(mustAbs(t, thHist), "scan"))
+	cmd.Dir = work
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TMPDIR=" + tmp, "ARD_HISTORY=" + bare, "HOME=" + work}
+	var so, se strings.Builder
+	cmd.Stdout, cmd.Stderr = &so, &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("scan: %v\n%s", err, se.String())
+	}
+	if n := strings.Count(so.String(), "\n"); n != 1 {
+		t.Fatalf("want one finding, got %d: %s", n, so.String())
+	}
+	for _, s := range []string{id, key} {
+		if strings.Contains(so.String(), s) || strings.Contains(se.String(), s) {
+			t.Error("secret leaked")
+		}
+	}
+	thTmpEmpty(t, tmp)
 }

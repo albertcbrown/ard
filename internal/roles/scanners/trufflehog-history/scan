@@ -64,7 +64,7 @@ tab=$(printf '\t')
 # set -e from skipping the echo.
 {
   rc=0
-  trufflehog git "file://$ARD_HISTORY" --json --no-update --no-color --no-verification \
+  trufflehog git "file://$ARD_HISTORY" --bare --json --no-update --no-color --no-verification \
     --no-ignore-tag --fail-on-scan-errors --concurrency=2 -x "$tmp/exclude" \
     2>"$tmp/th.err" || rc=$?
   echo "$rc" > "$tmp/th.rc"

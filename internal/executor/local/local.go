@@ -255,6 +255,8 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 	}
 	h.View.ConfigDir = cfg
 	if j.History {
+		// Host mode hands over the live clone: read-only is enforced only by the
+		// Docker mount (:ro), not on the host.
 		h.HistoryDir, h.View.History = j.RepoDir, j.RepoDir
 	}
 	// --- sidecar (#28): the executor clones, pins and mounts it read-only ---

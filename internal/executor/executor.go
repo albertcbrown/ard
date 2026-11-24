@@ -51,7 +51,8 @@ type Job struct {
 	// scanner); only valid with Stage "scanner". The zero value means it
 	// does, so a builder that forgets the field gets the host-mode warning.
 	TrustedInput bool
-	// History: the job may read the repository's full git history, read-only,
+	// History: the job may read the repository's full git history, read-only
+	// (Docker only; host mode does not enforce it),
 	// at Paths.History (and $ARD_HISTORY). Only valid with Stage "scanner".
 	History bool
 }
@@ -73,7 +74,8 @@ type File struct {
 // job's empty agent-CLI config dir (host: <home>/.claude; Docker:
 // /ard-config); it is empty on a handle stored before it existed.
 //
-// History is the bare clone with all fetched refs, read-only; empty when the
+// History is the bare clone with all fetched refs, read-only (enforced only by
+// the Docker mount; host mode gives the writable live clone); empty when the
 // job has no History. A Kubernetes executor must supply a read-only copy
 // (for example an init container running git clone --mirror, or a bundle
 // volume) at the same place.

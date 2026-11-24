@@ -38,7 +38,7 @@ def merge($allow):
          body: ([
            "trufflehog matched a value that looks like a credential (detector: \($dets | map(code) | join(", "))). ard did not verify it and never stores or prints the value.",
            "",
-           "**Treat it as leaked.** Revoke or rotate it at the provider first. The value is in git history, so removing it from HEAD does not revoke it, and on a public repository it is already public.",
+           "**Treat it as leaked.** Revoke or rotate it at the provider first. The value is in git history, possibly only on an unmerged branch ard fetched (it may not have reached main), so removing it from HEAD does not revoke it, and on a public repository it is already public.",
            "",
            "**Do not add `ard:pending` to this issue before the credential is rotated.** Triage and worker agents would read the file that holds it.",
            "",
