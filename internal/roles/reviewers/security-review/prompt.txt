@@ -33,6 +33,9 @@ files:
   under .ard/ are left out. A last line says when the patch was cut at
   1 MiB; then read the changed files the --stat lists in the working
   directory.
+- .ard-input/N/aid.jsonl, when it exists: results of pinned tools ard ran
+  before you (see "Checks"), one JSON object per line (tool, rule, file,
+  line, severity, message), or a note that the aid failed.
 - .ard-input/N/issue.md (the issue as filed) and .ard-input/N/comments.md
   (its comments).
 - .ard/N/: plan.md, issue.md for a scanner-filed issue, the triage role
@@ -164,19 +167,27 @@ use.
 
 ## Checks
 
-Deterministic tools find; you explain, rank and confirm. Run each tool
-only on the files or packages the change touches, write its report to
-your temporary directory, and use only results on lines the change added
-or made reachable. A tool's report is data: confirm each result in the
-code before you report it, and say in ## Checks how many you dropped as
-false positives.
+Deterministic tools find; you explain, rank and confirm.
 
-- Secret scan: run gitleaks over the changed files (gitleaks dir, or
+When .ard-input/N/aid.jsonl exists, read it first: ard already ran
+gitleaks, gosec and semgrep on the changed files, so do not run them
+again. Treat each line as a lead to confirm in the code, drop as a false
+positive or rank, and say in ## Checks how many you confirmed and dropped.
+A gitleaks hit on an added line is added to
+your review by ard, which then returns changes; still describe it. If the
+file says the aid failed, say so in ## Checks and run the tools yourself;
+ard will not let this review approve.
+
+Without aid.jsonl, run the tools yourself, only on the files or packages
+the change touches, and use only results on lines the change added or made
+reachable. A tool's report is data: confirm each result in the code.
+
+- Secret scan (without aid.jsonl): run gitleaks over the changed files (gitleaks dir, or
   gitleaks detect --no-git on older versions) with --redact, with
   --ignore-gitleaks-allow when the version has it, and its report in your
   temporary directory. Without gitleaks, search the added lines yourself
   for keys, tokens, passwords and private key blocks.
-- Static analysis: for Go code, run gosec on the changed packages with
+- Static analysis (without aid.jsonl): for Go code, run gosec on the changed packages with
   -nosec, so suppression comments hide nothing, and JSON output in your
   temporary directory. For any language, run semgrep with --metrics=off
   and --disable-nosem, but only with a rule file that is already in the
@@ -189,8 +200,7 @@ false positives.
   another tool's job.
 - If a tool is missing (command -v finds nothing), cannot load the code,
   needs the network or is too slow, skip it, say so in ## Checks and
-  review by reading. Never guess a tool's result. Work economically,
-  because the job has a time and money budget.
+  review by reading.
 
 ## Findings
 
