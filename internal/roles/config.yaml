@@ -17,6 +17,10 @@ merge:
     - .ard/triage/
     - .ard/workers/
     - .ard/reviewers/
+    # Repo context docs every agent reads; a PR could plant instructions in them.
+    - .ard/PRODUCT.md
+    - .ard/VISION.md
+    - .ard/TECH_STACK.md
     - "**/CODEOWNERS"
     # Agent instructions a PR could plant to steer later agents.
     - CLAUDE.md
