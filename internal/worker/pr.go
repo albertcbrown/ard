@@ -75,6 +75,16 @@ func Body(b BodyInfo) string {
 	if b.Result.Large != "" {
 		fmt.Fprintf(&w, "\n**%s**\n", b.Result.Large)
 	}
+	if len(b.Result.Fetched) > 0 {
+		w.WriteString("\n**Fetched inputs:**\n\n")
+		for _, f := range b.Result.Fetched {
+			by := "`" + f.VerifiedBy + "`"
+			if f.VerifiedBy == "none" {
+				by = "none (unverified)"
+			}
+			fmt.Fprintf(&w, "- `%s` → `%s` · sha256 `%s` · verified by %s\n", f.URL, f.Path, f.SHA256, by)
+		}
+	}
 	base := fmt.Sprintf("https://github.com/%s/%s", b.Repo.Owner, b.Repo.Name)
 	role := fmt.Sprintf(".ard/%d/worker-%s.md", b.Issue, b.Role)
 	fmt.Fprintf(&w, "\n**Files:** [%s](%s/blob/%s/%s) · [logs](%s/tree/%s/.ard/%d/logs) · job `%s`\n",

@@ -20,6 +20,7 @@ type rawConfig struct {
 	agent                  *string
 	requireApproval        *bool
 	budgetUSDPerDay        *float64
+	tokensPerDay           *TokenCount
 	maxBudgetUSD           *float64
 	globalMaxOpen          *int
 	paused                 *bool
@@ -114,6 +115,8 @@ func parseConfigDoc(doc *yaml.Node, cfgPath string) (rawConfig, Errors) {
 			errs = append(errs, decodeValue(value, cfgPath, name, &raw.requireApproval)...)
 		case "budget_usd_per_day":
 			errs = append(errs, decodeValue(value, cfgPath, name, &raw.budgetUSDPerDay)...)
+		case "tokens_per_day":
+			errs = append(errs, decodeValue(value, cfgPath, name, &raw.tokensPerDay)...)
 		case "max_budget_usd":
 			errs = append(errs, decodeValue(value, cfgPath, name, &raw.maxBudgetUSD)...)
 		case "global_max_open":
