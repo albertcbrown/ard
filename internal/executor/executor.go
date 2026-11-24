@@ -27,6 +27,15 @@ type Executor interface {
 }
 
 // Job describes one run.
+// Network is the role's network setting as the executor sees it.
+type Network string
+
+const (
+	NetworkOn       Network = ""         // zero value: today's behaviour
+	NetworkAdvisory Network = "advisory" // role says false; not enforced
+	NetworkNone     Network = "none"     // role says false; enforced (part 2)
+)
+
 type Job struct {
 	ID         string  // ULID minted at claim; ^[0-9A-Za-z]{1,64}$
 	Repo       string  // "owner/repo"
@@ -39,6 +48,7 @@ type Job struct {
 	Dockerfile string  // abs host path; "" = host subprocess
 	Sidecar    Sidecar // zero = none; the executor clones, pins and mounts it read-only
 	ReadOnly   bool    // worktree read-only: Docker mounts :ro, host chmod -R a-w after Prepare
+	Network    Network // from the role's network setting; never from the agent
 	Inputs     []File  // written into the worktree by Prepare
 	// Scrub lists repo-relative paths Prepare removes from the worktree after
 	// checkout and before Start, so a file at Ref cannot pass for this job's
@@ -111,6 +121,7 @@ type Handle struct {
 	PreparedAt          time.Time
 	StartedAt, Deadline time.Time
 	ReadOnly            bool
+	Network             Network // copied from Job by Prepare
 	Timeout             time.Duration
 	RoleDir, SidecarDir string  // host paths; SidecarDir is the executor's output (<Home>/sidecar), "" = none
 	Sidecar             Sidecar // copied from Job; zero on a handle stored before sidecars

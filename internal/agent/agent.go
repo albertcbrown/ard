@@ -57,6 +57,7 @@ type Spec struct {
 	MaxBudgetUSD float64  // > 0, finite
 	MaxTurns     int      // 0 = omit the flag
 	Tools        []string // nil = the adapter's default profile
+	Network      bool     // from the role's network setting; never from issue text
 	Auth         Auth     // required; AuthAPIKey or AuthOAuthToken
 }
 

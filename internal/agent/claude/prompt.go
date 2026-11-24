@@ -17,6 +17,11 @@ func userMessage(s agent.Spec) string {
 	for _, u := range s.Untrusted {
 		fmt.Fprintf(&b, "- %s\n", u)
 	}
+	if s.Network {
+		b.WriteString("Network: available.\n")
+	} else {
+		b.WriteString("Network: unavailable.\n")
+	}
 	fmt.Fprintf(&b, "When you are done, write %s with the frontmatter your instructions describe.\n", agent.RoleFilePath(s.Issue, s.Stage, s.Role))
 	b.WriteString("Do not run git commit, git push or any GitHub command; the controller does that.\n")
 	return b.String()
