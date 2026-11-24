@@ -210,9 +210,23 @@ type RoleKey struct{ Stage, Role string }
 // SpendSince sums step usage recorded at or after dayStart, per (stage, role)
 // and for the whole repo.
 func (s *Store) SpendSince(ctx context.Context, dayStart time.Time) (map[RoleKey]Spend, Spend, error) {
+	return s.spendBetween(ctx, dayStart, time.Time{})
+}
+
+// SpendBetween is SpendSince over the half-open window [from, to).
+func (s *Store) SpendBetween(ctx context.Context, from, to time.Time) (map[RoleKey]Spend, Spend, error) {
+	return s.spendBetween(ctx, from, to)
+}
+
+// spendBetween sums usage recorded in [dayStart, until); a zero until is open.
+func (s *Store) spendBetween(ctx context.Context, dayStart, until time.Time) (map[RoleKey]Spend, Spend, error) {
+	upper := int64(math.MaxInt64)
+	if !until.IsZero() {
+		upper = until.Unix()
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT j.stage, j.role, COALESCE(SUM(u.cost_usd), 0), COALESCE(SUM(u.cost_usd IS NULL), 0)
 		FROM step_usage u JOIN jobs j ON j.id = u.job_id
-		WHERE u.recorded_at >= ? GROUP BY j.stage, j.role`, dayStart.Unix())
+		WHERE u.recorded_at >= ? AND u.recorded_at < ? GROUP BY j.stage, j.role`, dayStart.Unix(), upper)
 	if err != nil {
 		return nil, Spend{}, fmt.Errorf("spend since %s: %w", dayStart.UTC().Format(time.RFC3339), err)
 	}
