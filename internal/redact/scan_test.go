@@ -102,3 +102,46 @@ func TestEntropy(t *testing.T) {
 	}
 	_ = fmt.Sprint
 }
+
+func TestScannerGenericAssignmentFalsePositives(t *testing.T) {
+	for _, in := range []string{
+		"Tokens: u.Tokens",
+		"Token: w.Token",
+		"Token: w.WorkerToken.Value",
+		"TotalTokens: usage.TotalTokens,",
+		`"cache_read_input_tokens": 1106888`,
+		`"tokens": 11068881106888123`,
+	} {
+		if f := scanString(t, in); len(f) != 0 {
+			t.Errorf("%q: unexpected findings %v", in, f)
+		}
+	}
+}
+
+func TestScannerGenericAssignmentTruePositives(t *testing.T) {
+	for _, in := range []string{
+		"api_" + "key = " + randStr(13, 32),
+		"token: \"" + randStr(14, 32) + "\"",
+		"password = \"" + randStr(15, 24) + "." + randStr(16, 24) + "\"",
+		"secret=" + randStr(17, 40) + "." + randStr(18, 40),
+	} {
+		found := false
+		for _, f := range scanString(t, in) {
+			if f.Rule == "generic-assignment" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: not flagged", in)
+		}
+	}
+}
+
+func scanString(t *testing.T, in string) []Finding {
+	t.Helper()
+	f, err := Builtin().Scan(context.Background(), strings.NewReader(in+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}

@@ -36,8 +36,11 @@ var rules = []rule{
 	{id: "jwt", re: regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,1000}\.eyJ[A-Za-z0-9_-]{10,1000}\.[A-Za-z0-9_-]{10,1000}`), kw: kws("eyJ")},
 	{id: "gcp-api-key", re: regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`), kw: kws("AIza")},
 	{id: "stripe-live", re: regexp.MustCompile(`\b[rs]k_live_[A-Za-z0-9]{20,250}`), kw: kws("_live_")},
+	// generic-assignment skips unquoted values that are a Go selector or
+	// short identifier (u.Tokens) or all digits (token counts). Quoted values
+	// are always judged by entropy, so the rule stays fail-closed.
 	{id: "generic-assignment", generic: true,
-		re: regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|passw(?:or)?d|auth)["']?\s{0,16}[:=]\s{0,16}["']?([A-Za-z0-9_\-+/=.]{16,250})`)},
+		re: regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|passw(?:or)?d|auth)["']?\s{0,16}[:=]\s{0,16}(["']?)([A-Za-z0-9_\-+/=.]{16,250})`)},
 }
 
 const entropyThreshold = 3.5
@@ -57,4 +60,36 @@ func placeholder(v []byte) bool {
 		return true
 	}
 	return placeholderRE.Match(v)
+}
+
+var codeRefRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+
+// codeRef reports whether v is an unquoted Go selector chain whose segments
+// are each at most 24 bytes, or a bare identifier shorter than 32 bytes.
+func codeRef(v []byte) bool {
+	if !codeRefRE.Match(v) {
+		return false
+	}
+	if bytes.IndexByte(v, '.') < 0 {
+		return len(v) < 32
+	}
+	for _, seg := range bytes.Split(v, []byte(".")) {
+		if len(seg) > 24 {
+			return false
+		}
+	}
+	return true
+}
+
+// numeric reports whether v is non-empty and all ASCII digits.
+func numeric(v []byte) bool {
+	if len(v) == 0 {
+		return false
+	}
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
