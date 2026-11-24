@@ -92,6 +92,9 @@ type roleYAML struct {
 	Model   string   `yaml:"model,omitempty"`
 	Timeout Duration `yaml:"timeout"`
 	Sidecar string   `yaml:"sidecar,omitempty"`
+	// Network is the bool true, or the string "false (advisory)" or
+	// "false (advisory, host)".
+	Network any `yaml:"network"`
 
 	Every     Duration `yaml:"every,omitempty"`
 	MaxOpen   int      `yaml:"max_open,omitempty"`
@@ -169,6 +172,7 @@ func (r *Resolved) render() resolvedYAML {
 			Model:           role.Model,
 			Timeout:         Duration(role.Timeout),
 			Sidecar:         role.Sidecar,
+			Network:         networkText(r, role),
 			Every:           Duration(role.Every),
 			MaxOpen:         role.MaxOpen,
 			GroupSize:       role.GroupSize,
@@ -191,4 +195,15 @@ func (r *Resolved) render() resolvedYAML {
 		out.Roles = append(out.Roles, ry)
 	}
 	return out
+}
+
+// networkText renders a role's network setting for config check.
+func networkText(r *Resolved, role Role) any {
+	switch {
+	case role.Network:
+		return true
+	case role.Dockerfile == "" && r.Executor != "k8s":
+		return "false (advisory, host)"
+	}
+	return "false (advisory)"
 }

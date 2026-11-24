@@ -29,6 +29,7 @@ import (
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/costblock"
 	"github.com/albertcbrown/ard/internal/costs"
+	"github.com/albertcbrown/ard/internal/digest"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/executor/local"
@@ -88,7 +89,7 @@ func loopNames(loops []controller.Loop) []string {
 // knownLoops are the names registerLoops' loops report (Loop.Name), in the
 // order they register. "budget" selects the status-issue notice loop; the
 // claim gate itself is built into the pool whatever --loops says.
-var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", prwatch.Name, janitor.Name, "reaper", "budget"}
+var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", prwatch.Name, janitor.Name, "reaper", "budget", digest.Name}
 
 // selectLoops keeps the loops named in want, in registration order; an empty
 // want keeps every loop. A name that is not a known loop is a usage error
@@ -489,6 +490,7 @@ var registerLoops = func(w *wiring) []controller.Loop {
 	loops = append(loops, costs.New(costs.Deps{Store: w.Store, Reader: w.Reader, Effects: w.Effects,
 		Repo: w.Repo, Locks: &w.bodyLocks, Log: w.Log}))
 	loops = append(loops, budgetLoop(w))
+	loops = append(loops, digestLoop(w))
 	return loops
 }
 

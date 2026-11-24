@@ -123,6 +123,9 @@ func (x *ExecEngine) Scan(ctx context.Context, cfg *config.Resolved, role config
 	}
 	ej.TrustedInput = !role.ReadsUntrusted()
 	ej.History = role.ReadsHistory()
+	if !role.Network {
+		ej.Network = executor.NetworkAdvisory
+	}
 	if role.Dockerfile != "" {
 		ej.Dockerfile = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dockerfile))
 	}

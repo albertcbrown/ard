@@ -28,6 +28,11 @@ func ardEnv(h executor.Handle) []string {
 		"ARD_WORK=" + h.View.Work,
 		"ARD_ROLE_DIR=" + h.View.Role,
 	}
+	if h.Network != executor.NetworkOn {
+		e = append(e, "ARD_NETWORK=0")
+	} else {
+		e = append(e, "ARD_NETWORK=1")
+	}
 	if h.View.Sidecar != "" {
 		e = append(e, "ARD_SIDECAR="+h.View.Sidecar)
 	}
@@ -50,6 +55,15 @@ func (l *Local) hostEnv(h executor.Handle) []string {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 	}, ardEnv(h)...)
+}
+
+// checkNetwork rejects a job that would run with no network but needs the
+// model API: a credential in Command.Env means an agent step.
+func checkNetwork(h executor.Handle, c executor.Command) error {
+	if h.Network == executor.NetworkNone && len(c.Env) > 0 {
+		return fmt.Errorf("%w: network none with a credential in env", executor.ErrForbiddenEnv)
+	}
+	return nil
 }
 
 // checkEnv validates Command.Env: only AllowEnv names may be added.

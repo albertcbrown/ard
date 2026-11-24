@@ -195,7 +195,7 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		Worktree: wt, Home: home, RepoDir: j.RepoDir, BaseSHA: sha,
 		LogPath: filepath.Join(logDir, base+".log"), StdoutPath: filepath.Join(logDir, base+".stdout"),
 		View:    executor.Paths{Work: wt, Role: j.RoleDir},
-		RoleDir: j.RoleDir, ReadOnly: j.ReadOnly,
+		RoleDir: j.RoleDir, ReadOnly: j.ReadOnly, Network: j.Network,
 		TrustedInput: j.TrustedInput, PreparedAt: now, Timeout: j.Timeout,
 	}
 	var created []string // paths to remove on failure
