@@ -55,7 +55,11 @@ func (e *runError) Unwrap() error { return e.err }
 func (g *Git) run(ctx context.Context, dir string, env []string, stdin string, secrets []string, args ...string) (string, string, error) {
 	// Hooks and fsmonitor are off for every command: RepoDir is shared with
 	// executor worktrees and must not get to run code with our credentials.
-	args = append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)
+	// Auto gc and maintenance are off too: they detach a background
+	// "worktree prune" that outlives the worktree lock and can remove the
+	// admin directory of a worktree being added.
+	args = append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false"}, args...)
 	cmd := exec.CommandContext(ctx, g.bin, args...)
 	cmd.Dir = dir
 	// Inherit nothing git-specific (GIT_DIR, GIT_INDEX_FILE, GIT_CONFIG_PARAMETERS ...).

@@ -32,7 +32,7 @@ type gitRunner interface {
 type execGit struct{ bin string }
 
 func (g execGit) command(ctx context.Context, repo string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, g.bin, append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-C", repo}, args...)...)
+	cmd := exec.CommandContext(ctx, g.bin, append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-C", repo}, args...)...)
 	// Never HOME=repo: git would read <repo>/.gitconfig, which a branch controls.
 	cmd.Env = []string{"PATH=" + defaultPath(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null", "HOME=" + os.TempDir()}
