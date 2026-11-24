@@ -1,41 +1,32 @@
 ---
 role: eng-review
 status: done
-attempt: 2
-verdict: changes
+attempt: 1
+verdict: approve
 findings:
-  - file: "docs/site/configuration.md"
-    line: 241
-    severity: medium
-    blocking: true
-    message: |
-      The documented defaults for `diff_warn_lines` (1000) and `diff_max_lines` (2000) are wrong after the merge of main (#311).
-      internal/config/defaults.go:44-45 now sets 2000 and 3000, so the reference misstates the limits a worker is held to.
-      Update lines 241 and 242 to 2000 and 3000. The drift test checks key names only, not defaults, so it will not catch this.
-  - file: "docs/site/roles.md"
-    line: 540
-    severity: low
-    message: |
-      The write allowlist text refers to `diff_max_lines` without a value, so it stays correct. No change needed beyond the defaults fix in configuration.md.
   - file: "internal/config/keys.go"
     line: 8
     severity: low
     message: |
-      Still present from the last round. Keys() is a hand-written list. A key added only to the raw.go parser, such as `overrides`, would not fail the test.
+      Keys() is a hand-written list. A key added only to the raw.go parser, such as `overrides`, would not fail the test.
+      Consider deriving the input-only keys from the parser, as plan.md step 1 described.
   - file: "internal/docscheck/docscheck.go"
-    line: 73
+    line: 807
     severity: low
     message: |
-      Still present. Fenced commands with `\` continuations are not joined, so flags on continuation lines go unchecked.
+      Fenced commands with `\` continuations are not joined, so flags on continuation lines go unchecked.
+      plan.md named this edge case. Join continued lines before calling checkOne.
 ---
-The change matches plan.md and its tests pass. It needs changes for one reason: after the merge of main, the documented `diff_warn_lines` and `diff_max_lines` defaults (1000 and 2000) no longer match the code (2000 and 3000).
+The change matches plan.md. The blocking finding from the last round is fixed: `diff_warn_lines` and `diff_max_lines` are now documented as 2000 and 3000, which matches `internal/config/defaults.go:44-45`. The two remaining findings are low and non-blocking, so this is approved.
 
 ## Checks
-- Lint: `make lint` was not re-run. In the previous round it reported only a parse error in an untouched fixture. Since then the only change is the merge of main.
-- Tests: `go test` on `internal/docscheck`, `internal/cli` and `internal/config` passes.
+- Lint: not re-run. The only change since the last round is the defaults fix in a Markdown file, and the last run reported nothing on changed files.
+- Tests: `go test ./internal/docscheck/... ./internal/cli/... ./internal/config/...` passes.
+- Diff coverage: the new Go functions (`Keys`, `CommandPaths`, `CheckCommands`, `CheckKeys`) are all exercised by the new tests.
 - `mkdocs build --strict` was skipped because mkdocs is not installed here.
 
 ## Previous findings
+- docs/site/configuration.md: resolved. The defaults are now 2000 and 3000.
+- docs/site/roles.md: no longer applicable. It needed no change.
 - internal/config/keys.go: still present (low, non-blocking).
 - internal/docscheck/docscheck.go: still present (low, non-blocking).
-- mkdocs.yml: still present as info. The CI workflow remains a human step, per plan.md.
