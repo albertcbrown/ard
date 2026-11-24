@@ -2,7 +2,9 @@
 
 ard makes a GitHub repository maintain itself. Scanners file deduplicated issues, triage agents turn each issue into a plan, a worker agent implements it on a branch, reviewer agents critique the PR, and a merger lands it once every review passes.
 
-> **Status:** design stage. Nothing runs yet. The design lives in [docs/proposal.md](docs/proposal.md), and the work is tracked as [GitHub issues](https://github.com/albertcbrown/ard/issues) grouped into phase milestones.
+**Documentation:** <https://albertcbrown.github.io/ard/> (sources in [docs/site](docs/site)).
+
+> **Status:** under active development. The design lives in [docs/proposal.md](docs/proposal.md), and the work is tracked as [GitHub issues](https://github.com/albertcbrown/ard/issues) grouped into phase milestones.
 
 ## How it works
 
