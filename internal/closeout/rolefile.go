@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
@@ -44,6 +46,13 @@ const (
 	MaxFindingPath = 300
 )
 
+// MaxFetched bounds the fetched inputs of one worker role file; MaxFetchedURL
+// bounds a fetched URL in bytes.
+const (
+	MaxFetched    = 50
+	MaxFetchedURL = 2000
+)
+
 // MaxRoleFileBytes bounds a role file.
 const MaxRoleFileBytes = 256 << 10
 
@@ -64,6 +73,19 @@ type RoleFile struct {
 	// Findings are a review's findings, in file order. Only a review may have
 	// them (check).
 	Findings []Finding
+	// Fetched are the network inputs a worker records, in file order. Only a
+	// worker may have them (check).
+	Fetched []Fetched
+}
+
+// Fetched is one input a worker fetched from the network.
+type Fetched struct {
+	URL        string // https only
+	Date       string // YYYY-MM-DD
+	Status     int    // HTTP status, 100..599
+	SHA256     string // 64 lowercase hex
+	VerifiedBy string // an https URL, or "none"
+	Path       string // repo-relative landing path
 }
 
 // Finding is one point a reviewer raised.
@@ -104,6 +126,15 @@ type rawFinding struct {
 	Message  *string `yaml:"message"`
 }
 
+type rawFetched struct {
+	URL        *string `yaml:"url"`
+	Date       *string `yaml:"date"`
+	Status     *int    `yaml:"status"`
+	SHA256     *string `yaml:"sha256"`
+	VerifiedBy *string `yaml:"verified_by"`
+	Path       *string `yaml:"path"`
+}
+
 type rawFront struct {
 	Role    *string   `yaml:"role"`
 	Status  *string   `yaml:"status"`
@@ -113,6 +144,7 @@ type rawFront struct {
 	Worker  *string   `yaml:"worker"`
 
 	Findings *[]rawFinding `yaml:"findings"`
+	Fetched  *[]rawFetched `yaml:"fetched"`
 }
 
 func malformed(format string, a ...any) error {
@@ -189,6 +221,11 @@ func Parse(b []byte) (RoleFile, error) {
 			return RoleFile{}, err
 		}
 	}
+	if raw.Fetched != nil {
+		if rf.Fetched, err = fetchedOf(*raw.Fetched); err != nil {
+			return RoleFile{}, err
+		}
+	}
 	switch rf.Status {
 	case StatusDone, StatusBlocked, StatusNeedsHuman:
 	default:
@@ -220,6 +257,9 @@ func (rf RoleFile) check(j Job) error {
 	}
 	if len(rf.Findings) > 0 && j.Stage != StageReview {
 		return malformed("findings are allowed only on a review")
+	}
+	if len(rf.Fetched) > 0 && j.Stage != StageWorker {
+		return malformed("fetched is allowed only on a worker")
 	}
 	if rf.Worker != "" && !(j.Stage == StageTriage && j.Role == "lead") {
 		return malformed("worker is allowed only for triage:lead")
@@ -264,6 +304,93 @@ func findingsOf(raw []rawFinding) ([]Finding, error) {
 		out = append(out, f)
 	}
 	return out, nil
+}
+
+// fetchedOf validates the fetched inputs of a worker.
+func fetchedOf(raw []rawFetched) ([]Fetched, error) {
+	if len(raw) > MaxFetched {
+		return nil, malformed("%d fetched entries, max %d", len(raw), MaxFetched)
+	}
+	out := make([]Fetched, 0, len(raw))
+	for i, r := range raw {
+		n := i + 1
+		switch {
+		case r.URL == nil:
+			return nil, malformed("fetched %d: missing url", n)
+		case r.Date == nil:
+			return nil, malformed("fetched %d: missing date", n)
+		case r.Status == nil:
+			return nil, malformed("fetched %d: missing status", n)
+		case r.SHA256 == nil:
+			return nil, malformed("fetched %d: missing sha256", n)
+		case r.VerifiedBy == nil:
+			return nil, malformed("fetched %d: missing verified_by", n)
+		case r.Path == nil:
+			return nil, malformed("fetched %d: missing path", n)
+		}
+		f := Fetched{URL: *r.URL, Date: *r.Date, Status: *r.Status, SHA256: *r.SHA256, VerifiedBy: *r.VerifiedBy, Path: *r.Path}
+		if err := checkHTTPS(f.URL); err != nil {
+			return nil, malformed("fetched %d: url %v", n, err)
+		}
+		if _, err := time.Parse("2006-01-02", f.Date); err != nil {
+			return nil, malformed("fetched %d: date %q is not YYYY-MM-DD", n, clip(f.Date, 40))
+		}
+		if f.Status < 100 || f.Status > 599 {
+			return nil, malformed("fetched %d: status %d is not 100..599", n, f.Status)
+		}
+		if !isSHA256(f.SHA256) {
+			return nil, malformed("fetched %d: sha256 is not 64 lowercase hex characters", n)
+		}
+		if f.VerifiedBy != "none" {
+			if err := checkHTTPS(f.VerifiedBy); err != nil {
+				return nil, malformed("fetched %d: verified_by %v", n, err)
+			}
+		}
+		if err := checkFindingPath(f.Path); err != nil {
+			return nil, malformed("fetched %d: path %v", n, err)
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+func isSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// checkHTTPS accepts a plain https URL with a host and no userinfo, and no
+// character that could break out of a markdown code span.
+func checkHTTPS(s string) error {
+	if s == "" {
+		return errors.New("is empty")
+	}
+	if len(s) > MaxFetchedURL {
+		return fmt.Errorf("is %d bytes, max %d", len(s), MaxFetchedURL)
+	}
+	for _, c := range s {
+		if c <= ' ' || c == 0x7f || c == '`' || c == '<' || c == '>' || c == '\\' {
+			return errors.New("has a space, control or forbidden character")
+		}
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" {
+		return errors.New("is not an https URL")
+	}
+	if u.Host == "" || u.Hostname() == "" {
+		return errors.New("has no host")
+	}
+	if u.User != nil {
+		return errors.New("has userinfo")
+	}
+	return nil
 }
 
 // checkFindingPath accepts only a clean repo-relative slash path.
@@ -353,6 +480,39 @@ func findingsTypes(v *yaml.Node) bool {
 	return true
 }
 
+// fetchedTypes checks the scalar tags of a fetched sequence.
+func fetchedTypes(v *yaml.Node) bool {
+	if v.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, e := range v.Content {
+		if e.Kind != yaml.MappingNode {
+			return false
+		}
+		for i := 0; i+1 < len(e.Content); i += 2 {
+			val := e.Content[i+1]
+			if val.Kind != yaml.ScalarNode {
+				return false
+			}
+			switch e.Content[i].Value {
+			case "url", "sha256", "verified_by", "path":
+				if val.Tag != "!!str" {
+					return false
+				}
+			case "date":
+				if val.Tag != "!!str" && val.Tag != "!!timestamp" {
+					return false
+				}
+			case "status":
+				if val.Tag != "!!int" {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // checkTypes rejects scalars yaml.v3 would coerce: role, status, verdict and
 // worker must be strings, attempt an integer, next a list of strings.
 func checkTypes(front string) error {
@@ -374,6 +534,8 @@ func checkTypes(front string) error {
 			ok = v.Kind == yaml.ScalarNode && v.Tag == "!!int"
 		case "findings":
 			ok = findingsTypes(v)
+		case "fetched":
+			ok = fetchedTypes(v)
 		case "next":
 			ok = v.Kind == yaml.SequenceNode
 			for _, e := range v.Content {
