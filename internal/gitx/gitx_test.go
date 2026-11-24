@@ -449,3 +449,50 @@ func TestRunDisablesAutoGC(t *testing.T) {
 		}
 	}
 }
+
+// TestWorktreeAdminWithAutoGC runs add/remove cycles next to fetches in a repo
+// configured to auto-gc after every fetch. A detached gc --auto would prune
+// .git/worktrees outside the lock; run's -c gc.auto=0 must prevent that.
+func TestWorktreeAdminWithAutoGC(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	bare, clone := gittest.NewRemote(t)
+	gittest.Run(t, clone, "config", "gc.auto", "1")
+	gittest.Run(t, clone, "config", "gc.autoDetach", "true")
+	gittest.Run(t, clone, "config", "maintenance.auto", "true")
+	for i := 0; i < 60; i++ { // loose objects, so gc --auto would trigger
+		if err := os.WriteFile(filepath.Join(clone, fmt.Sprintf("o%d", i)), []byte(fmt.Sprint(i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gittest.Run(t, clone, "hash-object", "-w", fmt.Sprintf("o%d", i))
+	}
+	work := t.TempDir()
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				if err := g.FetchRef(ctx, clone, "file://"+bare, "+refs/heads/main:refs/ard/up/main", nil); err != nil {
+					t.Errorf("fetch %d: %v", i, err)
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			wt := filepath.Join(work, fmt.Sprintf("wt-%d", i))
+			for j := 0; j < 15; j++ {
+				if err := g.WorktreeAdd(ctx, clone, wt, "HEAD"); err != nil {
+					t.Errorf("lane %d add %d: %v", i, j, err)
+					return
+				}
+				if err := g.WorktreeRemove(ctx, clone, wt); err != nil {
+					t.Errorf("lane %d remove %d: %v", i, j, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
