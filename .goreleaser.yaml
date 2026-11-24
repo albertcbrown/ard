@@ -1,0 +1,58 @@
+# GoReleaser v2 config for ard. Releases run from the release workflow on the
+# v* tags version.yml pushes; `make release-check` runs it locally as a snapshot.
+version: 2
+project_name: ard
+
+builds:
+  - id: ard
+    main: ./cmd/ard
+    binary: ard
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [arm64, amd64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Tag}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: ard
+    formats: [tar.gz]
+    name_template: "ard_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+# version.yml already created the (notes-only) release; add files to it.
+release:
+  mode: keep-existing
+  github:
+    owner: albertcbrown
+    name: ard
+
+homebrew_casks:
+  - name: ard
+    directory: Casks
+    homepage: https://github.com/albertcbrown/ard
+    description: Autonomous repository development agents driven by GitHub issues
+    # The token comes from the environment of the release workflow.
+    repository:
+      owner: albertcbrown
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    url:
+      template: "https://github.com/albertcbrown/ard/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    dependencies:
+      - formula: git
+    caveats: |
+      ard runs agents that need the claude CLI and either CLAUDE_CODE_OAUTH_TOKEN
+      or an API key in the environment.
+    # Accepted risk (see docs/proposal.md): the binary is not signed or notarized
+    # yet, so Gatekeeper's quarantine flag is cleared after install.
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr",
+                         args: ["-dr", "com.apple.quarantine", "#{staged_path}/ard"]
