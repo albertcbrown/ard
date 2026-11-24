@@ -533,7 +533,7 @@ How ard itself is built, published and deployed. Jenkins and Argo CD do the work
 
 ## Rollout
 
-Start on one repo (albertcbrown/ard itself, dogfooding; decided, #6) with the local executor and a human approval gate; humans merge until Gate 2, then the merger takes over. Widen only when the numbers say the loop is trustworthy. Gate 2 is run from [docs/runbooks/gate-2.md](runbooks/gate-2.md).
+Start on one repo (albertcbrown/ard itself, dogfooding; decided, #6) with the local executor and a human approval gate; humans merge until Gate 2, then the merger takes over. Widen only when the numbers say the loop is trustworthy. Gate 2 is run from [docs/site/operations/gate-2-runbook.md](site/operations/gate-2-runbook.md).
 
 ```mermaid
 flowchart LR
