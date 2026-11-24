@@ -2,6 +2,7 @@ package closeout
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -472,5 +473,84 @@ func TestRenderReviewGolden(t *testing.T) {
 		"Output: [.ard/7/review-eng-review.md](https://github.com/o/r/blob/abc/.ard/7/review-eng-review.md) · job `J1` · attempt 1\n"
 	if got := RenderReview(rec, github.Repo{Owner: "o", Name: "r"}, false, false); got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPrepareReviewAid(t *testing.T) {
+	ctx := context.Background()
+	injected := Finding{File: "hello.go", Line: 2, Severity: "high", Blocking: true, Message: "[secret] gitleaks rule aws-access-token matched an added line."}
+	// An approve with no findings at all.
+	clean := "---\nrole: eng-review\nstatus: done\nattempt: 1\nverdict: approve\n---\nFine.\n"
+	t.Run("injected finding forces changes", func(t *testing.T) {
+		e := newEnv(t)
+		rc := addedHello()
+		rc.HasAid, rc.Injected = true, []Finding{injected}
+		rec, err := Prepare(ctx, e.reviewJob(clean, rc), e.d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rp := rec.Plan.Review
+		if rec.Plan.Outcome != OutcomeChanges || rp.Verdict != VerdictChanges || len(rp.Inline) != 1 || rp.Inline[0].Line != 2 || !rp.Inline[0].Blocking {
+			t.Errorf("plan = %+v review = %+v", rec.Plan, rp)
+		}
+		if got := RenderReview(rec, github.Repo{Owner: "o", Name: "r"}, false, false); !strings.Contains(got, "found a secret") {
+			t.Errorf("body lacks the note:\n%s", got)
+		}
+	})
+	t.Run("an agent finding on the same line is not doubled", func(t *testing.T) {
+		e := newEnv(t)
+		rc := addedHello()
+		rc.HasAid, rc.Injected = true, []Finding{{File: "hello.go", Line: 2, Severity: "high", Blocking: true, Message: "[secret] gitleaks rule x."}}
+		file := "---\nrole: eng-review\nstatus: done\nattempt: 1\nverdict: changes\nfindings:\n  - file: hello.go\n    line: 2\n    severity: high\n    blocking: true\n    message: |\n      [secret] A credential-shaped value.\n---\nOne.\n"
+		rec, err := Prepare(ctx, e.reviewJob(file, rc), e.d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := len(rec.Plan.Review.Inline); n != 1 {
+			t.Errorf("inline = %+v", rec.Plan.Review.Inline)
+		}
+	})
+	t.Run("a failed aid cannot approve", func(t *testing.T) {
+		e := newEnv(t)
+		rc := addedHello()
+		rc.HasAid, rc.AidFailed = true, "timed out after 5m0s"
+		rec, err := Prepare(ctx, e.reviewJob(clean, rc), e.d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Plan.Outcome != OutcomeChanges || rec.Plan.Review.Verdict != VerdictChanges {
+			t.Errorf("plan = %+v review = %+v", rec.Plan, rec.Plan.Review)
+		}
+		if got := RenderReview(rec, github.Repo{Owner: "o", Name: "r"}, false, false); !strings.Contains(got, "timed out after 5m0s") || !strings.Contains(got, "cannot approve") {
+			t.Errorf("body lacks the aid note:\n%s", got)
+		}
+	})
+	t.Run("without an aid nothing changes", func(t *testing.T) {
+		e := newEnv(t)
+		rc := addedHello()
+		rc.AidFailed, rc.Injected = "ignored", []Finding{injected} // HasAid is false
+		rec, err := Prepare(ctx, e.reviewJob(clean, rc), e.d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Plan.Review.Verdict != VerdictApprove || rec.Plan.Review.AidNote != "" || len(rec.Plan.Review.Inline)+len(rec.Plan.Review.Other) != 0 {
+			t.Errorf("review = %+v", rec.Plan.Review)
+		}
+	})
+}
+
+func TestReviewContextAidRoundTrip(t *testing.T) {
+	in := ReviewContext{MergeBase: "mb", HasAid: true, AidFailed: "exit status 4", Injected: []Finding{{File: "a.go", Line: 3, Severity: "high", Blocking: true, Message: "[secret] x"}}}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out ReviewContext
+	if err := json.Unmarshal(b, &out); err != nil || fmt.Sprint(out) != fmt.Sprint(in) {
+		t.Errorf("round trip: %+v, %v", out, err)
+	}
+	var old ReviewContext
+	if err := json.Unmarshal([]byte(`{"MergeBase":"mb","HeadMoved":true}`), &old); err != nil || old.HasAid || old.Injected != nil {
+		t.Errorf("old record: %+v, %v", old, err)
 	}
 }

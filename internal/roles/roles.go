@@ -15,4 +15,4 @@ import "embed"
 var FS embed.FS
 
 // ExecutableNames lists base names that must be written 0755.
-var ExecutableNames = []string{"scan"}
+var ExecutableNames = []string{"scan", "aid"}

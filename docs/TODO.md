@@ -36,7 +36,6 @@ None.
 - #63 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit
 - #64 Token caps per role, alongside #57's dollar caps
 - #183 Version every PR merge to main as vX.Y.Z
-- #205 Reviewer aid step: run pinned deterministic tools before a reviewer agent
 - #224 Scanner: trufflehog history scan
 - #239 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part B: thresholds and the one-job rule
 - #240 Limits-aware scheduling: stop starting agent jobs as the Claude subscription nears its 5-hour or weekly limit, part C: notices

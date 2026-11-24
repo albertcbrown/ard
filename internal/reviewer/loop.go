@@ -21,6 +21,7 @@ import (
 	"github.com/albertcbrown/ard/internal/modelauth"
 	"github.com/albertcbrown/ard/internal/pool"
 	"github.com/albertcbrown/ard/internal/reaper"
+	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/state"
 )
 
@@ -96,6 +97,9 @@ type Deps struct {
 	Agents   *agent.Registry
 	Parse    reaper.ParseFunc
 	Model    modelauth.Credential // zero = none set
+	// Secrets returns the known credential values; the aid output is redacted
+	// with it. Default: none.
+	Secrets func() *redact.Secrets
 
 	Repo      github.Repo
 	RepoDir   string // absolute path of the controller's clone
@@ -120,6 +124,9 @@ var _ controller.Loop = (*Loop)(nil)
 func New(d Deps) *Loop {
 	if d.Poll <= 0 {
 		d.Poll = defaultPoll
+	}
+	if d.Secrets == nil {
+		d.Secrets = redact.NewSecrets
 	}
 	if d.Now == nil {
 		d.Now = time.Now
