@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -84,13 +83,13 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 	if st, err := os.Stat(h.Worktree); err != nil || !st.IsDir() {
 		return h, executor.ErrNotPrepared
 	}
-	if err := l.checkEnv(c.Env); err != nil {
+	if err := l.policy().CheckEnv(c.Env); err != nil {
 		return h, err
 	}
 	if err := checkNetwork(h, c); err != nil {
 		return h, err
 	}
-	if err := l.checkFixed(c.Fixed); err != nil {
+	if err := l.policy().CheckFixed(c.Fixed); err != nil {
 		return h, err
 	}
 	if err := l.checkConfigDir(h, c.Fixed); err != nil {
@@ -100,7 +99,7 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 	if h.Kind == "docker" {
 		cmd = exec.Command(l.dockerBin, l.runArgv(h, c, c.Stdin != nil)...)
 		for _, kv := range os.Environ() {
-			if n, _, _ := strings.Cut(kv, "="); !ghRE.MatchString(n) && n != "SSH_AUTH_SOCK" {
+			if n, _, _ := strings.Cut(kv, "="); !executor.IsGitHubEnvName(n) && n != "SSH_AUTH_SOCK" {
 				cmd.Env = append(cmd.Env, kv)
 			}
 		}
@@ -294,30 +293,8 @@ func (l *Local) Cleanup(ctx context.Context, h executor.Handle, o executor.Clean
 		}
 	}
 	if !o.KeepWorktree {
-		foreign := l.cloneDir != "" && filepath.Clean(h.RepoDir) != l.cloneDir
-		if _, err := os.Stat(h.Worktree); err == nil {
-			chmodWritable(h.Worktree)
-			if foreign {
-				// Stored before #113: RepoDir is the operator's checkout, where
-				// ard never runs git. The registration there dangles until the
-				// operator's own `git worktree prune`.
-				l.log.Info("executor.cleanup_foreign_repo", "job", h.JobID, "repo_dir", h.RepoDir, "clone", l.cloneDir)
-				if err := removeAllWritable(h.Worktree); err != nil {
-					errs = append(errs, err)
-				}
-			} else if err := l.git.WorktreeRemove(context.WithoutCancel(ctx), h.RepoDir, h.Worktree, true); err != nil {
-				errs = append(errs, err)
-				removeAllWritable(h.Worktree)
-			}
-		}
-		// Home holds a-w trees (sidecar, Go module cache); derived from Home, not h.SidecarDir
-		if err := removeAllWritable(h.Home); err != nil {
+		if err := l.ws.Remove(ctx, h); err != nil {
 			errs = append(errs, err)
-		}
-		if !foreign {
-			if err := l.git.WorktreePrune(context.WithoutCancel(ctx), h.RepoDir); err != nil {
-				errs = append(errs, err)
-			}
 		}
 	}
 	if tr := l.track(h.JobID); tr != nil {

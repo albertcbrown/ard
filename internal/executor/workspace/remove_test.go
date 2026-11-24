@@ -1,9 +1,13 @@
-package local
+//go:build unix
+
+package workspace
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func mustMkdir(t *testing.T, p string) {
@@ -33,7 +37,7 @@ func TestRemoveAllWritable_ReadOnlyTree(t *testing.T) {
 	if err := os.Chmod(mod, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeAllWritable(home); err != nil {
+	if err := RemoveAllWritable(home); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(home); !os.IsNotExist(err) {
@@ -51,7 +55,7 @@ func TestRemoveAllWritable_UnreadableDir(t *testing.T) {
 	if err := os.Chmod(d, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeAllWritable(home); err != nil {
+	if err := RemoveAllWritable(home); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(home); !os.IsNotExist(err) {
@@ -67,13 +71,13 @@ func TestRemoveAllWritable_SymlinkNotFollowed(t *testing.T) {
 	if err := os.Chmod(outside, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { chmodWritable(outside) })
+	t.Cleanup(func() { ChmodWritable(outside) })
 	home := filepath.Join(base, "home")
 	mustMkdir(t, home)
 	if err := os.Symlink(outside, filepath.Join(home, "link")); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeAllWritable(home); err != nil {
+	if err := RemoveAllWritable(home); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(home); !os.IsNotExist(err) {
@@ -95,7 +99,50 @@ func TestRemoveAllWritable_SymlinkNotFollowed(t *testing.T) {
 }
 
 func TestRemoveAllWritable_Missing(t *testing.T) {
-	if err := removeAllWritable(filepath.Join(t.TempDir(), "nope")); err != nil {
+	if err := RemoveAllWritable(filepath.Join(t.TempDir(), "nope")); err != nil {
 		t.Fatal(err)
 	}
 }
+
+func TestLayout(t *testing.T) {
+	l, _ := New(Options{Root: "/r", Git: nopGit{}})
+	if got, err := l.WorktreePath("o/r", "J1"); err != nil || got != "/r/work/o/r/J1" {
+		t.Error(got, err)
+	}
+	if got, err := l.HomePath("o/r", "J1"); err != nil || got != "/r/work/o/r/J1.home" {
+		t.Error(got, err)
+	}
+	if got, err := l.LogDir("o/r", 0); err != nil || got != "/r/logs/o/r/noissue" {
+		t.Error(got, err)
+	}
+	for name, f := range map[string]func(string) (string, error){
+		"worktree": func(r string) (string, error) { return l.WorktreePath(r, "J1") },
+		"home":     func(r string) (string, error) { return l.HomePath(r, "J1") },
+		"logs":     func(r string) (string, error) { return l.LogDir(r, 7) },
+	} {
+		a, _ := f("a-b/c")
+		b, _ := f("a/b-c")
+		if a == b {
+			t.Errorf("%s: a-b/c and a/b-c collide at %s", name, a)
+		}
+		x, _ := f("O/R")
+		y, _ := f("o/r")
+		if x != y {
+			t.Errorf("%s: case differs: %s vs %s", name, x, y)
+		}
+		if _, err := f("../r"); err == nil {
+			t.Errorf("%s: invalid repo accepted", name)
+		}
+	}
+	ts := time.Date(2026, 11, 21, 10, 15, 0, 0, time.UTC)
+	if got := LogBase("worker", "dev", ts); got != "worker-dev-20261121T101500.000Z" {
+		t.Error(got)
+	}
+}
+
+type nopGit struct{}
+
+func (nopGit) RevParse(context.Context, string, string) (string, error)   { return "", nil }
+func (nopGit) WorktreeAdd(context.Context, string, string, string) error  { return nil }
+func (nopGit) WorktreeRemove(context.Context, string, string, bool) error { return nil }
+func (nopGit) WorktreePrune(context.Context, string) error                { return nil }

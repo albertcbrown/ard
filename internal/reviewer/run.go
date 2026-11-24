@@ -155,11 +155,27 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		finish(executor.Handle{}, executor.Status{}, agent.Result{}, cause(closeout.CauseNoProcess, "could not start the job", false))
 		return
 	}
+	// The aid runs before the agent, as its own job. A failed aid never stops
+	// the review: the agent is told, and close-out cannot approve.
+	aid := l.runAid(ctx, cfg, c, p, sj.ID, inputs)
+	if aid.Ran {
+		log.Info("review.aid", "kept", aid.Kept, "dropped", aid.Dropped, "failed", aid.reason(), "elapsed", aid.Elapsed)
+		apath := dir + "/aid.jsonl"
+		inputs = append(inputs, executor.File{Path: apath, Data: aidInput(aid)})
+		untrusted = append(untrusted, apath)
+		rc.HasAid, rc.AidFailed, rc.Injected = true, aid.reason(), aid.Blocking
+	}
 	ej := agentjob.ExecJob(cfg, role, executor.Job{
 		ID: sj.ID, Repo: d.Repo.String(), Issue: n, Stage: stageReview, Role: role.Name,
 		RepoDir: d.RepoDir, Ref: p.tip, Inputs: inputs,
 		Scrub: []string{agent.RoleFilePath(n, stageReview, role.Name)},
 	})
+	if aid.Ran && ej.Timeout > 0 {
+		// The aid counts inside the review job's timeout.
+		if ej.Timeout -= aid.Elapsed; ej.Timeout < minAgentTime {
+			ej.Timeout = minAgentTime
+		}
+	}
 	h, err := d.Executor.Prepare(ctx, ej)
 	if err != nil {
 		log.Error("review.prepare_failed", "error", err)

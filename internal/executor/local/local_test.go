@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/executor/workspace"
 )
 
 func gitEnv(c *exec.Cmd) {
@@ -227,31 +228,6 @@ func TestEnvScrubbed(t *testing.T) {
 	var back executor.Handle
 	if err := json.Unmarshal(b, &back); err != nil || back.JobID != h.JobID || back.StdoutPath != h.StdoutPath {
 		t.Errorf("round trip: %v %+v", err, back)
-	}
-}
-
-func TestForbiddenEnv(t *testing.T) {
-	f := newFixture(t)
-	for _, e := range []string{"GITHUB_TOKEN=x", "GH_TOKEN=x", "HOME=/x", "PATH=/x", "ARD_X=1", "SSH_AUTH_SOCK=/x", "FOO", "OTHER=1"} {
-		if err := f.l.checkEnv([]string{e}); !errors.Is(err, executor.ErrForbiddenEnv) {
-			t.Errorf("%q: %v", e, err)
-		}
-	}
-	if err := f.l.checkEnv([]string{"ANTHROPIC_API_KEY=k"}); err != nil {
-		t.Error(err)
-	}
-}
-
-func TestFixedEnv(t *testing.T) {
-	f := newFixture(t)
-	for _, e := range []string{"GITHUB_TOKEN=x", "HOME=/x", "ARD_X=1", "MY_API_KEY=x", "FOO", "ANTHROPIC_BASE_URL=x", "HTTPS_PROXY=x", "NODE_OPTIONS=x"} {
-		if err := f.l.checkFixed([]string{e}); !errors.Is(err, executor.ErrForbiddenEnv) {
-			t.Errorf("%q: %v", e, err)
-		}
-	}
-	if err := f.l.checkFixed([]string{"CLAUDE_CONFIG_DIR=/cfg", "DISABLE_AUTOUPDATER=1",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1"}); err != nil {
-		t.Error(err)
 	}
 }
 
@@ -648,67 +624,7 @@ func TestScrubRemovesCommittedFileBeforeStart(t *testing.T) {
 	}
 }
 
-func TestScrubGuards(t *testing.T) {
-	const rel = ".ard/7/worker-dev.md"
-	tests := []struct {
-		name  string
-		setup func(t *testing.T, repo string)
-		fail  bool
-	}{
-		{"parent is a symlink", func(t *testing.T, repo string) {
-			if err := os.MkdirAll(filepath.Join(repo, "elsewhere"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(repo, "elsewhere/worker-dev.md"), []byte("x"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.MkdirAll(filepath.Join(repo, ".ard"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink("../elsewhere", filepath.Join(repo, ".ard/7")); err != nil {
-				t.Fatal(err)
-			}
-		}, true},
-		{"target is a directory", func(t *testing.T, repo string) {
-			if err := os.MkdirAll(filepath.Join(repo, rel), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(repo, rel, "keep"), []byte("x"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}, true},
-		{"target is a symlink: link removed", func(t *testing.T, repo string) {
-			if err := os.MkdirAll(filepath.Join(repo, ".ard/7"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink("../../a.txt", filepath.Join(repo, rel)); err != nil {
-				t.Fatal(err)
-			}
-		}, false},
-	}
-	for _, c := range tests {
-		t.Run(c.name, func(t *testing.T) {
-			wt := t.TempDir()
-			c.setup(t, wt)
-			err := scrub(wt, []string{rel})
-			if (err != nil) != c.fail {
-				t.Fatalf("err = %v, want failure %v", err, c.fail)
-			}
-			if !c.fail {
-				if _, err := os.Lstat(filepath.Join(wt, rel)); err == nil {
-					t.Error("link still there")
-				}
-			}
-			if c.name == "parent is a symlink" {
-				if _, err := os.Stat(filepath.Join(wt, "elsewhere/worker-dev.md")); err != nil {
-					t.Error("file behind the symlink was removed")
-				}
-			}
-		})
-	}
-}
-
-type failingAdd struct{ gitRunner }
+type failingAdd struct{ workspace.Git }
 
 func (failingAdd) WorktreeAdd(context.Context, string, string, string) error {
 	return errors.New("fatal: could not create work tree")
@@ -725,7 +641,11 @@ func TestPrepareWrapsErrClone(t *testing.T) {
 		t.Errorf("bad ref: %v, want ErrClone", err)
 	}
 	f = newFixture(t)
-	f.l.git = failingAdd{f.l.git}
+	f.opts.Git = failingAdd{execGit{bin: "git"}}
+	var err error
+	if f.l, err = New(f.opts); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.l.Prepare(ctx, f.job(time.Minute)); !errors.Is(err, executor.ErrClone) {
 		t.Errorf("worktree add: %v, want ErrClone", err)
 	}
@@ -805,7 +725,7 @@ func TestPrepareHistory(t *testing.T) {
 	if h.HistoryDir != f.repo || h.View.History != f.repo {
 		t.Errorf("history dir %q view %q, want %q", h.HistoryDir, h.View.History, f.repo)
 	}
-	if got := strings.Join(ardEnv(h), "\n"); !strings.Contains(got, "ARD_HISTORY="+f.repo) {
+	if got := strings.Join(executor.ArdEnv(h), "\n"); !strings.Contains(got, "ARD_HISTORY="+f.repo) {
 		t.Errorf("ARD_HISTORY missing: %s", got)
 	}
 	j = f.job(time.Minute)
@@ -815,7 +735,7 @@ func TestPrepareHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.l.Cleanup(ctx, h2, executor.CleanupOptions{})
-	if h2.HistoryDir != "" || h2.View.History != "" || strings.Contains(strings.Join(ardEnv(h2), "\n"), "ARD_HISTORY") {
+	if h2.HistoryDir != "" || h2.View.History != "" || strings.Contains(strings.Join(executor.ArdEnv(h2), "\n"), "ARD_HISTORY") {
 		t.Errorf("a job without History sees history: %+v", h2)
 	}
 }
@@ -824,7 +744,7 @@ func TestNetworkEnvAndStart(t *testing.T) {
 	for n, want := range map[executor.Network]string{
 		executor.NetworkOn: "ARD_NETWORK=1", executor.NetworkAdvisory: "ARD_NETWORK=0", executor.NetworkNone: "ARD_NETWORK=0",
 	} {
-		if got := strings.Join(ardEnv(executor.Handle{Network: n}), "\n"); !strings.Contains(got, want) {
+		if got := strings.Join(executor.ArdEnv(executor.Handle{Network: n}), "\n"); !strings.Contains(got, want) {
 			t.Errorf("network %q: env %q lacks %s", n, got, want)
 		}
 	}

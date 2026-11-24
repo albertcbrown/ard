@@ -275,3 +275,29 @@ func TestTriageInputsIssueMD(t *testing.T) {
 		})
 	}
 }
+
+func TestBodyFetched(t *testing.T) {
+	sha := strings.Repeat("ab", 32)
+	in := BodyInfo{Repo: github.Repo{Owner: "o", Name: "r"}, Issue: 7, Role: "engineer", Branch: "b", JobID: "J1", Summary: "s",
+		Result: closeout.WorkerResult{Tests: closeout.TestsPassed, Fetched: []closeout.Fetched{
+			{URL: "https://example.com/a.json", Date: "2026-11-23", Status: 200, SHA256: sha, VerifiedBy: "https://example.com/sums.txt", Path: "testdata/a.json"},
+			{URL: "https://example.com/b.json", Date: "2026-11-23", Status: 200, SHA256: sha, VerifiedBy: "none", Path: "testdata/b.json"},
+		}}}
+	got := Body(in)
+	for _, w := range []string{
+		"**Fetched inputs:**",
+		"- `https://example.com/a.json` → `testdata/a.json` · sha256 `" + sha + "` · verified by `https://example.com/sums.txt`",
+		"- `https://example.com/b.json` → `testdata/b.json` · sha256 `" + sha + "` · verified by none (unverified)",
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("body lacks %q:\n%s", w, got)
+		}
+	}
+	if strings.Index(got, "Fetched inputs") > strings.Index(got, "**Files:**") {
+		t.Error("Fetched inputs must come before Files")
+	}
+	in.Result.Fetched = nil
+	if got := Body(in); strings.Contains(got, "Fetched inputs") {
+		t.Errorf("section present without entries:\n%s", got)
+	}
+}

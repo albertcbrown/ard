@@ -38,6 +38,9 @@ type WorkerResult struct {
 	// diff_warn_lines ("Large change: N changed lines (warn at W)"). The PR
 	// still proceeds; the note goes into the PR body and the issue comment.
 	Large string
+	// Fetched are the inputs the worker recorded under fetched: in its role
+	// file. They come only from the parsed frontmatter, never from free text.
+	Fetched []Fetched
 }
 
 // buildWorker maps a done worker role file and the loop's result to a plan.
