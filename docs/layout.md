@@ -3,8 +3,11 @@
 Every top-level directory and Go package, with what it holds. Keep it current: a PR that adds, removes or renames a directory or package updates this file in the same PR.
 
 ```
+mkdocs.yml                  MkDocs Material config for the user docs site
+docs/site/                  user docs (published to GitHub Pages)
 cmd/ard/                    CLI entry point; wire a new subcommand by adding one line to handlers()
 internal/cli/               cobra command tree, global flags, slog logging; Handlers is the plug-in point
+internal/docscheck/         checks docs/site against the CLI commands and config keys (drift test)
 internal/botcheck/          tests for the bot-commit audit in .github/workflows/bot-commits.yml
 internal/versioncheck/       tests for the version workflow in .github/workflows/version.yml (plan and tag scripts)
 internal/github/            GitHub client: domain types, Reader/Writer/Client, App auth, retry transport; query/ (search builder), fake/ (test double), clienttest/ (conformance suite)
