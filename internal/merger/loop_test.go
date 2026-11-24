@@ -819,3 +819,69 @@ func TestNoPassingRecordNotRerequested(t *testing.T) {
 		t.Fatalf("log:\n%s", out)
 	}
 }
+
+// sharedBody returns a 20-line file whose first and last lines can differ.
+func sharedBody(first, last string) string {
+	lines := []string{first}
+	for i := 1; i < 19; i++ {
+		lines = append(lines, "line "+strconv.Itoa(i))
+	}
+	return strings.Join(append(lines, last), "\n") + "\n"
+}
+
+func TestPatchEqualSharedFileKeepsReviewCovered(t *testing.T) {
+	setup := func(t *testing.T, protected bool) (*harness, pr) {
+		h := newHarness(t)
+		h.commit("main", "shared.md", sharedBody("a", "z"))
+		path := "shared.md"
+		if protected {
+			path = ".github/shared.md"
+			h.commit("main", path, sharedBody("a", "z"))
+		}
+		p := h.newPR(func(s *spec) { s.files = map[string]string{path: sharedBody("PR", "z")} })
+		h.commit("main", path, sharedBody("a", "MAIN"))
+		return h, p
+	}
+	t.Run("review gate", func(t *testing.T) {
+		h, p := setup(t, false)
+		h.updateBranch(p.n, p.branch)
+		h.settle()
+		h.mustTick()
+		h.now = h.now.Add(3 * time.Minute)
+		h.mustTick()
+		out := h.logs.String()
+		if !h.merged(p.n) || h.rerequests() != 0 || !strings.Contains(out, "merge.cover_patch_equal") {
+			t.Fatalf("merged = %v rerequests = %d\n%s", h.merged(p.n), h.rerequests(), out)
+		}
+	})
+	t.Run("hand-edited merge re-requests", func(t *testing.T) {
+		h, p := setup(t, false)
+		h.git("checkout", "-q", p.branch)
+		h.git("merge", "-q", "--no-edit", "--no-commit", "origin/main")
+		if err := os.WriteFile(filepath.Join(h.clone, "shared.md"), []byte(sharedBody("HAND", "MAIN")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		h.git("add", "shared.md")
+		h.git("commit", "-q", "-m", "merge with edit")
+		h.git("push", "-q", "-f", h.bare, p.branch)
+		h.gh.SetHeadSHA(p.n, h.git("rev-parse", "HEAD"))
+		h.settle()
+		out := h.mustTick()
+		if h.merged(p.n) || h.rerequests() != 1 || strings.Contains(out, "merge.cover_patch_equal") {
+			t.Fatalf("merged = %v rerequests = %d\n%s", h.merged(p.n), h.rerequests(), out)
+		}
+	})
+	t.Run("approval check", func(t *testing.T) {
+		h, p := setup(t, true)
+		h.gh.SetPermission("alice", github.Permission{Level: "write", Role: "write"})
+		h.gh.SeedReview(p.n, github.Review{Author: "alice", State: "APPROVED", CommitSHA: p.head})
+		h.updateBranch(p.n, p.branch)
+		h.settle()
+		h.mustTick()
+		h.now = h.now.Add(3 * time.Minute)
+		h.mustTick()
+		if !h.merged(p.n) || !strings.Contains(h.logs.String(), "merge.cover_patch_equal") {
+			t.Fatalf("merged = %v labels %v\n%s", h.merged(p.n), h.labelsOf(p.n), h.logs.String())
+		}
+	})
+}
