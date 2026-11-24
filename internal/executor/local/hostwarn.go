@@ -12,6 +12,9 @@ import (
 // EventHostUntrusted is the slog message of every host-mode warning.
 const EventHostUntrusted = "executor.host_untrusted"
 
+// EventHostNetwork is the slog message for a host job with network: false.
+const EventHostNetwork = "executor.host_network_not_enforced"
+
 const hostHint = "add a Dockerfile to the role directory to run it under Docker"
 
 // HostReach lists what a host-mode job can reach as the controller's uid.
@@ -51,10 +54,27 @@ func hostUntrusted(h executor.Handle) bool { return h.Kind == "host" && !h.Trust
 func (l *Local) warnHostJob(ctx context.Context, h executor.Handle) {
 	l.log.Warn(EventHostUntrusted, "job", h.JobID, "issue", h.Issue, "stage", h.Stage, "role", h.Role,
 		"reaches", strings.Join(HostReach(), "; "), "hint", hostHint)
+	if h.Network != executor.NetworkOn {
+		l.warnHostNetwork(h)
+	}
 	if l.onHostUntrusted == nil {
 		return
 	}
 	if err := l.onHostUntrusted(ctx, h); err != nil {
 		l.log.Error("executor.host_untrusted_not_recorded", "job", h.JobID, "error", err)
 	}
+}
+
+// warnHostNetwork logs that a host job's network: false is advice only.
+func (l *Local) warnHostNetwork(h executor.Handle) {
+	l.log.Warn(EventHostNetwork, "job", h.JobID, "issue", h.Issue, "stage", h.Stage, "role", h.Role,
+		"msg", "network: false not enforced in host mode")
+}
+
+// HostNetworkText is the config check warning for a host-mode role that reads
+// untrusted input with network on. It ends in a newline.
+func HostNetworkText(kind, name string) string {
+	return fmt.Sprintf("WARNING: %s role %q reads untrusted input in host mode with network: true, so a prompt-injected agent "+
+		"can send out anything it reaches, including the GitHub App private key file (ARD_GITHUB_PRIVATE_KEY_FILE). Hint: %s.\n",
+		kind, name, hostHint)
 }
