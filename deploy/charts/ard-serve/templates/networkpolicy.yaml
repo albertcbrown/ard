@@ -1,5 +1,5 @@
 {{- /* No ingress. Egress to cluster DNS and the public internet only (GitHub, the Go module proxy and checksum DB,
-osv.dev and vuln.go.dev for the cve scan), never other namespaces, private or CGNAT ranges, or link-local metadata. */ -}}
+osv.dev and vuln.go.dev for the cve scan, endoflife.date for the lts scan), never other namespaces, private or CGNAT ranges, or link-local metadata. */ -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

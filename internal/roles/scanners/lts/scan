@@ -1,0 +1,106 @@
+#!/bin/sh
+# lts scanner: components at or near end of life, as ard findings.
+#
+# Contract (see docs/proposal.md, Scanners):
+#   - cwd is a read-only worktree of origin/main. This script finds its siblings
+#     (refs.jq, eol.jq, products.json) from its own path, never from cwd.
+#   - Prints findings as JSON lines on stdout, and only as its very last action:
+#     any failure exits non-zero with nothing on stdout, and the controller
+#     discards the run. It never prints partial results. This matters because
+#     a finding that is absent closes its issue.
+#   - Writes nothing outside a mktemp dir that is removed on exit. HOME may be
+#     unwritable. It holds no GitHub token and needs none.
+#   - stderr is the job log: tool versions, one line per skipped reference,
+#     final count.
+#
+# Tools (pinned in ./Dockerfile): jq, curl, and yq only when a Chart.yaml
+# exists. Network: https://endoflife.date/api/v1/products/<slug>, slugs from
+# products.json only. Exit codes: 0 success, 1 failure, 2 a required tool is
+# missing. LTS_TODAY=YYYY-MM-DD overrides today's date (for tests).
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+die() { echo "lts: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || { echo "lts: $1 not found" >&2; exit 2; }; }
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ard-lts.XXXXXX")
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+today=${LTS_TODAY:-}
+if [ -z "$today" ]; then today=$(date -u +%Y-%m-%d); fi
+case $today in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+  *) die "LTS_TODAY must be YYYY-MM-DD" ;;
+esac
+
+# 1. Manifests. Symlinks are not followed.
+find . \( -name .git -o -name vendor -o -name node_modules -o -name testdata \) -prune \
+  -o -type f \( -name go.mod -o -name package.json -o -name 'Dockerfile' -o -name 'Dockerfile.*' \
+  -o -name '*.Dockerfile' -o -name Containerfile -o -name Chart.yaml \) -print > "$tmp/files.raw" \
+  || die "find failed"
+LC_ALL=C sort "$tmp/files.raw" > "$tmp/files.txt"
+
+need jq
+need curl
+if grep -q '/Chart\.yaml$' "$tmp/files.txt"; then need yq; fi
+echo "lts: $(jq --version 2>&1 | head -n 1)" >&2
+
+# 2. inputs.jsonl, one record per manifest.
+: > "$tmp/inputs.jsonl"
+while IFS= read -r f; do
+  p=${f#./}
+  base=${p##*/}
+  case $base in
+    go.mod) kind=gomod ;;
+    package.json) kind=packagejson ;;
+    Chart.yaml)
+      vals=$(dirname -- "$p")/values.yaml
+      if [ -f "$vals" ]; then
+        yq -o=json '.' "$vals" > "$tmp/values.json" 2>"$tmp/yq.err" || die "cannot parse $vals: $(head -n 1 "$tmp/yq.err")"
+        jq -c -n --arg path "$vals" --slurpfile j "$tmp/values.json" \
+          '{kind: "helmvalues", path: $path, json: $j[0]}' >> "$tmp/inputs.jsonl" || die "cannot read $vals"
+      fi
+      continue ;;
+    *) kind=dockerfile ;;
+  esac
+  jq -c -R -s --arg kind "$kind" --arg path "$p" '{kind: $kind, path: $path, text: .}' "$p" \
+    >> "$tmp/inputs.jsonl" || die "cannot read $p"
+done < "$tmp/files.txt"
+
+# 3. References.
+jq -c -n --slurpfile in "$tmp/inputs.jsonl" --slurpfile map "$dir/products.json" \
+  -f "$dir/refs.jq" > "$tmp/refs.jsonl" || die "cannot extract references"
+
+# 4. One API request per distinct product.
+mkdir "$tmp/api"
+jq -r 'select(.product != null) | .product' "$tmp/refs.jsonl" | LC_ALL=C sort -u > "$tmp/products.txt"
+while IFS= read -r prod; do
+  case $prod in
+    ""|-*|.*|*[!a-z0-9.-]*) die "invalid product slug \"$prod\"" ;;
+  esac
+  [ ${#prod} -le 64 ] || die "invalid product slug \"$prod\""
+  code=$(curl --proto =https --tlsv1.2 -sS --max-time 30 --retry 2 --max-filesize 10M \
+    -A ard-lts-scanner -o "$tmp/api/$prod.json" -w '%{http_code}' \
+    "https://endoflife.date/api/v1/products/$prod") || die "request for $prod failed"
+  [ "$code" = 200 ] || die "endoflife.date answered $code for $prod (is products.json stale?)"
+done < "$tmp/products.txt"
+
+# 5. Findings.
+if [ -s "$tmp/products.txt" ]; then
+  jq -s '.' "$tmp/api"/*.json > "$tmp/api.json" || die "an API response is not JSON"
+else
+  echo '[]' > "$tmp/api.json"
+fi
+jq -c -n --arg today "$today" --slurpfile refs "$tmp/refs.jsonl" --slurpfile api "$tmp/api.json" \
+  -f "$dir/eol.jq" > "$tmp/eol.jsonl" || die "cannot evaluate end of life data"
+
+jq -r 'select(.skip != null) | "lts: " + .skip' "$tmp/eol.jsonl" >&2 || die "split failed"
+jq -r 'select(.skip != null) | "lts: " + .skip' "$tmp/refs.jsonl" >&2 || die "split failed"
+jq -c 'select(.fingerprint != null)' "$tmp/eol.jsonl" > "$tmp/out.jsonl" || die "split failed"
+
+echo "lts: $(wc -l < "$tmp/out.jsonl" | tr -d ' ') finding(s)" >&2
+cat "$tmp/out.jsonl"

@@ -1,9 +1,12 @@
 package roles
 
 import (
+	"bytes"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -29,7 +32,7 @@ func TestFSContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(got)
-	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/product-manager-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/lint/Dockerfile", "scanners/lint/normalize.jq", "scanners/lint/scan", "scanners/missing-tests/Dockerfile", "scanners/missing-tests/missingtests.go", "scanners/missing-tests/scan", "scanners/trufflehog/Dockerfile", "scanners/trufflehog/exclude-paths", "scanners/trufflehog/findings.jq", "scanners/trufflehog/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
+	want := []string{"config.yaml", "reviewers/eng-review/prompt.txt", "reviewers/license-review/allowlist.txt", "reviewers/license-review/prompt.txt", "reviewers/product-manager-review/prompt.txt", "reviewers/security-review/prompt.txt", "scanners/cve/Dockerfile", "scanners/cve/merge.jq", "scanners/cve/scan", "scanners/docs/Dockerfile", "scanners/docs/docscan.go", "scanners/docs/scan", "scanners/error-codes/Dockerfile", "scanners/error-codes/errcodes.jq", "scanners/error-codes/scan", "scanners/lint/Dockerfile", "scanners/lint/normalize.jq", "scanners/lint/scan", "scanners/lts/Dockerfile", "scanners/lts/eol.jq", "scanners/lts/products.json", "scanners/lts/refs.jq", "scanners/lts/scan", "scanners/missing-tests/Dockerfile", "scanners/missing-tests/missingtests.go", "scanners/missing-tests/scan", "scanners/trufflehog/Dockerfile", "scanners/trufflehog/exclude-paths", "scanners/trufflehog/findings.jq", "scanners/trufflehog/scan", "triage/architect/prompt.txt", "triage/designer/prompt.txt", "triage/documentation-planner/prompt.txt", "triage/engineer/prompt.txt", "triage/lead/prompt.txt", "triage/product-manager/prompt.txt", "workers/engineer/prompt.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("embedded files = %v, want %v", got, want)
 	}
@@ -43,7 +46,7 @@ func TestFSContents(t *testing.T) {
 // embed.FS reports 0444 for everything, so the exec bit must be checked on disk
 // to catch a mode lost in git.
 func TestScanIsExecutableOnDisk(t *testing.T) {
-	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/lint/scan", "scanners/missing-tests/scan", "scanners/trufflehog/scan"} {
+	for _, p := range []string{"scanners/cve/scan", "scanners/docs/scan", "scanners/error-codes/scan", "scanners/lint/scan", "scanners/lts/scan", "scanners/missing-tests/scan", "scanners/trufflehog/scan"} {
 		fi, err := os.Stat(p)
 		if err != nil {
 			t.Fatal(err)
@@ -237,4 +240,65 @@ func TestEmbeddedMissingTestsRoleLoadsAsScanner(t *testing.T) {
 		return
 	}
 	t.Fatal("no scanner role missing-tests")
+}
+
+func TestEmbeddedLtsRoleLoadsAsScanner(t *testing.T) {
+	res, err := config.LoadFS(starterFS(t, true), "/repo")
+	if err != nil {
+		t.Fatalf("LoadFS: %v", err)
+	}
+	for _, r := range res.Roles {
+		if r.Kind != config.KindScanner || r.Name != "lts" {
+			continue
+		}
+		if r.ScanPath != ".ard/scanners/lts/scan" || !r.Autoclose || r.Every != 7*24*time.Hour || r.MaxOpen != 5 || r.GroupSize != 1 {
+			t.Errorf("unexpected role: %+v", r)
+		}
+		if r.Dockerfile != ".ard/scanners/lts/Dockerfile" {
+			t.Errorf("Dockerfile = %q", r.Dockerfile)
+		}
+		if !slices.Equal(r.Extra, []string{"eol.jq", "products.json", "refs.jq"}) {
+			t.Errorf("Extra = %v", r.Extra)
+		}
+		return
+	}
+	t.Fatal("no scanner role lts")
+}
+
+func TestLtsProductsJSON(t *testing.T) {
+	b, err := FS.ReadFile("scanners/lts/products.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top map[string]map[string]string
+	if err := json.Unmarshal(b, &top); err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 2 || top["images"] == nil || top["npm"] == nil {
+		t.Fatalf("want exactly the keys images and npm, got %v", top)
+	}
+	slug := regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
+	for table, m := range top {
+		for name, s := range m {
+			if !slug.MatchString(s) {
+				t.Errorf("%s[%q]: bad slug %q", table, name, s)
+			}
+		}
+	}
+	// encoding/json keeps the last of a duplicated key: count the raw keys.
+	for table, m := range top {
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(b, &raw)
+		dec := json.NewDecoder(bytes.NewReader(raw[table]))
+		n := 0
+		dec.Token()
+		for dec.More() {
+			dec.Token()
+			dec.Token()
+			n++
+		}
+		if n != len(m) {
+			t.Errorf("%s: duplicate keys (%d entries, %d unique)", table, n, len(m))
+		}
+	}
 }

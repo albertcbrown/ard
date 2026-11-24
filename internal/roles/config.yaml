@@ -33,6 +33,7 @@ merge:
 
 overrides:
   scanners/cve: { every: 6h, max_open: 10, group_size: 1, autoclose: true }
+  scanners/lts: { every: 7d, max_open: 5, group_size: 1, autoclose: true }
   scanners/docs: { every: 3d, max_open: 3, group_size: 10, autoclose: true }
   scanners/error-codes: { every: 24h, group_size: 20, autoclose: true }
   scanners/missing-tests: { every: 24h, max_open: 5, group_size: 10, autoclose: true }
