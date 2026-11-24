@@ -45,18 +45,17 @@ func TestEmbeddedSecurityReviewLoadsAsReviewer(t *testing.T) {
 	if !ok {
 		t.Fatalf("no reviewer role security-review in %+v", res.Roles)
 	}
-	if r.PromptPath != ".ard/reviewers/security-review/prompt.txt" || r.Dockerfile != "" || r.ScanPath != "" || len(r.Extra) != 0 || r.Sidecar != "" || r.When != nil {
+	if r.PromptPath != ".ard/reviewers/security-review/prompt.txt" || r.Dockerfile != ".ard/reviewers/security-review/Dockerfile" || r.AidPath != ".ard/reviewers/security-review/aid" || r.ScanPath != "" || strings.Join(r.Extra, ",") != "normalize.jq,rules/security.yml" || r.Sidecar != "" || r.When != nil {
 		t.Errorf("unexpected role: %+v", r)
 	}
 	if r.Model != "claude-opus-5-5" || r.Timeout != 30*time.Minute || r.Agent != "claude" {
 		t.Errorf("model=%q timeout=%v agent=%q", r.Model, r.Timeout, r.Agent)
 	}
-	found := false
+	// The role has a Dockerfile, so it never runs on the host.
 	for _, h := range res.HostUntrusted() {
-		found = found || (h.Kind == config.KindReviewer && h.Name == "security-review")
-	}
-	if !found {
-		t.Errorf("HostUntrusted = %v, want it to include reviewers/security-review", res.HostUntrusted())
+		if h.Kind == config.KindReviewer && h.Name == "security-review" {
+			t.Errorf("HostUntrusted includes reviewers/security-review, which has a Dockerfile")
+		}
 	}
 	if got := strings.Join(reviewerNames(res), ","); got != "eng-review,license-review,product-manager-review,security-review" {
 		t.Errorf("reviewer roles = %s", got)
@@ -68,7 +67,7 @@ func TestSecurityReviewPromptShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !utf8.Valid(b) || len(b) > 16<<10 {
+	if !utf8.Valid(b) || len(b) > 18<<10 {
 		t.Fatalf("prompt: valid=%v size=%d", utf8.Valid(b), len(b))
 	}
 	for i, c := range b {
@@ -87,7 +86,7 @@ func TestSecurityReviewPromptShape(t *testing.T) {
 		"message: |", "in double quotes", "blocking: true or false", "Never approve with a blocking finding",
 		"inline comments", "1 MiB", "## Checks", "mktemp -d",
 		"injection", "authz", "secrets", "unsafe dependencies",
-		"Secret scan:", "gitleaks", "--redact", "Static analysis:", "gosec", "-nosec", "semgrep", "--metrics=off", "--disable-nosem", "Dependencies:",
+		"aid.jsonl", "Secret scan:", "gitleaks", "--redact", "Static analysis:", "gosec", "-nosec", "semgrep", "--metrics=off", "--disable-nosem", "Dependencies:",
 		"Never copy a secret", "Never build, test or run", "suppression",
 		"git push", "gh or any other command", "next key", "worker key", "environment variable",
 	}
