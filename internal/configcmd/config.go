@@ -49,6 +49,11 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 			// Loud: also straight to stderr, whatever --log-level says.
 			fmt.Fprint(e.Stderr, local.HostRoleText(string(r.Kind), r.Name))
 		}
+		for _, r := range res.HostUntrusted() {
+			if r.Network {
+				fmt.Fprint(e.Stderr, local.HostNetworkText(string(r.Kind), r.Name))
+			}
+		}
 		if allReviewersGated(res) {
 			fmt.Fprintln(e.Stderr, "ard config check: warning: every reviewer has a when: rule, so a PR that matches none of them gets no review and stays a draft")
 		}

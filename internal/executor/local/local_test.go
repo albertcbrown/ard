@@ -204,7 +204,7 @@ func TestEnvScrubbed(t *testing.T) {
 		delete(got, ignore)
 	}
 	want := []string{"PATH", "HOME", "LANG", "GOFLAGS", "TMPDIR", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
-		"ARD_JOB", "ARD_ISSUE", "ARD_STAGE", "ARD_ROLE", "ARD_WORK", "ARD_ROLE_DIR", "ANTHROPIC_API_KEY"}
+		"ARD_JOB", "ARD_ISSUE", "ARD_STAGE", "ARD_ROLE", "ARD_WORK", "ARD_ROLE_DIR", "ARD_NETWORK", "ANTHROPIC_API_KEY"}
 	if len(got) != len(want) {
 		t.Errorf("env names %v", got)
 	}
@@ -817,5 +817,26 @@ func TestPrepareHistory(t *testing.T) {
 	defer f.l.Cleanup(ctx, h2, executor.CleanupOptions{})
 	if h2.HistoryDir != "" || h2.View.History != "" || strings.Contains(strings.Join(ardEnv(h2), "\n"), "ARD_HISTORY") {
 		t.Errorf("a job without History sees history: %+v", h2)
+	}
+}
+
+func TestNetworkEnvAndStart(t *testing.T) {
+	for n, want := range map[executor.Network]string{
+		executor.NetworkOn: "ARD_NETWORK=1", executor.NetworkAdvisory: "ARD_NETWORK=0", executor.NetworkNone: "ARD_NETWORK=0",
+	} {
+		if got := strings.Join(ardEnv(executor.Handle{Network: n}), "\n"); !strings.Contains(got, want) {
+			t.Errorf("network %q: env %q lacks %s", n, got, want)
+		}
+	}
+	h := executor.Handle{Network: executor.NetworkNone}
+	if err := checkNetwork(h, executor.Command{Env: []string{"ANTHROPIC_API_KEY=k"}}); !errors.Is(err, executor.ErrForbiddenEnv) {
+		t.Errorf("none with credential: %v", err)
+	}
+	if err := checkNetwork(h, executor.Command{}); err != nil {
+		t.Errorf("none without credential: %v", err)
+	}
+	h.Network = executor.NetworkAdvisory
+	if err := checkNetwork(h, executor.Command{Env: []string{"ANTHROPIC_API_KEY=k"}}); err != nil {
+		t.Errorf("advisory with credential: %v", err)
 	}
 }
