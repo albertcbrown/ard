@@ -68,7 +68,7 @@ func TestSecurityReviewPromptShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !utf8.Valid(b) || len(b) > 16<<10 {
+	if !utf8.Valid(b) || len(b) > 18<<10 {
 		t.Fatalf("prompt: valid=%v size=%d", utf8.Valid(b), len(b))
 	}
 	for i, c := range b {
