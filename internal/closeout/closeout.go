@@ -73,6 +73,10 @@ type Job struct {
 	// Usage is the job's agent usage summed over its steps (from state). The
 	// zero value renders as "not reported".
 	Usage Usage
+	// TokensUnreported is set when the job's final agent step ended without
+	// reporting tokens: its token use is not counted, so the day's token count
+	// for the role is low. The close-out comment and cost-table row say so.
+	TokensUnreported bool `json:",omitempty"`
 	// StartedAt is when the job was created; zero when unknown.
 	StartedAt time.Time
 }

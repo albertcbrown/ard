@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albertcbrown/ard/internal/agent"
 	"github.com/albertcbrown/ard/internal/closeout"
@@ -178,5 +179,49 @@ func TestFinishWithIgnoresTestStep(t *testing.T) {
 	u, _ := st.JobUsage(ctx, sj.ID)
 	if u.Steps != 0 || cc.got[0].Usage.CostUSD != nil || cc.got[0].CostUSD != 0 {
 		t.Errorf("usage = %+v closeout = %+v", u, cc.got[0].Usage)
+	}
+}
+
+func TestFinishTokensUnreportedMark(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		step   func(id string) string
+		res    agent.Result
+		cause  closeout.Cause
+		marked bool
+	}{
+		{"agent no tokens", func(id string) string { return id }, agent.Result{}, closeout.Cause{}, true},
+		{"fix step no tokens", func(id string) string { return id + "f1" }, agent.Result{}, closeout.Cause{}, true},
+		{"tokens reported", func(id string) string { return id }, usageResult(0.1, 1, 2, 3, 4, "claude-opus-5-5"), closeout.Cause{}, false},
+		{"test step", func(id string) string { return id + "t1" }, agent.Result{}, closeout.Cause{}, false},
+		{"clone failed", func(id string) string { return id }, agent.Result{}, closeout.Cause{Kind: closeout.CauseCloneFail}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, ctx := newUsageStore(t)
+			sj, _ := st.CreateJob(ctx, state.NewJob{Stage: "worker", Role: "engineer", Issue: 4})
+			var logs bytes.Buffer
+			cc := &captureCloser{}
+			f := &Finisher{Closer: cc, Store: st, Log: slog.New(slog.NewTextHandler(&logs, nil))}
+			if _, err := f.Finish(ctx, sj.ID, executor.Handle{JobID: tc.step(sj.ID)}, executor.Status{State: executor.Exited}, tc.res, tc.cause); err != nil {
+				t.Fatal(err)
+			}
+			if got := cc.got[0].TokensUnreported; got != tc.marked {
+				t.Errorf("TokensUnreported = %v, want %v", got, tc.marked)
+			}
+			if has := strings.Contains(logs.String(), "reaper.tokens_unreported"); has != tc.marked {
+				t.Errorf("log mark = %v, want %v: %s", has, tc.marked, logs.String())
+			}
+			tok, err := st.RoleTokens(ctx, time.Unix(0, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := int64(0)
+			if tc.res.Usage != nil {
+				want = 6
+			}
+			if tok[state.RoleKey{Stage: "worker", Role: "engineer"}] != want {
+				t.Errorf("RoleTokens = %v, want %d", tok, want)
+			}
+		})
 	}
 }
