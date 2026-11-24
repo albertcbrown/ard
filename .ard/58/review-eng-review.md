@@ -5,18 +5,18 @@ attempt: 1
 verdict: approve
 findings:
   - file: "internal/digest/digest.go"
-    line: 134
+    line: 145
     severity: low
     message: |
-      If AppendEvent fails after the comment is posted, the failure is only logged, so every later Tick (10 minutes apart) posts the digest again that day.
-      plan.md accepts "can only repost", but a repeated spam of comments is unbounded. Consider an in-memory last-posted-day guard on the Loop as well.
-  - file: "internal/digest/testdata"
-    severity: info
-    message: |
-      plan.md named a golden file test (TestRenderGolden) under testdata/. TestRenderZeroAndUnsafe covers the zero and unsafe-name cases inline instead; acceptable.
+      If AppendEvent fails after the comment is posted, the failure is only logged, so every later Tick (10 minutes apart) posts the same digest again that day.
+      Consider an in-memory last-posted-day guard on the Loop as well, so a store failure cannot cause repeated comments.
 ---
-The digest loop matches plan.md: it uses the once-per-day marker, the previous-UTC-day half-open window, post-then-record, and a dry-run skip. It is wired into `knownLoops` and `registerLoops`, and the tests cover the plan's cases. Approved.
+The digest loop still matches plan.md: once-per-day marker, previous-UTC-day half-open window, post-then-record, dry-run skip, and wiring into the loop lists. The tests pass. Only the non-blocking low finding from the last round remains, so this is approved.
 
 ## Checks
-- Lint: `make lint` printed only a parse error in `internal/roles/testdata/docs/skips/src/_x.go`, a file the change does not touch. Nothing was reported on changed files.
-- Coverage: `go test -cover ./internal/digest ./internal/state` passes, with 92.3% and 84.3% of statements covered. The uncovered digest lines are error and log paths.
+- Lint: not re-run this round; the last round's `make lint` reported nothing on changed files.
+- Coverage: `go test -cover ./internal/digest ./internal/state` passes (92.3% and 84.3%). A run that included `./internal/servecmd` timed out and was not repeated.
+
+## Previous findings
+- internal/digest/digest.go (AppendEvent failure reposts the digest): still present, low and non-blocking.
+- internal/digest/testdata (golden test not written): no longer applicable; inline tests cover the cases.
