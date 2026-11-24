@@ -87,6 +87,9 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 	if err := l.checkEnv(c.Env); err != nil {
 		return h, err
 	}
+	if err := checkNetwork(h, c); err != nil {
+		return h, err
+	}
 	if err := l.checkFixed(c.Fixed); err != nil {
 		return h, err
 	}
@@ -143,6 +146,8 @@ func (l *Local) Start(ctx context.Context, h executor.Handle, c executor.Command
 		"role", h.Role, "kind", h.Kind, "pid", h.PID, "deadline", h.Deadline)
 	if hostUntrusted(h) {
 		l.warnHostJob(ctx, h)
+	} else if h.Kind == "host" && h.Network != executor.NetworkOn {
+		l.warnHostNetwork(h)
 	}
 
 	hh := h

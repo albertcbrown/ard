@@ -40,6 +40,10 @@ const (
 	// (2006-01-02, UTC), spent_usd, cap_usd and unpriced. It is also the
 	// marker that stops a second notice for the same scope and day.
 	EventBudgetCapped = "budget_capped"
+	// EventDigest: the digest loop posted the daily status-issue digest; data
+	// has day (the UTC day covered, 2006-01-02), jobs, failures, spend_usd and
+	// unpriced. It is also the marker that stops a second digest for that day.
+	EventDigest = "digest"
 	// EventPRWatch: the prwatch loop acted on a PR; data has pr, head and
 	// transition ("closed_unmerged", "pending_timeout", "draft_red"). It is the
 	// marker that stops a second action for the same (pr, head, transition).
