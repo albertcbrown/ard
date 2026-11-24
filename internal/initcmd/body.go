@@ -30,6 +30,7 @@ func initBody(ops []op, res *config.Resolved) string {
 	b.WriteString("\n## Before you merge\n\n")
 	b.WriteString("- Nothing takes effect until this is merged: ard serve reads its configuration from origin/main.\n")
 	b.WriteString("- Merge with **Squash and merge** (recommended); **Create a merge commit** is also safe. Never fast-forward this branch into main from the command line: the bot-commit check reads main's first-parent history and would fail on the bot's commit.\n")
+	b.WriteString("- If this repository already has an `.ard/config.yaml`, this PR does not edit it: add `.ard/PRODUCT.md`, `.ard/VISION.md` and `.ard/TECH_STACK.md` to `merge.protected_paths` yourself, so a PR cannot change them without a human approval.\n")
 	for _, o := range ops {
 		if o.File.Path == ".ard/scanners/lint/scan" {
 			b.WriteString("- The lint scanner fails until you commit `.ard/scanners/lint/baseline`: run the command in `.ard/scanners/lint/Dockerfile`'s header (an empty file means no baseline).\n")
