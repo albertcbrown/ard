@@ -134,6 +134,10 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		downgraded = true
 		d.log().Warn("closeout.review_verdict_downgraded", "job", j.ID, "role", j.Role, "from", VerdictApprove, "to", VerdictChanges)
 	}
+	aidNote := ""
+	if failed == "" && denied == "" && j.Stage == StageReview {
+		_, rf.Verdict, aidNote = aidAdjust(j.Review, rf.Verdict, nil)
+	}
 	if failed == "" && denied == "" {
 		for _, c := range cands {
 			if c.delete {
@@ -233,7 +237,9 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	default:
 		plan = Build(j, rf, d.Roles)
 		if j.Stage == StageReview && (plan.Outcome == OutcomeDone || plan.Outcome == OutcomeChanges || plan.Outcome == OutcomeStale) {
+			findings, _, _ = aidAdjust(j.Review, rf.Verdict, findings)
 			plan.Review = reviewPlan(j, rf.Verdict, downgraded, findings)
+			plan.Review.AidNote = aidNote
 		}
 		if logWithheld {
 			plan = needsHumanPlan(j, rf.Status, "")

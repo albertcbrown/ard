@@ -1,0 +1,35 @@
+# Vendored semgrep rules for the security-review aid. Local and offline: the
+# aid never fetches rules. Keep this small; each rule names a pattern that is
+# nearly always a real problem.
+rules:
+  - id: go-shell-command-from-variable
+    languages: [go]
+    severity: ERROR
+    message: A shell is started with a command built from a variable. Pass an argument list instead of a shell string.
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $X)
+          - pattern: exec.Command("bash", "-c", $X)
+          - pattern: exec.CommandContext($CTX, "sh", "-c", $X)
+          - pattern: exec.CommandContext($CTX, "bash", "-c", $X)
+      - pattern-not: exec.Command("sh", "-c", "...")
+      - pattern-not: exec.Command("bash", "-c", "...")
+      - pattern-not: exec.CommandContext($CTX, "sh", "-c", "...")
+      - pattern-not: exec.CommandContext($CTX, "bash", "-c", "...")
+  - id: python-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: A subprocess call uses shell=True. Pass an argument list and leave the shell off.
+    pattern: subprocess.$F(..., shell=True, ...)
+  - id: tls-verification-disabled
+    languages: [go]
+    severity: ERROR
+    message: TLS certificate verification is turned off.
+    pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+  - id: node-eval-or-child-process-exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Code or a shell command is built from a value at run time. Avoid eval and exec with strings.
+    pattern-either:
+      - pattern: eval($X)
+      - pattern: child_process.exec($X, ...)

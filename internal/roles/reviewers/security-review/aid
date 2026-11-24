@@ -1,0 +1,76 @@
+#!/bin/sh
+# security-review aid: runs pinned deterministic tools over the files a pull
+# request changed and prints one JSON object per result on stdout (tool, rule,
+# file, line, severity, message). ard runs it before the agent, read-only, with
+# no network under Docker and no model credential or GitHub token in its
+# environment. It only parses code: it never builds, tests or runs anything
+# from the repository. It never prints matched text; gitleaks runs with
+# --redact and only its rule id and position are kept.
+#
+# Input:  $ARD_WORK/.ard-input/$ARD_ISSUE/changed.txt (one path per line).
+# Rules:  $ARD_ROLE_DIR/rules (the vendored semgrep ruleset, read-only).
+# Exit:   nonzero when a tool is missing or fails; diagnostics go to stderr.
+set -eu
+
+work="${ARD_WORK:?ARD_WORK is not set}"
+issue="${ARD_ISSUE:?ARD_ISSUE is not set}"
+role="${ARD_ROLE_DIR:?ARD_ROLE_DIR is not set}"
+list="$work/.ard-input/$issue/changed.txt"
+[ -f "$list" ] || { echo "aid: $list is missing" >&2; exit 2; }
+
+for t in jq gitleaks gosec semgrep; do
+	command -v "$t" >/dev/null 2>&1 || { echo "aid: $t is not installed" >&2; exit 3; }
+done
+
+tmp="$(mktemp -d "${TMPDIR:-/var/tmp}/aid.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/src"
+: > "$tmp/files"
+godirs="$tmp/godirs"
+: > "$godirs"
+
+# Only regular files that exist at the pinned head, never one that points
+# outside the worktree.
+while IFS= read -r f; do
+	case "$f" in "" | -* | /* | *..*) continue ;; esac
+	[ -f "$work/$f" ] && [ ! -L "$work/$f" ] || continue
+	printf '%s\n' "$f" >> "$tmp/files"
+	mkdir -p "$tmp/src/$(dirname -- "$f")"
+	cp -- "$work/$f" "$tmp/src/$f"
+	case "$f" in *.go) echo "./$(dirname -- "$f")" >> "$godirs" ;; esac
+done < "$list"
+
+[ -s "$tmp/files" ] || exit 0
+
+here="$role"
+norm() { jq -c --arg tool "$1" --arg prefix "$2" -f "$here/normalize.jq"; }
+
+# 1. Secrets: rule id and position only (--redact; the normaliser never reads
+# the match). gitleaks:allow comments are ignored.
+gitleaks dir "$tmp/src" --no-banner --redact --ignore-gitleaks-allow --exit-code 0 \
+	--report-format json --report-path "$tmp/gitleaks.json" >/dev/null 2>"$tmp/gitleaks.err" \
+	|| { echo "aid: gitleaks failed" >&2; exit 4; }
+[ -s "$tmp/gitleaks.json" ] || echo '[]' > "$tmp/gitleaks.json"
+norm gitleaks "$tmp/src/" < "$tmp/gitleaks.json"
+
+# 2. Go static analysis, with //nosec comments ignored.
+if [ -s "$godirs" ]; then
+	sort -u "$godirs" > "$tmp/godirs.u"
+	set --
+	while IFS= read -r d; do set -- "$@" "$d"; done < "$tmp/godirs.u"
+	(cd "$work" && GOFLAGS=-mod=readonly GOPROXY=off GOTOOLCHAIN=local \
+		gosec -nosec -no-fail -quiet -fmt json -out "$tmp/gosec.json" "$@") >/dev/null 2>"$tmp/gosec.err" \
+		|| { echo "aid: gosec failed" >&2; exit 4; }
+	[ -s "$tmp/gosec.json" ] || echo '{"Issues":[]}' > "$tmp/gosec.json"
+	norm gosec "$work/" < "$tmp/gosec.json"
+fi
+
+# 3. semgrep with the vendored rules only: no registry, no metrics, no
+# suppression comments.
+set --
+while IFS= read -r f; do set -- "$@" "$f"; done < "$tmp/files"
+(cd "$work" && semgrep scan --metrics=off --disable-nosem --disable-version-check --quiet \
+	--config "$role/rules" --json --output "$tmp/semgrep.json" -- "$@") >/dev/null 2>"$tmp/semgrep.err" \
+	|| { echo "aid: semgrep failed" >&2; exit 4; }
+[ -s "$tmp/semgrep.json" ] || echo '{"results":[]}' > "$tmp/semgrep.json"
+norm semgrep "" < "$tmp/semgrep.json"

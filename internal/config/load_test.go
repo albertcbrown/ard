@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -646,6 +647,34 @@ func TestLoadErrors(t *testing.T) {
 			want: []wantErr{{".ard/triage/lead", "scan", "only scanners may have a scan script"}},
 		},
 		{
+			name: "aid outside reviewers",
+			fs: func() fstest.MapFS {
+				fsys := baseFS()
+				fsys[".ard/triage/lead/aid"] = &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o755}
+				return fsys
+			}(),
+			want: []wantErr{{".ard/triage/lead", "aid", "only reviewers may have an aid script"}},
+		},
+		{
+			name: "aid in a scanner",
+			fs: func() fstest.MapFS {
+				fsys := baseFS()
+				fsys[".ard/scanners/cve/aid"] = &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o755}
+				return fsys
+			}(),
+			want: []wantErr{{".ard/scanners/cve", "aid", "only reviewers may have an aid script"}},
+		},
+		{
+			name: "non-executable aid",
+			fs: func() fstest.MapFS {
+				fsys := baseFS()
+				fsys[".ard/reviewers/eng-review/prompt.txt"] = &fstest.MapFile{Data: []byte("review"), Mode: 0o644}
+				fsys[".ard/reviewers/eng-review/aid"] = &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o644}
+				return fsys
+			}(),
+			want: []wantErr{{".ard/reviewers/eng-review", "aid", "must be executable"}},
+		},
+		{
 			name: "invalid role name",
 			fs: func() fstest.MapFS {
 				fsys := baseFS()
@@ -1014,5 +1043,25 @@ func TestReadsHistory(t *testing.T) {
 	}
 	if !got["scanner/cve"] {
 		t.Errorf("scanner/cve with a history file must read history: %v", got)
+	}
+}
+
+func TestReviewerAidDiscovery(t *testing.T) {
+	fsys := baseFS()
+	fsys[".ard/reviewers/eng-review/aid"] = &fstest.MapFile{Data: []byte("#!/bin/sh\n"), Mode: 0o755}
+	res, err := LoadFS(fsys, "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := res.Role(KindReviewer, "eng-review")
+	if !ok || r.AidPath != ".ard/reviewers/eng-review/aid" || len(r.Extra) != 0 {
+		t.Errorf("eng-review = %+v", r)
+	}
+	if sec, _ := res.Role(KindReviewer, "security-review"); sec.AidPath != "" {
+		t.Errorf("security-review AidPath = %q, want none", sec.AidPath)
+	}
+	var buf bytes.Buffer
+	if err := res.WriteYAML(&buf); err != nil || !strings.Contains(buf.String(), "aid: .ard/reviewers/eng-review/aid") {
+		t.Error("the rendered config does not show the aid")
 	}
 }
