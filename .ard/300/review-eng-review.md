@@ -1,30 +1,28 @@
 ---
 role: eng-review
 status: done
-attempt: 1
-verdict: changes
+attempt: 2
+verdict: approve
 findings:
-  - file: "internal/closeout/rolefile.go"
-    line: 8
+  - file: "internal/worker/run.go"
+    line: 496
     severity: medium
-    blocking: true
     message: |
-      `make lint` fails: gofmt flags this file because the "net/url" import is placed after "os".
-      Run gofmt -w on the file (imports must be sorted: "net/url" before "os").
-  - file: "internal/closeout/rolefile.go"
-    line: 346
-    severity: medium
-    blocking: true
-    message: |
-      The landing `path` is validated only by checkFindingPath, which allows backticks, newlines and other control characters. Body() in internal/worker/pr.go renders it inside a markdown code span, so a path such as "a`b" (or one with a newline, from a double-quoted YAML string) breaks out of the span and injects markdown into the PR body. URLs are protected against this by checkHTTPS, but the path is not, and setFetched's redaction and scan do not catch it. Reject control characters, backticks, `<` and `>` in the path (or render it safely), and add table cases for them to TestParseFetched.
-  - file: "docs/proposal.md"
+      setFetched (redaction, secret scan, drop-on-hit) has no test of its own. Only Body rendering and parsing are tested.
+      Add a unit test where a fetched field is redacted or the scanner reports a hit, and assert jb.fetched is nil.
+  - file: ".ard/workers/engineer/prompt.txt"
     severity: low
     message: |
-      The issue mentions a CAPTURE.md beside each fixture set (the #47 precedent). It is not in this change, and internal/roles/testdata/lts/api/CAPTURE.md does not exist. If that is meant for a later part, say so; the worker prompt does not mention `fetched:` either.
+      The worker prompt does not tell the worker to record fetched inputs under `fetched:`, and no CAPTURE.md was added. The proposal now says the worker does both. Update the prompt in a follow-up, or say in the proposal that this is a later part.
 ---
-The parsing, PR body and proposal changes follow the plan and are well tested, but `make lint` fails on gofmt and the landing path is not protected against markdown injection in the PR body.
+The change parses and validates `fetched:`, renders it in the PR body and updates the docs as planned. Both blocking findings from round 1 are fixed, so this is approved.
 
 ## Checks
-- Lint: `make lint` equivalent. `gofmt -l` reports internal/closeout/rolefile.go (import order). `go vet` was not run separately.
-- Tests: `go test -cover ./internal/closeout ./internal/worker` pass (closeout 89.6%, worker 82.6%).
-- Diff coverage: not profiled line by line. The new parsing and Body code have table tests. setFetched (the redaction and scan path in internal/worker/run.go) has no test of its own.
+- Lint: no `make lint` was run. `gofmt -l internal/` is clean on the changed files. The only output is a parse error in a testdata fixture the change did not touch. `go vet ./internal/closeout ./internal/worker` printed only dependency downloads and no problems.
+- Tests: `go test -cover` on closeout (89.7%) and worker (82.6%) pass.
+- Diff coverage: not profiled line by line. Parsing and Body are covered by table tests. setFetched is not covered.
+
+## Previous findings
+- internal/closeout/rolefile.go (import order): resolved.
+- internal/closeout/rolefile.go (path markdown injection): resolved. The path now rejects control characters, backticks and angle brackets, with test cases.
+- docs/proposal.md (CAPTURE.md and prompt): still present, now reported as a low finding on the prompt.
