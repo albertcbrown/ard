@@ -37,6 +37,7 @@ func initBody(ops []op, res *config.Resolved) string {
 		}
 	}
 	b.WriteString("- `scanners/trufflehog` is included. It files leaked-credential issues for a human (never for an agent) and needs a TruffleHog binary (AGPL-3.0; it is installed by the role's Dockerfile or taken from the host, and is not in the ard image). To opt out, delete `.ard/scanners/trufflehog/` and its `scanners/trufflehog` line under `overrides:` in `.ard/config.yaml` before merging.\n")
+	b.WriteString("- `scanners/trufflehog-history` is included. It scans the full git history weekly for leaked credentials, with the same fingerprints as `scanners/trufflehog`, and its issues never autoclose. It reads the controller's clone through a read-only mount and needs the same TruffleHog binary. To opt out, delete `.ard/scanners/trufflehog-history/` and its `scanners/trufflehog-history` line under `overrides:` in `.ard/config.yaml` before merging.\n")
 	b.WriteString("\n## Follow-up the App cannot do\n\n")
 	b.WriteString("ard's GitHub App has no permission to write `.github/`, so do this by hand:\n\n")
 	b.WriteString("1. Copy `.github/workflows/bot-commits.yml` from the ard repository into this repository.\n")

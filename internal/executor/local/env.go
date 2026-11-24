@@ -31,6 +31,9 @@ func ardEnv(h executor.Handle) []string {
 	if h.View.Sidecar != "" {
 		e = append(e, "ARD_SIDECAR="+h.View.Sidecar)
 	}
+	if h.View.History != "" {
+		e = append(e, "ARD_HISTORY="+h.View.History)
+	}
 	return e
 }
 

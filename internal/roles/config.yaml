@@ -41,6 +41,8 @@ overrides:
   # Leaked credentials go straight to a human: route: needs-human files without
   # ard:pending, so no agent triages them.
   scanners/trufflehog: { every: 24h, max_open: 5, group_size: 1, autoclose: true, route: needs-human, timeout: 30m }
+  # Full git history (read-only mount of the clone); history never goes away, so no autoclose.
+  scanners/trufflehog-history: { every: 7d, max_open: 5, group_size: 1, autoclose: false, route: needs-human, timeout: 60m }
   triage/lead:  { model: claude-opus-5-5, timeout: 15m }
   triage/product-manager: { model: claude-opus-5-5 }
   triage/architect: { model: claude-opus-5-5, after: [product-manager] }
