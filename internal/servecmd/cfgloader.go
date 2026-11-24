@@ -35,7 +35,9 @@ type cfgLoader struct {
 	// stderr receives the host-mode warning in plain text, so it survives
 	// --log-level. nil = log only.
 	stderr io.Writer
-	issue  func() int // the status issue number; <= 0 when unknown or synthetic
+	// agentImage: ARD_AGENT_IMAGE is set, so no role runs on the host.
+	agentImage bool
+	issue      func() int // the status issue number; <= 0 when unknown or synthetic
 	// paths replaces the controller host's paths in the error text posted to
 	// the status issue. nil = post a fixed message, never the error.
 	paths *redact.Secrets
@@ -68,7 +70,7 @@ func (c *cfgLoader) Load(ctx context.Context) (*config.Resolved, error) {
 func (c *cfgLoader) warnHost(res *config.Resolved) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, r := range res.HostUntrusted() {
+	for _, r := range res.HostUntrustedWith(c.agentImage) {
 		key := string(r.Kind) + "/" + r.Name
 		if c.warned[key] {
 			continue

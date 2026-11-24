@@ -3,6 +3,7 @@ package configcmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
@@ -50,6 +52,7 @@ func writeRepo(t *testing.T, config string) string {
 }
 
 func TestCheckValid(t *testing.T) {
+	t.Setenv("ARD_AGENT_IMAGE", "") // unset keeps the host warning
 	root := writeRepo(t, "max_pods: 5\noverrides: {scanners/cve: {every: 6h}}\n")
 	e, stdout, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
 
@@ -70,6 +73,7 @@ func TestCheckValid(t *testing.T) {
 }
 
 func TestCheckWarnsHostUntrustedAtErrorLevel(t *testing.T) {
+	t.Setenv("ARD_AGENT_IMAGE", "")
 	root := writeRepo(t, "max_pods: 5\n")
 	e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
 	var logs bytes.Buffer
@@ -369,6 +373,29 @@ func TestCheckWarnsWhenEveryReviewerIsGated(t *testing.T) {
 				t.Errorf("warning present = %v, want %v; stderr: %s", got, tt.want, stderr.String())
 			}
 		})
+	}
+}
+
+func TestCheckAgentImage(t *testing.T) {
+	root := writeRepo(t, "max_pods: 5\n")
+	run := func() (error, string, string) {
+		e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+		var logs bytes.Buffer
+		e.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		err := Check(context.Background(), e, cli.ConfigCheckOpts{})
+		return err, logs.String(), stderr.String()
+	}
+	t.Setenv("ARD_AGENT_IMAGE", "ard-agent:dev")
+	if err, _, _ := run(); err == nil || !errors.Is(err, executor.ErrImageRef) {
+		t.Errorf("tag ref: err = %v, want ErrImageRef", err)
+	}
+	t.Setenv("ARD_AGENT_IMAGE", "sha256:0123456789ab")
+	err, logs, errs := run()
+	if err != nil {
+		t.Fatalf("valid ref: %v", err)
+	}
+	if strings.Contains(logs, "executor.host_untrusted") || strings.Contains(errs, "WARNING:") {
+		t.Errorf("covered roles warned: logs %q stderr %q", logs, errs)
 	}
 }
 
