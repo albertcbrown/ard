@@ -130,7 +130,7 @@ type Role struct {
 	Model   string        // optional
 	Timeout time.Duration // default 30m
 	Sidecar string        // key in Resolved.Sidecars; "" = none
-	Network bool          // default true; false is advisory in this part
+	Network bool          // default true; false is enforced for the worker test step in Docker, advisory elsewhere
 
 	// Scanner only.
 	Every     time.Duration // default Intervals.Scanners
