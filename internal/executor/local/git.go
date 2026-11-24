@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/executor/workspace"
 	"github.com/albertcbrown/ard/internal/wtlock"
 )
 
@@ -17,17 +18,8 @@ import (
 // under the shared lock, so one hung git cannot stall every other job.
 const worktreeAdminTimeout = 30 * time.Second
 
-// gitRunner is the small slice of git the executor needs. It is unexported
-// so this package does not depend on a shared git package for worktrees. The
-// sidecar clone (sidecar.go) does use gitx: duplicating its credential header
-// and scrubbing would be worse.
-type gitRunner interface {
-	RevParse(ctx context.Context, repo, rev string) (string, error)
-	// WorktreeAdd creates a detached worktree at dir, at sha.
-	WorktreeAdd(ctx context.Context, repo, dir, sha string) error
-	WorktreeRemove(ctx context.Context, repo, dir string, force bool) error
-	WorktreePrune(ctx context.Context, repo string) error
-}
+// gitRunner is the git slice the executor needs for worktrees.
+type gitRunner = workspace.Git
 
 type execGit struct{ bin string }
 

@@ -1,4 +1,4 @@
-package local
+package workspace
 
 import (
 	"context"
@@ -21,9 +21,9 @@ const sidecarDirName = "sidecar"
 
 const defaultSidecarTimeout = 2 * time.Minute
 
-// sidecarGit is the slice of gitx the sidecar clone needs. *gitx.Git
+// SidecarGit is the slice of gitx the sidecar clone needs. *gitx.Git
 // satisfies it; it deliberately has no Commit or Push.
-type sidecarGit interface {
+type SidecarGit interface {
 	InitBare(ctx context.Context, dir string) error
 	FetchShallow(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error
 	RevParse(ctx context.Context, dir, ref string) (string, error)
@@ -33,11 +33,11 @@ type sidecarGit interface {
 // defaultSidecarURL is where a sidecar repo is fetched from.
 func defaultSidecarURL(repo string) string { return "https://github.com/" + repo + ".git" }
 
-// sidecarCache is <root>/sidecars/<ctl-owner>/<ctl-repo>/<sc-owner>/<sc-repo>.git:
+// SidecarCache is <root>/sidecars/<ctl-owner>/<ctl-repo>/<sc-owner>/<sc-repo>.git:
 // one shallow bare object cache per sidecar repo, shared by every job of one
 // controlled repo. It holds no remote and no credential.
-func (l *Local) sidecarCache(jobRepo, scRepo string) (string, error) {
-	base, err := repopath.Join(filepath.Join(l.root, "sidecars"), jobRepo)
+func SidecarCache(root, jobRepo, scRepo string) (string, error) {
+	base, err := repopath.Join(filepath.Join(root, "sidecars"), jobRepo)
 	if err != nil {
 		return "", err
 	}
@@ -51,17 +51,14 @@ func (l *Local) sidecarCache(jobRepo, scRepo string) (string, error) {
 // lockSidecar serialises git operations on one cache dir inside this
 // process. One serve process owns each controlled repo (the leader lock), so
 // no other process touches the cache. A waiter honours ctx.
-func (l *Local) lockSidecar(ctx context.Context, dir string) (func(), error) {
-	l.mu.Lock()
-	if l.sidecarLocks == nil {
-		l.sidecarLocks = map[string]chan struct{}{}
-	}
-	ch := l.sidecarLocks[dir]
+func (w *Workspace) lockSidecar(ctx context.Context, dir string) (func(), error) {
+	w.mu.Lock()
+	ch := w.sidecarLocks[dir]
 	if ch == nil {
 		ch = make(chan struct{}, 1)
-		l.sidecarLocks[dir] = ch
+		w.sidecarLocks[dir] = ch
 	}
-	l.mu.Unlock()
+	w.mu.Unlock()
 	select {
 	case ch <- struct{}{}:
 		return func() { <-ch }, nil
@@ -79,8 +76,8 @@ func (l *Local) lockSidecar(ctx context.Context, dir string) (func(), error) {
 // crash. Errors: a missing ref is gitx.ErrRefNotFound (permanent); init,
 // fetch and rev-parse failures wrap executor.ErrClone (transient); an export
 // failure (symlink, submodule, size) wraps neither.
-func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Sidecar, dest string) (sha string, fetched bool, err error) {
-	ctx, cancel := context.WithTimeout(ctx, l.sidecarTimeout)
+func (w *Workspace) materialise(ctx context.Context, jobRepo string, s executor.Sidecar, dest string) (sha string, fetched bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, w.sidecarTimeout)
 	defer cancel()
 	wrap := func(e error) error {
 		if permanentFetch(e) {
@@ -88,11 +85,11 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 		}
 		return fmt.Errorf("sidecar %q (%s@%s): %w: %w", s.Name, s.Repo, s.Ref, executor.ErrClone, e)
 	}
-	cache, err := l.sidecarCache(jobRepo, s.Repo)
+	cache, err := SidecarCache(w.root, jobRepo, s.Repo)
 	if err != nil {
 		return "", false, fmt.Errorf("sidecar %q (%s@%s): %w", s.Name, s.Repo, s.Ref, err)
 	}
-	unlock, err := l.lockSidecar(ctx, cache)
+	unlock, err := w.lockSidecar(ctx, cache)
 	if err != nil {
 		return "", false, wrap(err)
 	}
@@ -105,7 +102,7 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 		if err := os.MkdirAll(cache, 0o700); err != nil {
 			return err
 		}
-		return l.sgit.InitBare(ctx, cache)
+		return w.sgit.InitBare(ctx, cache)
 	}
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return "", false, wrap(err)
@@ -123,17 +120,20 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 		key = hex.EncodeToString(sum[:])[:16]
 	}
 	localRef := "refs/ard/sidecar/" + key
-	url := l.sidecarURL(s.Repo)
+	url := w.sidecarURL(s.Repo)
 
 	have := false
 	if gitref.IsSHA(s.Ref) {
-		if got, rerr := l.sgit.RevParse(ctx, cache, s.Ref); rerr == nil && got == s.Ref {
+		if got, rerr := w.sgit.RevParse(ctx, cache, s.Ref); rerr == nil && got == s.Ref {
 			sha, have = got, true
 		}
 	}
 	if !have {
 		fetch := func() error {
-			return l.sgit.FetchShallow(ctx, cache, url, "+"+s.Ref+":"+localRef, l.sidecarToken)
+			if gitref.IsSHA(s.Ref) {
+				return FetchPinned(ctx, w.sgit, cache, url, s.Ref, w.sidecarToken)
+			}
+			return w.sgit.FetchShallow(ctx, cache, url, "+"+s.Ref+":"+localRef, w.sidecarToken)
 		}
 		fetched = true
 		ferr := fetch()
@@ -146,14 +146,13 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 		if ferr != nil {
 			return "", fetched, wrap(ferr)
 		}
-		if sha, err = l.sgit.RevParse(ctx, cache, localRef); err != nil {
+		if gitref.IsSHA(s.Ref) {
+			sha = s.Ref // FetchPinned verified it
+		} else if sha, err = w.sgit.RevParse(ctx, cache, localRef); err != nil {
 			return "", fetched, wrap(err)
 		}
-		if gitref.IsSHA(s.Ref) && sha != s.Ref {
-			return "", fetched, wrap(fmt.Errorf("fetched %s, want %s", sha, s.Ref))
-		}
 	}
-	if err := l.sgit.ExportTree(ctx, cache, sha, dest); err != nil {
+	if err := w.sgit.ExportTree(ctx, cache, sha, dest); err != nil {
 		return "", fetched, fmt.Errorf("sidecar %q (%s@%s): export: %w", s.Name, s.Repo, s.Ref, err)
 	}
 	return sha, fetched, nil
@@ -163,4 +162,29 @@ func (l *Local) materialise(ctx context.Context, jobRepo string, s executor.Side
 // or a repository that is missing or unreadable.
 func permanentFetch(err error) bool {
 	return errors.Is(err, gitx.ErrRefNotFound) || errors.Is(err, gitx.ErrRepoAccess)
+}
+
+// FetchPinned fetches the commit sha (depth 1) from url into the bare repo
+// gitDir, creating it first when it has no HEAD, and checks that the object
+// is the one asked for. A SHA the remote lacks gives gitx.ErrRefNotFound.
+func FetchPinned(ctx context.Context, g SidecarGit, gitDir, url, sha string, tok gitx.TokenFunc) error {
+	if err := os.MkdirAll(gitDir, 0o700); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, "HEAD")); err != nil {
+		if err := g.InitBare(ctx, gitDir); err != nil {
+			return err
+		}
+	}
+	if err := g.FetchShallow(ctx, gitDir, url, "+"+sha+":refs/ard/pin", tok); err != nil {
+		return err
+	}
+	got, err := g.RevParse(ctx, gitDir, sha)
+	if err != nil {
+		return err
+	}
+	if got != sha {
+		return fmt.Errorf("fetched %s, want %s", got, sha)
+	}
+	return nil
 }
