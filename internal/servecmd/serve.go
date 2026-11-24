@@ -114,6 +114,12 @@ func selectLoops(loops []controller.Loop, want []string) ([]controller.Loop, err
 	return out, nil
 }
 
+// dockerProbe checks that the Docker daemon answers. A variable so tests can
+// fake it. It uses the same "docker" binary name as local.Options.DockerBin's default.
+var dockerProbe = func(ctx context.Context) ([]byte, error) {
+	return exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
+}
+
 func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []string) error {
 	if _, err := selectLoops(nil, wantLoops); err != nil {
 		return err
@@ -216,7 +222,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 		if err := executor.CheckImageRef(agentImage); err != nil {
 			return fmt.Errorf("ard serve: %s: %w", EnvAgentImage, err)
 		}
-		if out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
+		if out, err := dockerProbe(ctx); err != nil {
 			return fmt.Errorf("ard serve: %s is set but Docker is not available: %w: %s", EnvAgentImage, err, strings.TrimSpace(string(out)))
 		}
 		log.Info("serve.agent_image", "image", agentImage)

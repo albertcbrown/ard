@@ -869,3 +869,45 @@ func TestServeRefusesOldGit(t *testing.T) {
 		t.Errorf("a refused start created state: %v", statErr)
 	}
 }
+
+func TestServeAgentImageValidation(t *testing.T) {
+	digest := "x/y@sha256:" + strings.Repeat("a", 64)
+	orig := dockerProbe
+	defer func() { dockerProbe = orig }()
+
+	t.Run("invalid ref", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv(EnvAgentImage, "ard-agent:dev")
+		dockerProbe = func(context.Context) ([]byte, error) { t.Error("probe ran for an invalid ref"); return nil, nil }
+		f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+		err := serve(context.Background(), env(t, "o/r", repoDir(t), true), fakeBuilder(f, true))
+		if !errors.Is(err, executor.ErrImageRef) {
+			t.Fatalf("err = %v, want ErrImageRef", err)
+		}
+	})
+	t.Run("docker down", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv(EnvAgentImage, digest)
+		dockerProbe = func(context.Context) ([]byte, error) { return []byte("cannot connect"), errors.New("exit status 1") }
+		f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+		err := serve(context.Background(), env(t, "o/r", repoDir(t), true), fakeBuilder(f, true))
+		if err == nil || !strings.Contains(err.Error(), "Docker is not available") {
+			t.Fatalf("err = %v, want Docker is not available", err)
+		}
+	})
+	t.Run("valid ref logs", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv(EnvAgentImage, digest)
+		dockerProbe = func(context.Context) ([]byte, error) { return []byte("27.0"), nil }
+		f := fake.New(fake.WithIdentity(github.Identity{Login: "ard[bot]", Kind: github.AuthApp}))
+		buf := &syncBuf{}
+		e := env(t, "o/r", repoDir(t), true)
+		e.Log = slog.New(slog.NewTextHandler(buf, nil))
+		if err := runUntil(t, e, fakeBuilder(f, true), func() bool { return buf.has("serve.agent_image") && buf.has("controller.start") }); err != nil {
+			t.Fatal(err)
+		}
+		if !buf.has("image=" + digest) {
+			t.Errorf("serve.agent_image does not log the ref:\n%s", buf.String())
+		}
+	})
+}
