@@ -40,6 +40,9 @@ type Row struct {
 	Outcome     string   // fixed vocabulary
 	Link        string   // "" or a github.com issue/pull URL with an optional fragment
 	PR          int      // > 0: " · PR #n"
+	// TokensUnreported: the job ended without reporting tokens; the tokens
+	// cell says "not reported", or adds " (partial)" when earlier steps did.
+	TokensUnreported bool
 }
 
 const (
@@ -60,11 +63,12 @@ var (
 
 	numPat   = `(?:[0-9]{1,3}|[0-9]{1,4}(?:\.[0-9])?[kMB])`
 	tokPat   = `in ` + numPat + ` · out ` + numPat + ` · cache w ` + numPat + ` / r ` + numPat
+	rowTok   = `(?:` + tokPat + `(?: \(partial\))?|not reported)`
 	costPat  = `\$[0-9]{1,10}\.[0-9]{2}`
 	modelPat = `[A-Za-z0-9._:\[\]/-]{1,100}(?:, [A-Za-z0-9._:\[\]/-]{1,100}){0,7}`
 	outPat   = `(?:done|changes|stale|needs-human|retry|usage limit|failed: (?:[a-z_]{1,32}|exit [0-9]{1,3}|result))`
 	linkPat  = `https://github\.com/[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}/(?:issues|pull)/[0-9]{1,9}(?:#(?:issuecomment|pullrequestreview)-[0-9]{1,18})?`
-	rowRE    = regexp.MustCompile(`^\| (?:(?:triage|worker|review):[a-z0-9][a-z0-9-]{0,30}(?: #[0-9]{1,5})?) \| (?:` + tokPat + `|—) \| (?:` + costPat + `|—) \| (?:` + modelPat + `|—) \| (?:—|(?:\[` + outPat + `\]\(` + linkPat + `\)|` + outPat + `)(?: · PR #[0-9]{1,9})?) \|$`)
+	rowRE    = regexp.MustCompile(`^\| (?:(?:triage|worker|review):[a-z0-9][a-z0-9-]{0,30}(?: #[0-9]{1,5})?) \| (?:` + rowTok + `|—) \| (?:` + costPat + `|—) \| (?:` + modelPat + `|—) \| (?:—|(?:\[` + outPat + `\]\(` + linkPat + `\)|` + outPat + `)(?: · PR #[0-9]{1,9})?) \|$`)
 	foldRE   = regexp.MustCompile(`^\| \*earlier jobs \([0-9]{1,6}\)\* \| (?:` + tokPat + `|—) \| (?:` + costPat + `|—) \| — \| — \|$`)
 	totalRE  = regexp.MustCompile(`^\| \*\*Total\*\* \| \*\*(?:` + tokPat + `|—)\*\* \| \*\*(?:` + costPat + `|—)\*\* \| — \| — \|$`)
 	stageOK  = map[string]bool{"triage": true, "worker": true, "review": true}
@@ -163,6 +167,11 @@ func rowLine(r Row) string {
 	tok, cost := dash, dash
 	if validTokens(r.Tokens) {
 		tok = tokText(*r.Tokens)
+		if r.TokensUnreported {
+			tok += " (partial)"
+		}
+	} else if r.TokensUnreported {
+		tok = "not reported"
 	}
 	if validCost(r.CostUSD) {
 		cost = costText(*r.CostUSD)

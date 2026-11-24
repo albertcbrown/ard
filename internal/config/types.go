@@ -131,7 +131,7 @@ type Role struct {
 	Model   string        // optional
 	Timeout time.Duration // default 30m
 	Sidecar string        // key in Resolved.Sidecars; "" = none
-	Network bool          // default true; false is advisory in this part
+	Network bool          // default true; false is enforced for the worker test step in Docker, advisory elsewhere
 
 	// Scanner only.
 	Every     time.Duration // default Intervals.Scanners
@@ -165,6 +165,8 @@ type Role struct {
 	// Resolved.MaxBudgetUSD and the daily cap to Resolved.BudgetUSDPerDay.
 	MaxBudgetUSD    float64
 	BudgetUSDPerDay float64
+	// TokensPerDay is the role's own daily token cap; 0 means unset.
+	TokensPerDay int64
 }
 
 // ReadsUntrusted reports whether the role's job reads untrusted input (issue
@@ -210,6 +212,7 @@ type Resolved struct {
 	RequireApproval bool    // default true
 	BudgetUSDPerDay float64 // whole-repo daily cap; default 50
 	MaxBudgetUSD    float64 // default per-job cap; default 5
+	TokensPerDay    int64   // default per-role daily token cap; 0 = no token cap
 	GlobalMaxOpen   int     // open scanner issues across all scanners; default 30
 	Paused          bool
 
@@ -241,6 +244,18 @@ func (r *Resolved) Role(k Kind, name string) (Role, bool) {
 func (r *Resolved) RoleBudgetUSDPerDay(role Role) (cap float64, set bool) {
 	if role.BudgetUSDPerDay > 0 {
 		return role.BudgetUSDPerDay, true
+	}
+	return 0, false
+}
+
+// RoleTokensPerDay is the role's daily token cap: its own value, else the
+// repo-wide Resolved.TokensPerDay. set is false when neither is set (no cap).
+func (r *Resolved) RoleTokensPerDay(role Role) (cap int64, set bool) {
+	if role.TokensPerDay > 0 {
+		return role.TokensPerDay, true
+	}
+	if r.TokensPerDay > 0 {
+		return r.TokensPerDay, true
 	}
 	return 0, false
 }

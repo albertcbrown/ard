@@ -13,6 +13,7 @@ Durations are Go-style strings such as `30m` or `4h`; `d` is not accepted, so wr
 | `agent` | `claude` | The agent CLI adapter |
 | `require_approval` | `true` | A worker starts only after a human adds `ard:approved` |
 | `budget_usd_per_day` | `50` | Daily dollar cap for the repository (UTC day) |
+| `tokens_per_day` | unset | Default daily token cap per role (`40M`, `1.5M`, `500k` or an integer). Tokens are recorded now; no cap is enforced yet. A job that reports no tokens is not counted and is marked on the issue |
 | `max_budget_usd` | `5` | Dollar cap for one job |
 | `global_max_open` | `30` | Cap on open ard-filed issues across all scanners |
 | `paused` | `false` | Kill switch: no new claims while true |
@@ -73,7 +74,7 @@ A sidecar is a read-only reference repository mounted for a role. `<name>` is yo
 
 ## Overrides
 
-`overrides` maps a role path (`scanners/cve`, `triage/lead`, `workers/engineer`, `reviewers/eng-review`) to a mapping of the keys below. A role may also set `agent`, `max_budget_usd` and `budget_usd_per_day` to override the global values. An unknown key is an error.
+`overrides` maps a role path (`scanners/cve`, `triage/lead`, `workers/engineer`, `reviewers/eng-review`) to a mapping of the keys below. A role may also set `agent`, `max_budget_usd`, `budget_usd_per_day` and `tokens_per_day` to override the global values. An unknown key is an error.
 
 | Key | Default | Applies to | Meaning |
 | --- | --- | --- | --- |

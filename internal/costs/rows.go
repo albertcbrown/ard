@@ -44,6 +44,7 @@ func (l *Loop) rows(ctx context.Context, n int, log *slog.Logger) ([]costblock.R
 			r.Outcome = outcomeText(f)
 			r.PR = f.PR
 			r.Link = l.link(j.Stage, n, f)
+			r.TokensUnreported = f.TokensUnreported
 		}
 		out = append(out, r)
 	}
