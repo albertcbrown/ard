@@ -97,7 +97,7 @@ type Intake struct {
 // Sidecar is a read-only companion repo mounted into a role's job.
 type Sidecar struct {
 	Repo string // "owner/name"
-	Ref  string // branch, tag or full 40-hex SHA; default "main"
+	Ref  string // branch, tag or full 40-hex SHA; sidecars default "main"; roles_repo empty = remote HEAD
 }
 
 // When gates a reviewer: a nil When means the reviewer runs on every PR.
@@ -209,7 +209,9 @@ type Resolved struct {
 	Stale          Stale
 	Redact         Redact
 	Sidecars       map[string]Sidecar
-	Roles          []Role // sorted by Kind then Name
+	RolesRepo      *Sidecar // roles_repo: shared role directories; nil = none
+	RolesSHA       string   // commit of RolesRepo merged into the snapshot; set by configsrc
+	Roles          []Role   // sorted by Kind then Name
 }
 
 // Role returns the role of the given kind and name.

@@ -183,9 +183,15 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
+	// The shared roles repo (roles_repo) is cached as a bare clone beside the
+	// config snapshots, one per consuming repo.
+	sharedDir, err := repopath.Join(filepath.Join(home, ".ard", "roles-repo"), repo.String())
+	if err != nil {
+		return fmt.Errorf("ard serve: %w", err)
+	}
 	src, err := configsrc.New(configsrc.Options{
 		Git: gitx.New(""), RepoDir: clone, RemoteURL: d.RemoteURL, Token: d.Token,
-		CacheDir: cacheDir, Log: log,
+		CacheDir: cacheDir, SharedDir: sharedDir, Log: log,
 	})
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)

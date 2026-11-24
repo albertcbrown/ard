@@ -33,6 +33,7 @@ type rawConfig struct {
 	gitleaksPath           *string
 	gitleaksBlockAutoclose *bool // redact.gitleaks.block_autoclose_when_missing
 	sidecars               map[string]rawSidecar
+	rolesRepo              *rawSidecar
 	overrides              []rawOverrideRef
 }
 
@@ -130,6 +131,8 @@ func parseConfigDoc(doc *yaml.Node, cfgPath string) (rawConfig, Errors) {
 			errs = append(errs, raw.parseRedact(value, cfgPath)...)
 		case "sidecars":
 			errs = append(errs, raw.parseSidecars(value, cfgPath)...)
+		case "roles_repo":
+			errs = append(errs, raw.parseRolesRepo(value, cfgPath)...)
 		case "overrides":
 			errs = append(errs, raw.parseOverrides(value, cfgPath)...)
 		default:
@@ -334,6 +337,30 @@ func (raw *rawConfig) parseSidecars(n *yaml.Node, file string) Errors {
 		}
 		raw.sidecars[name] = sc
 	}
+	return errs
+}
+
+func (raw *rawConfig) parseRolesRepo(n *yaml.Node, file string) Errors {
+	var errs Errors
+	if n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return Errors{{File: file, Key: "roles_repo", Msg: "must be a mapping with repo and ref"}}
+	}
+	var rr rawSidecar
+	for j := 0; j < len(n.Content); j += 2 {
+		fkey, fval := n.Content[j], n.Content[j+1]
+		switch fkey.Value {
+		case "repo":
+			errs = append(errs, decodeValue(fval, file, "roles_repo.repo", &rr.repo)...)
+		case "ref":
+			errs = append(errs, decodeValue(fval, file, "roles_repo.ref", &rr.ref)...)
+		default:
+			errs = append(errs, &Error{File: file, Key: "roles_repo." + fkey.Value, Msg: "unknown key (want repo or ref)"})
+		}
+	}
+	raw.rolesRepo = &rr
 	return errs
 }
 

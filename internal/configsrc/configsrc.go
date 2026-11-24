@@ -7,6 +7,7 @@
 package configsrc
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/gitref"
 	"github.com/albertcbrown/ard/internal/gitx"
 )
 
@@ -30,6 +32,8 @@ type Git interface {
 	FetchRef(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error
 	RevParse(ctx context.Context, dir, ref string) (string, error)
 	ExportPaths(ctx context.Context, repoDir, sha, dest string, paths ...string) error
+	InitBare(ctx context.Context, dir string) error
+	FetchShallow(ctx context.Context, repoDir, url, refspec string, token gitx.TokenFunc) error
 }
 
 // Options configure a Source.
@@ -41,6 +45,11 @@ type Options struct {
 	Branch    string         // default "main"
 	CacheDir  string         // absolute; snapshots go in CacheDir/<sha>
 	Keep      time.Duration  // snapshot retention; default DefaultKeep
+	// SharedDir is the bare cache for the roles_repo fetch; absolute, outside
+	// CacheDir. Required only when the config sets roles_repo.
+	SharedDir string
+	// SharedURL maps "owner/name" to a clone URL; default GitHub over https.
+	SharedURL func(repo string) string
 	Now       func() time.Time
 	Log       *slog.Logger
 }
@@ -50,9 +59,10 @@ type Options struct {
 type Source struct {
 	o Options
 
-	mu  sync.Mutex
-	sha string
-	res *config.Resolved
+	mu   sync.Mutex
+	sha  string
+	snap string // directory name of the current snapshot under CacheDir
+	res  *config.Resolved
 }
 
 // New validates o, creates the cache directory and removes the partial
@@ -73,6 +83,9 @@ func New(o Options) (*Source, error) {
 	}
 	if o.Keep <= 0 {
 		o.Keep = DefaultKeep
+	}
+	if o.SharedURL == nil {
+		o.SharedURL = func(repo string) string { return "https://github.com/" + repo + ".git" }
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -115,57 +128,175 @@ func (s *Source) Load(ctx context.Context) (*config.Resolved, error) {
 		return nil, fmt.Errorf("config source: resolve %s: %w", o.Branch, err)
 	}
 	if s.res != nil && s.sha == sha {
-		return s.res, nil
+		if s.res.RolesRepo == nil {
+			return s.res, nil
+		}
+		// The local commit is unchanged, but a branch or tag of the shared
+		// repo may have moved.
+		rsha, err := s.fetchShared(ctx, *s.res.RolesRepo)
+		if err != nil {
+			return nil, err
+		}
+		if rsha == s.res.RolesSHA {
+			return s.res, nil
+		}
 	}
 
-	snap := filepath.Join(o.CacheDir, sha)
-	fresh := false
-	if _, err := os.Stat(snap); errors.Is(err, os.ErrNotExist) {
-		if err := s.export(ctx, sha, snap); err != nil {
-			return nil, fmt.Errorf("config at %.12s: %w", sha, err)
-		}
-		fresh = true
-	} else if err != nil {
+	name, fresh, rsha, err := s.publish(ctx, sha)
+	if err != nil {
 		return nil, fmt.Errorf("config at %.12s: %w", sha, err)
 	}
+	snap := filepath.Join(o.CacheDir, name)
 	res, err := config.Load(snap)
 	if err != nil {
 		// Wrap, so errors.As(err, &config.Errors{}) still works.
 		return nil, fmt.Errorf("config at %.12s: %w", sha, err)
 	}
 	res.SHA = sha
+	res.RolesSHA = rsha
 	// The superseded snapshot may still be a running job's role directory:
 	// stamp it so retention counts from now, not from when it was exported.
 	prev := s.res
-	if s.sha != "" && s.sha != sha {
+	if s.snap != "" && s.snap != name {
 		now := s.o.Now()
-		if err := os.Chtimes(filepath.Join(o.CacheDir, s.sha), now, now); err != nil {
-			o.Log.Warn("configsrc.stamp_failed", "sha", s.sha, "error", err)
+		if err := os.Chtimes(filepath.Join(o.CacheDir, s.snap), now, now); err != nil {
+			o.Log.Warn("configsrc.stamp_failed", "sha", s.snap, "error", err)
 		}
 	}
+	s.snap = name
 	s.sha, s.res = sha, res
 	if fresh {
 		// A job can run as long as its role's timeout, which may exceed Keep.
 		keep := max(o.Keep, longestTimeout(prev, res)+time.Hour)
-		s.prune(sha, keep)
+		s.prune(name, keep)
 	}
 	return res, nil
 }
 
-// export writes the source paths at sha into snap through a temporary
-// directory, so a crash never leaves a half-written snapshot under its final
-// name.
-func (s *Source) export(ctx context.Context, sha, snap string) error {
+// publish makes the snapshot for the local commit sha and returns its
+// directory name, whether it was newly written and the shared roles commit
+// ("" when the config has no roles_repo). The name is sha, or sha+<12 hex of
+// the shared commit>. The snapshot is built in a temporary directory,
+// validated and renamed into place, so a crash or an invalid shared role
+// never leaves a snapshot under its final name.
+func (s *Source) publish(ctx context.Context, sha string) (name string, fresh bool, rsha string, err error) {
+	plain := filepath.Join(s.o.CacheDir, sha)
+	if _, err := os.Stat(plain); err == nil {
+		return sha, false, "", nil // only a config without roles_repo is published under the bare sha
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", false, "", err
+	}
 	// A fixed name keeps error text stable across ticks (the status issue gets
 	// one comment per distinct error). s.mu and the leader lock serialise use.
-	tmp := snap + ".tmp-export"
+	tmp := plain + ".tmp-export"
 	_ = os.RemoveAll(tmp)
 	if err := s.o.Git.ExportPaths(ctx, s.o.RepoDir, sha, tmp, config.SourcePaths()...); err != nil {
+		return "", false, "", err
+	}
+	discard := func() { _ = os.RemoveAll(tmp) }
+	rr, err := config.SharedRoles(os.DirFS(tmp))
+	if err != nil || rr == nil {
+		if err != nil {
+			discard()
+			return "", false, "", err
+		}
+		if err := os.Rename(tmp, plain); err != nil {
+			discard()
+			return "", false, "", fmt.Errorf("publish snapshot: %w", err)
+		}
+		return sha, true, "", nil
+	}
+	if rsha, err = s.fetchShared(ctx, *rr); err != nil {
+		discard()
+		return "", false, "", err
+	}
+	name = sha + "+" + rsha[:12]
+	final := filepath.Join(s.o.CacheDir, name)
+	if _, err := os.Stat(final); err == nil {
+		discard()
+		return name, false, rsha, nil
+	}
+	if err := s.mergeShared(ctx, rsha, tmp); err != nil {
+		discard()
+		return "", false, "", err
+	}
+	if _, err := config.Load(tmp); err != nil {
+		discard()
+		return "", false, "", err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		discard()
+		return "", false, "", fmt.Errorf("publish snapshot: %w", err)
+	}
+	return name, true, rsha, nil
+}
+
+// fetchShared fetches the pinned ref of the shared roles repo into SharedDir
+// and returns its commit SHA.
+func (s *Source) fetchShared(ctx context.Context, rr config.Sidecar) (string, error) {
+	o := s.o
+	wrap := func(err error) error {
+		return fmt.Errorf("roles_repo %s@%s: %w", rr.Repo, cmp.Or(rr.Ref, "HEAD"), err)
+	}
+	if !filepath.IsAbs(o.SharedDir) {
+		return "", wrap(errors.New("no absolute SharedDir configured"))
+	}
+	if _, err := os.Stat(filepath.Join(o.SharedDir, "HEAD")); err != nil {
+		if err := o.Git.InitBare(ctx, o.SharedDir); err != nil {
+			return "", wrap(err)
+		}
+	}
+	const local = "refs/ard/roles"
+	ref := rr.Ref
+	if ref == "" {
+		ref = "HEAD" // the shared repo's default branch
+	}
+	if err := o.Git.FetchShallow(ctx, o.SharedDir, o.SharedURL(rr.Repo), "+"+ref+":"+local, o.Token); err != nil {
+		return "", wrap(err)
+	}
+	rsha, err := o.Git.RevParse(ctx, o.SharedDir, local)
+	if err != nil {
+		return "", wrap(err)
+	}
+	if gitref.IsSHA(rr.Ref) && rsha != rr.Ref {
+		return "", wrap(fmt.Errorf("fetched %s, want %s", rsha, rr.Ref))
+	}
+	return rsha, nil
+}
+
+// mergeShared copies each role directory of the shared commit rsha into dir
+// unless dir already has a directory of that kind and name: the local
+// directory wins whole, never file by file.
+func (s *Source) mergeShared(ctx context.Context, rsha, dir string) error {
+	ex := filepath.Join(s.o.CacheDir, filepath.Base(dir)+"-shared")
+	_ = os.RemoveAll(ex)
+	defer os.RemoveAll(ex)
+	if err := s.o.Git.ExportPaths(ctx, s.o.SharedDir, rsha, ex, config.SharedSourcePaths()...); err != nil {
+		return fmt.Errorf("roles_repo: %w", err)
+	}
+	kinds, err := os.ReadDir(filepath.Join(ex, ".ard"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, snap); err != nil {
-		_ = os.RemoveAll(tmp)
-		return fmt.Errorf("publish snapshot: %w", err)
+	for _, k := range kinds {
+		roles, err := os.ReadDir(filepath.Join(ex, ".ard", k.Name()))
+		if err != nil {
+			continue // a file, not a tree
+		}
+		for _, r := range roles {
+			dst := filepath.Join(dir, ".ard", k.Name(), r.Name())
+			if _, err := os.Lstat(dst); err == nil {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			if err := os.Rename(filepath.Join(ex, ".ard", k.Name(), r.Name()), dst); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
