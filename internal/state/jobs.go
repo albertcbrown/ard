@@ -692,6 +692,41 @@ func (s *Store) EndedSince(ctx context.Context, since time.Time) ([]Job, error) 
 	return collectJobs(rows, "ended")
 }
 
+// JobCounts counts ended jobs by outcome: Done is every ended job that is not
+// failed.
+type JobCounts struct{ Done, Failed int }
+
+// CountEndedSince counts the jobs that ended in [since, until), per (stage, role).
+func (s *Store) CountEndedSince(ctx context.Context, since, until time.Time) (map[RoleKey]JobCounts, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT stage, role, status, COUNT(*) FROM jobs
+		WHERE status != 'running' AND ended_at >= ? AND ended_at < ? GROUP BY stage, role, status`,
+		since.Unix(), until.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("count jobs ended in window: %w", err)
+	}
+	defer rows.Close()
+	out := map[RoleKey]JobCounts{}
+	for rows.Next() {
+		var k RoleKey
+		var status string
+		var n int
+		if err := rows.Scan(&k.Stage, &k.Role, &status, &n); err != nil {
+			return nil, fmt.Errorf("count ended jobs: %w", err)
+		}
+		c := out[k]
+		if status == string(StatusFailed) {
+			c.Failed += n
+		} else {
+			c.Done += n
+		}
+		out[k] = c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count ended jobs: %w", err)
+	}
+	return out, nil
+}
+
 func collectJobs(rows *sql.Rows, what string) ([]Job, error) {
 	defer rows.Close()
 	var out []Job

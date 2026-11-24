@@ -342,3 +342,35 @@ func TestLimitStopLinkage(t *testing.T) {
 		}
 	})
 }
+
+func TestCountEndedSince(t *testing.T) {
+	ctx := tctx(t)
+	s, c := newStoreClock(t, t.TempDir())
+	start := c.t
+	a := claim(t, s, "eng", 1)
+	if err := s.Complete(ctx, a.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	b := claim(t, s, "eng", 2)
+	if err := s.Fail(ctx, b.ID, "x", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	claim(t, s, "eng", 3) // running: excluded
+	c.add(time.Hour)
+	d := claim(t, s, "eng", 4)
+	if err := s.Complete(ctx, d.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.CountEndedSince(ctx, start, start.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total JobCounts
+	for _, n := range got {
+		total.Done += n.Done
+		total.Failed += n.Failed
+	}
+	if total != (JobCounts{Done: 1, Failed: 1}) {
+		t.Errorf("counts = %+v, want 1 done 1 failed (the job ending at until is excluded)", got)
+	}
+}
