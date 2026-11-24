@@ -1,4 +1,4 @@
-package local
+package workspace
 
 import (
 	"fmt"
@@ -10,33 +10,35 @@ import (
 )
 
 // repoDir is <root>/<kind>/<owner>/<repo>, lowercased and validated.
-func (l *Local) repoDir(kind, repo string) (string, error) {
-	return repopath.Join(filepath.Join(l.root, kind), repo)
+func (w *Workspace) repoDir(kind, repo string) (string, error) {
+	return repopath.Join(filepath.Join(w.root, kind), repo)
 }
 
 // WorktreePath is where a job's worktree lives.
-func (l *Local) WorktreePath(repo, jobID string) (string, error) {
-	d, err := l.repoDir("work", repo)
+func (w *Workspace) WorktreePath(repo, jobID string) (string, error) {
+	d, err := w.repoDir("work", repo)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(d, jobID), nil
 }
 
-func (l *Local) homePath(repo, jobID string) (string, error) {
-	d, err := l.repoDir("work", repo)
+// HomePath is where a job's home lives.
+func (w *Workspace) HomePath(repo, jobID string) (string, error) {
+	d, err := w.repoDir("work", repo)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(d, jobID+".home"), nil
 }
 
-func (l *Local) logDir(repo string, issue int) (string, error) {
+// LogDir is the directory holding a job's log files.
+func (w *Workspace) LogDir(repo string, issue int) (string, error) {
 	seg := "noissue"
 	if issue > 0 {
 		seg = strconv.Itoa(issue)
 	}
-	d, err := l.repoDir("logs", repo)
+	d, err := w.repoDir("logs", repo)
 	if err != nil {
 		return "", err
 	}
