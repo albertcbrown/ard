@@ -240,3 +240,163 @@ func TestReviewedHeads(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+// patchRepo builds a PR branch that edited a 40-line file, reviewed, with main
+// editing the other end of the file (or the same line when conflict is set).
+type patchRepo struct {
+	t   *testing.T
+	dir string
+	run func(args ...string) string
+	put func(path, body string)
+}
+
+func newPatchRepo(t *testing.T) *patchRepo {
+	_, dir := gittest.NewRemote(t)
+	r := &patchRepo{t: t, dir: dir}
+	r.run = func(args ...string) string { return strings.TrimSpace(gittest.Run(t, dir, args...)) }
+	r.put = func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r.run("add", path)
+	}
+	return r
+}
+
+func docBody(first, last string) string {
+	var sb strings.Builder
+	sb.WriteString(first + "\n")
+	for i := 0; i < 30; i++ {
+		sb.WriteString("line\n")
+	}
+	sb.WriteString(last + "\n")
+	return sb.String()
+}
+
+// setup returns the reviewed SHA; the PR edits the last line, main is left on
+// the main branch checked out.
+func (r *patchRepo) setup() string {
+	r.put("doc.md", docBody("a", "z"))
+	r.run("commit", "-q", "-m", "base")
+	r.run("checkout", "-q", "-b", "worker/eng-1-x")
+	r.put("doc.md", docBody("a", "PR"))
+	r.run("commit", "-q", "-m", "pr")
+	reviewed := r.run("rev-parse", "HEAD")
+	r.run("checkout", "-q", "main")
+	return reviewed
+}
+
+func (r *patchRepo) mainEdit(first string) {
+	r.run("checkout", "-q", "main")
+	body, _ := os.ReadFile(filepath.Join(r.dir, "doc.md"))
+	lines := strings.SplitN(string(body), "\n", 2)
+	r.put("doc.md", first+"\n"+lines[1])
+	r.run("commit", "-q", "-m", "main edit")
+}
+
+func (r *patchRepo) cover(reviewed string) (Cover, error) {
+	head := r.run("rev-parse", "HEAD")
+	base := r.run("merge-base", "main", head)
+	return CoversDetail(context.Background(), gitx.New(""), r.dir, reviewed, head, base, 1)
+}
+
+func TestCoversPatchEqualSharedFile(t *testing.T) {
+	r := newPatchRepo(t)
+	reviewed := r.setup()
+	r.mainEdit("main1")
+	r.run("checkout", "-q", "worker/eng-1-x")
+	r.run("merge", "-q", "--no-edit", "main")
+	c, err := r.cover(reviewed)
+	if err != nil || !c.OK || !reflect.DeepEqual(c.PatchEqual, []string{"doc.md"}) {
+		t.Fatalf("got %+v %v, want covered by patch id", c, err)
+	}
+	// A second clean update-branch merge.
+	r.mainEdit("main2")
+	r.run("checkout", "-q", "worker/eng-1-x")
+	r.run("merge", "-q", "--no-edit", "main")
+	if c, err = r.cover(reviewed); err != nil || !c.OK {
+		t.Fatalf("chain of merges: %+v %v", c, err)
+	}
+	// The PR changes the file again after the clean merge.
+	r.put("doc.md", docBody("main2", "PR2"))
+	r.run("commit", "-q", "-m", "again")
+	if c, err = r.cover(reviewed); err != nil || c.OK || !reflect.DeepEqual(c.Broken, []string{"doc.md"}) {
+		t.Fatalf("pr changes again: %+v %v", c, err)
+	}
+}
+
+func TestCoversConflictResolved(t *testing.T) {
+	r := newPatchRepo(t)
+	reviewed := r.setup()
+	r.run("checkout", "-q", "main")
+	r.put("doc.md", docBody("a", "MAIN"))
+	r.run("commit", "-q", "-m", "main edit")
+	r.run("checkout", "-q", "worker/eng-1-x")
+	r.run("merge", "-q", "--no-commit", "--no-ff", "-s", "ours", "main") // stands in for a conflicting merge
+	r.put("doc.md", docBody("a", "RESOLVED"))
+	r.run("commit", "-q", "-m", "merge resolved")
+	c, err := r.cover(reviewed)
+	if err != nil || c.OK || !reflect.DeepEqual(c.Broken, []string{"doc.md"}) {
+		t.Fatalf("conflict resolved: %+v %v", c, err)
+	}
+}
+
+func TestCoversHandEditInMerge(t *testing.T) {
+	r := newPatchRepo(t)
+	reviewed := r.setup()
+	r.mainEdit("main1")
+	r.run("checkout", "-q", "worker/eng-1-x")
+	r.run("merge", "-q", "--no-commit", "--no-ff", "main")
+	r.put("doc.md", docBody("main1", "HAND"))
+	r.run("commit", "-q", "-m", "merge with edit")
+	c, err := r.cover(reviewed)
+	if err != nil || c.OK || !reflect.DeepEqual(c.Broken, []string{"doc.md"}) {
+		t.Fatalf("hand edit: %+v %v", c, err)
+	}
+}
+
+type errPatchGit struct {
+	Git
+	mbErr, parErr, patchErr error
+}
+
+func (g errPatchGit) MergeBase(context.Context, string, string, string) (string, error) {
+	return "ob", g.mbErr
+}
+func (g errPatchGit) Parents(context.Context, string, string) ([]string, error) {
+	return []string{"rev", "main"}, g.parErr
+}
+func (g errPatchGit) PatchID(context.Context, string, string, string, string) (string, error) {
+	return "id", g.patchErr
+}
+
+func TestCoversPatchGitError(t *testing.T) {
+	boom := errors.New("boom")
+	fg := fakeGit{diffs: map[[2]string][]string{
+		{"rev", "head"}:  {"doc.md"},
+		{"base", "head"}: {"doc.md"},
+	}}
+	for name, g := range map[string]errPatchGit{
+		"ok":      {Git: fg},
+		"mb":      {Git: fg, mbErr: boom},
+		"parents": {Git: fg, parErr: boom},
+		"patch":   {Git: fg, patchErr: boom},
+	} {
+		c, err := CoversDetail(context.Background(), g, "", "rev", "head", "base", 1)
+		if name == "ok" {
+			if err != nil || !c.OK {
+				t.Errorf("%s: %+v %v", name, c, err)
+			}
+			continue
+		}
+		if err != boom || c.OK {
+			t.Errorf("%s: %+v %v, want boom and not covered", name, c, err)
+		}
+	}
+	// base "" never uses the rule.
+	c, err := CoversDetail(context.Background(), errPatchGit{Git: fg, patchErr: boom}, "", "rev", "head", "", 1)
+	if err != nil || c.OK || len(c.PatchEqual) != 0 {
+		t.Errorf("base empty: %+v %v", c, err)
+	}
+}
