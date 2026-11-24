@@ -1,2 +1,4 @@
 mkdocs==1.6.1
 mkdocs-material==9.5.50
+# certifi: GHSA-6q48-6c7w-9gw2 fixed in 2026.10.18
+certifi>=2026.10.18
