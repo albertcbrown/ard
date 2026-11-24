@@ -324,6 +324,9 @@ func (jb *job) execJob(id, ref string, timeout time.Duration) executor.Job {
 	if role.Dockerfile != "" {
 		ej.Dockerfile = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dockerfile))
 	}
+	if !role.Network {
+		ej.Network = executor.NetworkAdvisory
+	}
 	return ej
 }
 
@@ -630,6 +633,10 @@ func (jb *job) testLoop(ctx context.Context, head string) (res closeout.WorkerRe
 			return res, false
 		}
 		ej := jb.execJob(fmt.Sprintf("%st%d", jb.sj.ID, k), head, jb.remaining())
+		if !jb.role.Network {
+			// The test step carries no model credential, so Docker can enforce it.
+			ej.Network = executor.NetworkNone
+		}
 		tests := jb.role.Tests
 		ts, cause, stopped := jb.runStep(ctx, ej, func(executor.Handle) (executor.Command, error) {
 			return executor.Command{Path: "/bin/sh", Args: []string{"-c", tests}}, nil
