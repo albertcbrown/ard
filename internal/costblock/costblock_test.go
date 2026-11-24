@@ -269,3 +269,33 @@ func TestRenderExtremesStayValid(t *testing.T) {
 		t.Errorf("overflowing totals must render dashes:\n%s", b)
 	}
 }
+
+func TestTokensUnreportedRow(t *testing.T) {
+	tok := &Tokens{Input: 1, Output: 2, CacheWrite: 3, CacheRead: 4}
+	for _, tc := range []struct {
+		name string
+		row  Row
+		want string
+	}{
+		{"none", Row{Stage: "worker", Role: "eng", Run: 1, TokensUnreported: true, Outcome: "done"}, "| not reported |"},
+		{"partial", Row{Stage: "worker", Role: "eng", Run: 1, Tokens: tok, TokensUnreported: true, Outcome: "done"}, "cache w 3 / r 4 (partial) |"},
+	} {
+		block, _, ok := Render([]Row{tc.row}, MaxBlockBytes)
+		if !ok || !strings.Contains(block, tc.want) {
+			t.Fatalf("%s: ok=%v block=%q", tc.name, ok, block)
+		}
+		inner := strings.TrimSuffix(strings.TrimPrefix(block, Begin), End)
+		if !Valid(inner) {
+			t.Errorf("%s: Render output rejected by Valid", tc.name)
+		}
+		edited := strings.Replace(inner, "not reported", "not reported!", 1)
+		edited = strings.Replace(edited, "(partial)", "(partial) x", 1)
+		if edited != inner && Valid(edited) {
+			t.Errorf("%s: edited block accepted", tc.name)
+		}
+	}
+	block, _, _ := Render([]Row{{Stage: "worker", Role: "eng", Run: 1, Outcome: "done"}}, MaxBlockBytes)
+	if strings.Contains(block, "not reported") {
+		t.Error("unflagged row marked")
+	}
+}

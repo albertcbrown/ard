@@ -125,6 +125,14 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		errs = append(errs, &Error{File: cfgPath, Key: "budget_usd_per_day", Msg: fmt.Sprintf("must be greater than 0 (unlimited budgets are not allowed), got %g", res.BudgetUSDPerDay)})
 	}
 
+	if raw.tokensPerDay != nil {
+		if *raw.tokensPerDay <= 0 {
+			errs = append(errs, &Error{File: cfgPath, Key: "tokens_per_day", Msg: fmt.Sprintf("must be greater than 0, got %d", int64(*raw.tokensPerDay))})
+		} else {
+			res.TokensPerDay = int64(*raw.tokensPerDay)
+		}
+	}
+
 	if raw.maxBudgetUSD != nil {
 		res.MaxBudgetUSD = *raw.maxBudgetUSD
 	}

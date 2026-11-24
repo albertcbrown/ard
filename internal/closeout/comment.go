@@ -177,6 +177,9 @@ func RenderComment(r Record, repo github.Repo, dryRun bool) string {
 		lines = append(lines, "Skipped: "+strings.Join(parts, ", "))
 	}
 	lines = append(lines, workerLines(j)...)
+	if j.TokensUnreported {
+		lines = append(lines, "Tokens not reported: this job's token use is not counted, so the day's token count for this role is low.")
+	}
 	if out := outputLine(r, repo, dryRun); out != "" {
 		lines = append(lines, out)
 	}
