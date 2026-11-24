@@ -22,6 +22,7 @@ internal/modelauth/         picks the one model credential (OAuth token or API k
 internal/state/             SQLite controller and scanner state (sqlitex, scannerdb)
 internal/scanner/           scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
 internal/costblock/         the issue body's ard-owned cost block: render, strict parse, strip (admission), splice, per-issue Locks; leaf, stdlib only
+internal/tarball/          safe streaming tar.gz pack/unpack through os.Root; leaf, stdlib only
 internal/costs/             the costs Loop: writes each dirty issue's cost table from state; Claims() false so it runs while paused
 internal/scanner/stale/     the stale closer: a plain controller Loop that comments and closes untouched scanner issues
 internal/agentjob/          helpers the agent loops share: untrusted-input snapshot, admission re-check, agent command and executor job builders, handle save, shutdown-aware wait, post-once
