@@ -3,6 +3,7 @@ package configcmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
@@ -50,6 +52,7 @@ func writeRepo(t *testing.T, config string) string {
 }
 
 func TestCheckValid(t *testing.T) {
+	t.Setenv("ARD_AGENT_IMAGE", "") // unset keeps the host warning
 	root := writeRepo(t, "max_pods: 5\noverrides: {scanners/cve: {every: 6h}}\n")
 	e, stdout, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
 
@@ -62,14 +65,15 @@ func TestCheckValid(t *testing.T) {
 			t.Errorf("stdout missing %q:\n%s", want, out)
 		}
 	}
-	// The fixture's triage role has no Dockerfile, so the host warning is the
-	// only thing on stderr.
-	if want := local.HostRoleText("triage", "lead"); stderr.String() != want {
-		t.Errorf("stderr = %q, want only the host warning %q", stderr.String(), want)
+	// The fixture's triage role has no Dockerfile and network defaults to
+	// true, so the host and host-network warnings are all that is on stderr.
+	if want := local.HostRoleText("triage", "lead") + local.HostNetworkText("triage", "lead"); stderr.String() != want {
+		t.Errorf("stderr = %q, want only the host warnings %q", stderr.String(), want)
 	}
 }
 
 func TestCheckWarnsHostUntrustedAtErrorLevel(t *testing.T) {
+	t.Setenv("ARD_AGENT_IMAGE", "")
 	root := writeRepo(t, "max_pods: 5\n")
 	e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
 	var logs bytes.Buffer
@@ -81,8 +85,8 @@ func TestCheckWarnsHostUntrustedAtErrorLevel(t *testing.T) {
 		t.Errorf("logs = %q, want no warning at error level", logs.String())
 	}
 	out := stderr.String()
-	if n := strings.Count(out, "WARNING:"); n != 1 || !strings.Contains(out, `role "lead"`) {
-		t.Errorf("stderr = %q, want exactly one WARNING for role lead", out)
+	if n := strings.Count(out, "WARNING:"); n != 2 || !strings.Contains(out, `role "lead"`) {
+		t.Errorf("stderr = %q, want a host and a network WARNING for role lead", out)
 	}
 }
 
@@ -101,8 +105,8 @@ func TestCheckWarnsHostUntrusted(t *testing.T) {
 	if n := strings.Count(logs, "executor.host_untrusted"); n != 1 || !strings.Contains(logs, "role=lead") || strings.Contains(logs, "role=cve") {
 		t.Errorf("logs = %q, want one warning for lead only", logs)
 	}
-	if n := strings.Count(errs, "WARNING:"); n != 1 {
-		t.Errorf("stderr = %q, want one warning", errs)
+	if n := strings.Count(errs, "WARNING:"); n != 2 || !strings.Contains(errs, "ARD_GITHUB_PRIVATE_KEY_FILE") {
+		t.Errorf("stderr = %q, want host and network warnings", errs)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".ard", "triage", "lead", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -369,5 +373,42 @@ func TestCheckWarnsWhenEveryReviewerIsGated(t *testing.T) {
 				t.Errorf("warning present = %v, want %v; stderr: %s", got, tt.want, stderr.String())
 			}
 		})
+	}
+}
+
+func TestCheckAgentImage(t *testing.T) {
+	root := writeRepo(t, "max_pods: 5\n")
+	run := func() (error, string, string) {
+		e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+		var logs bytes.Buffer
+		e.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		err := Check(context.Background(), e, cli.ConfigCheckOpts{})
+		return err, logs.String(), stderr.String()
+	}
+	t.Setenv("ARD_AGENT_IMAGE", "ard-agent:dev")
+	if err, _, _ := run(); err == nil || !errors.Is(err, executor.ErrImageRef) {
+		t.Errorf("tag ref: err = %v, want ErrImageRef", err)
+	}
+	t.Setenv("ARD_AGENT_IMAGE", "sha256:0123456789ab")
+	err, logs, errs := run()
+	if err != nil {
+		t.Fatalf("valid ref: %v", err)
+	}
+	if strings.Contains(logs, "executor.host_untrusted") || strings.Contains(errs, "WARNING:") {
+		t.Errorf("covered roles warned: logs %q stderr %q", logs, errs)
+	}
+}
+
+func TestCheckNetworkFalseNoNetworkWarning(t *testing.T) {
+	root := writeRepo(t, "max_pods: 5\noverrides: {triage/lead: {network: false}}\n")
+	e, stdout, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+	if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got, want := stderr.String(), local.HostRoleText("triage", "lead"); got != want {
+		t.Errorf("stderr = %q, want only the host warning", got)
+	}
+	if !strings.Contains(stdout.String(), "network: false (advisory, host)") {
+		t.Errorf("stdout lacks the advisory suffix:\n%s", stdout.String())
 	}
 }

@@ -33,6 +33,9 @@ func TestValidate(t *testing.T) {
 		{"worker history", func(j *Job) { j.Stage = "worker"; j.History = true }, false},
 		{"review history", func(j *Job) { j.Stage = "review"; j.History = true }, false},
 		{"triage trusted input", func(j *Job) { j.Stage = "triage"; j.TrustedInput = true }, false},
+		{"network advisory", func(j *Job) { j.Network = NetworkAdvisory }, true},
+		{"network none", func(j *Job) { j.Network = NetworkNone }, true},
+		{"network bogus", func(j *Job) { j.Network = "bogus" }, false},
 		{"zero timeout", func(j *Job) { j.Timeout = 0 }, false},
 		{"relative repodir", func(j *Job) { j.RepoDir = "r" }, false},
 		{"relative roledir", func(j *Job) { j.RoleDir = "role" }, false},
@@ -79,6 +82,20 @@ func TestTerminal(t *testing.T) {
 	for s, want := range map[State]bool{Prepared: false, Running: false, Orphaned: false, Exited: true, TimedOut: true, Gone: true} {
 		if s.Terminal() != want {
 			t.Errorf("%s", s)
+		}
+	}
+}
+
+func TestCheckImageRef(t *testing.T) {
+	d := strings.Repeat("a1", 32)
+	for _, ok := range []string{"x/y@sha256:" + d, "sha256:0123456789ab", "sha256:" + d} {
+		if err := CheckImageRef(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "ard-agent:dev", "-x", "a b", "x@sha256:abc", "x@sha256:" + strings.Repeat("g", 64), "sha256:abc", "-v/x@sha256:" + d, "x\n@sha256:" + d} {
+		if err := CheckImageRef(bad); !errors.Is(err, ErrImageRef) {
+			t.Errorf("%q: %v", bad, err)
 		}
 	}
 }

@@ -130,6 +130,7 @@ type Role struct {
 	Model   string        // optional
 	Timeout time.Duration // default 30m
 	Sidecar string        // key in Resolved.Sidecars; "" = none
+	Network bool          // default true; false is advisory in this part
 
 	// Scanner only.
 	Every     time.Duration // default Intervals.Scanners
@@ -247,8 +248,13 @@ func (r *Resolved) RoleBudgetUSDPerDay(role Role) (cap float64, set bool) {
 // Dockerfile, so the local executor runs them as a host subprocess under the
 // controller's uid. Canonical order (kind, then name). It returns nothing
 // when Executor is "k8s", where host mode does not exist.
-func (r *Resolved) HostUntrusted() []Role {
-	if r.Executor == "k8s" {
+func (r *Resolved) HostUntrusted() []Role { return r.HostUntrustedWith(false) }
+
+// HostUntrustedWith is HostUntrusted for a host that sets ARD_AGENT_IMAGE:
+// every role that reads untrusted input then runs under Docker (its own
+// Dockerfile, or the default agent image), so none runs on the host.
+func (r *Resolved) HostUntrustedWith(agentImage bool) []Role {
+	if r.Executor == "k8s" || agentImage {
 		return nil
 	}
 	var out []Role
