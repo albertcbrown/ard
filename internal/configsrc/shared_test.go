@@ -265,3 +265,21 @@ func TestNoRolesRepoUnchanged(t *testing.T) {
 		t.Fatalf("Load = %+v, %v", res, err)
 	}
 }
+
+// An omitted ref follows the shared repo's default branch, whatever its name.
+func TestSharedDefaultBranchMaster(t *testing.T) {
+	shared, e := newEnv(t), newEnv(t)
+	shared.push(map[string]string{".ard/triage/lead/prompt.txt": "on master\n"})
+	gittest.Run(t, shared.bare, "branch", "-m", "main", "master")
+	gittest.Run(t, shared.bare, "symbolic-ref", "HEAD", "refs/heads/master")
+	e.push(map[string]string{".ard/config.yaml": rolesCfg})
+	e.withShared(shared)
+	res, err := e.source.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, ok := res.Role(config.KindTriage, "lead")
+	if !ok || readFile(t, filepath.Join(res.Repo, lead.PromptPath)) != "on master\n" {
+		t.Error("shared role from the master default branch not loaded")
+	}
+}

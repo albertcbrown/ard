@@ -48,7 +48,7 @@ func TestSharedRoles(t *testing.T) {
 		t.Errorf("key absent = %v, %v", sc, err)
 	}
 	sc, err := SharedRoles(cfg("roles_repo: {repo: a/b}\n"))
-	if err != nil || sc == nil || sc.Repo != "a/b" || sc.Ref != "main" {
+	if err != nil || sc == nil || sc.Repo != "a/b" || sc.Ref != "" {
 		t.Errorf("default ref = %v, %v", sc, err)
 	}
 	sc, err = SharedRoles(cfg("roles_repo: {repo: a/b, ref: v1}\n"))

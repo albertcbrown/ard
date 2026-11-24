@@ -7,6 +7,7 @@
 package configsrc
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -235,7 +236,7 @@ func (s *Source) publish(ctx context.Context, sha string) (name string, fresh bo
 func (s *Source) fetchShared(ctx context.Context, rr config.Sidecar) (string, error) {
 	o := s.o
 	wrap := func(err error) error {
-		return fmt.Errorf("roles_repo %s@%s: %w", rr.Repo, rr.Ref, err)
+		return fmt.Errorf("roles_repo %s@%s: %w", rr.Repo, cmp.Or(rr.Ref, "HEAD"), err)
 	}
 	if !filepath.IsAbs(o.SharedDir) {
 		return "", wrap(errors.New("no absolute SharedDir configured"))
@@ -246,7 +247,11 @@ func (s *Source) fetchShared(ctx context.Context, rr config.Sidecar) (string, er
 		}
 	}
 	const local = "refs/ard/roles"
-	if err := o.Git.FetchShallow(ctx, o.SharedDir, o.SharedURL(rr.Repo), "+"+rr.Ref+":"+local, o.Token); err != nil {
+	ref := rr.Ref
+	if ref == "" {
+		ref = "HEAD" // the shared repo's default branch
+	}
+	if err := o.Git.FetchShallow(ctx, o.SharedDir, o.SharedURL(rr.Repo), "+"+ref+":"+local, o.Token); err != nil {
 		return "", wrap(err)
 	}
 	rsha, err := o.Git.RevParse(ctx, o.SharedDir, local)

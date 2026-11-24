@@ -97,7 +97,7 @@ type Intake struct {
 // Sidecar is a read-only companion repo mounted into a role's job.
 type Sidecar struct {
 	Repo string // "owner/name"
-	Ref  string // branch, tag or full 40-hex SHA; default "main"
+	Ref  string // branch, tag or full 40-hex SHA; sidecars default "main"; roles_repo empty = remote HEAD
 }
 
 // When gates a reviewer: a nil When means the reviewer runs on every PR.

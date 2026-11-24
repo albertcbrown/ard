@@ -48,9 +48,6 @@ func SharedRoles(fsys fs.FS) (*Sidecar, error) {
 		return nil, nil
 	}
 	sc := &Sidecar{Repo: v.RolesRepo.Repo, Ref: v.RolesRepo.Ref}
-	if sc.Ref == "" {
-		sc.Ref = defaultSidecarRef
-	}
 	return sc, nil
 }
 
