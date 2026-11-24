@@ -62,6 +62,9 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 		"--label", "ard.stage=" + h.Stage,
 		"--label", "ard.role=" + h.Role,
 	}
+	if h.Network == executor.NetworkNone {
+		a = append(a, "--network", "none")
+	}
 	work := h.Worktree + ":/work"
 	if h.ReadOnly {
 		work += ":ro"

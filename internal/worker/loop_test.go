@@ -1326,3 +1326,50 @@ func TestReadingRecordedOncePerStep(t *testing.T) {
 		t.Errorf("reading recorded %d times, want 1", sink.n)
 	}
 }
+
+func TestNetworkPerStep(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		network       bool
+		test, notTest executor.Network
+	}{
+		{"false", false, executor.NetworkNone, executor.NetworkAdvisory},
+		{"true", true, executor.NetworkOn, executor.NetworkOn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.cfg.Roles[0].Network = tc.network
+			n := h.issue("Crash")
+			tk := 0
+			h.ex.run = func(kind string, j executor.Job, hd executor.Handle) int {
+				if kind == "test" {
+					tk++
+					if tk == 1 {
+						return 1
+					}
+					return 0
+				}
+				writeFile(t, hd.Worktree, "hello.txt", "x"+kind)
+				writeFile(t, hd.Worktree, fmt.Sprintf(".ard/%d/worker-engineer.md", n), roleDone)
+				return 0
+			}
+			h.mustTick()
+			var tests, others int
+			for _, j := range h.ex.jobs {
+				want := tc.notTest
+				if kindOf(j.ID) == "test" {
+					want = tc.test
+					tests++
+				} else {
+					others++
+				}
+				if j.Network != want {
+					t.Errorf("job %s (%s): Network = %q, want %q", j.ID, kindOf(j.ID), j.Network, want)
+				}
+			}
+			if tests != 2 || others < 2 {
+				t.Errorf("tests=%d others=%d", tests, others)
+			}
+		})
+	}
+}

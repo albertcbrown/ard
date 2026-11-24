@@ -18,6 +18,8 @@ type CostFacts struct {
 	// Synthetic is true for a dry-run close-out: nothing reached GitHub, so
 	// there is nothing to link to.
 	Synthetic bool
+	// TokensUnreported: the job ended without reporting tokens.
+	TokensUnreported bool
 }
 
 // FactsOf decodes the stored close-out record of a closed job. It is an error
@@ -31,7 +33,7 @@ func FactsOf(sj state.Job) (CostFacts, error) {
 		return CostFacts{}, fmt.Errorf("closeout job %s: facts: phase %q is not closed", sj.ID, rec.Phase)
 	}
 	f := CostFacts{Outcome: rec.Plan.Outcome, Cause: rec.Job.Cause.Kind, ExitCode: rec.Job.ExitCode,
-		PR: rec.Job.PR, CommentID: rec.CommentID, ReviewMode: rec.ReviewMode, Synthetic: rec.Synthetic}
+		PR: rec.Job.PR, CommentID: rec.CommentID, ReviewMode: rec.ReviewMode, Synthetic: rec.Synthetic, TokensUnreported: rec.Job.TokensUnreported}
 	if f.PR == 0 && rec.Job.Worker != nil {
 		f.PR = rec.Job.Worker.PR
 	}

@@ -85,6 +85,9 @@ func TestRunArgv(t *testing.T) {
 		{"readonly", func(h *executor.Handle) { h.ReadOnly = true }, false,
 			[]string{"/root-secret/work/o-r/J1:/work:ro"}, nil},
 		{"stdin", func(*executor.Handle) {}, true, []string{"-i"}, nil},
+		{"network none", func(h *executor.Handle) { h.Network = executor.NetworkNone }, false, []string{"--network none"}, nil},
+		{"network advisory", func(h *executor.Handle) { h.Network = executor.NetworkAdvisory }, false, nil, []string{"--network"}},
+		{"network on", func(h *executor.Handle) { h.Network = executor.NetworkOn }, false, nil, []string{"--network"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

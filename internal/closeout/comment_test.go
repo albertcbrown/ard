@@ -115,3 +115,17 @@ func TestSanitize(t *testing.T) {
 		}
 	}
 }
+
+func TestCommentTokensUnreported(t *testing.T) {
+	repo := github.Repo{Owner: "o", Name: "r"}
+	job := Job{ID: "01JTEST", Issue: 7, Stage: StageTriage, Role: "lead", Attempt: 1}
+	r := Record{Job: job, Plan: Plan{Outcome: OutcomeDone, Summary: "ok"}}
+	if got := RenderComment(r, repo, false); strings.Contains(got, "Tokens not reported") {
+		t.Errorf("unmarked job has the line:\n%s", got)
+	}
+	r.Job.TokensUnreported = true
+	got := RenderComment(r, repo, false)
+	if n := strings.Count(got, "Tokens not reported"); n != 1 {
+		t.Errorf("line appears %d times:\n%s", n, got)
+	}
+}
