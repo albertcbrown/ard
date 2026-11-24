@@ -1,35 +1,41 @@
 ---
 role: eng-review
 status: done
-attempt: 1
-verdict: approve
+attempt: 2
+verdict: changes
 findings:
+  - file: "docs/site/configuration.md"
+    line: 241
+    severity: medium
+    blocking: true
+    message: |
+      The documented defaults for `diff_warn_lines` (1000) and `diff_max_lines` (2000) are wrong after the merge of main (#311).
+      internal/config/defaults.go:44-45 now sets 2000 and 3000, so the reference misstates the limits a worker is held to.
+      Update lines 241 and 242 to 2000 and 3000. The drift test checks key names only, not defaults, so it will not catch this.
+  - file: "docs/site/roles.md"
+    line: 540
+    severity: low
+    message: |
+      The write allowlist text refers to `diff_max_lines` without a value, so it stays correct. No change needed beyond the defaults fix in configuration.md.
   - file: "internal/config/keys.go"
     line: 8
     severity: low
     message: |
-      Keys() is a hand-written list, not derived by reflection from the yaml tags as plan.md step 1 described.
-      TestKeysCoverRenderedConfig does guard it against the render structs, but it does not check keys the raw.go parser
-      accepts that are never rendered, such as `overrides`. A key added only to the parser would not fail the test.
-      Consider also checking against the parser's accepted keys.
+      Still present from the last round. Keys() is a hand-written list. A key added only to the raw.go parser, such as `overrides`, would not fail the test.
   - file: "internal/docscheck/docscheck.go"
     line: 73
     severity: low
     message: |
-      Fenced commands with `\` line continuations are not joined, so flags on continuation lines are never checked.
-      plan.md listed this as an edge case. It does not give wrong results today, because the docs use no continuations,
-      but the check silently skips such flags.
-  - file: "mkdocs.yml"
-    line: 1
-    severity: info
-    message: |
-      The CI workflow is a human follow-up (docs/runbooks/pages-setup.md), so the issue's requirement that CI fails on
-      a broken site is not enforced until a maintainer adds it. This matches plan.md step 8.
+      Still present. Fenced commands with `\` continuations are not joined, so flags on continuation lines go unchecked.
 ---
-The change matches plan.md. It adds the docs site, the MkDocs config, the drift checks and the move of the Gate 2 runbook. The new tests pass and cover the new code. Approved, with two small non-blocking gaps.
+The change matches plan.md and its tests pass. It needs changes for one reason: after the merge of main, the documented `diff_warn_lines` and `diff_max_lines` defaults (1000 and 2000) no longer match the code (2000 and 3000).
 
 ## Checks
-- Lint: `make lint` runs `go vet ./...`. It reports one parse error, in `internal/roles/testdata/docs/skips/src/_x.go`, a file this change did not touch. Nothing on the changed files.
-- Diff coverage: `go test -cover` on `internal/docscheck`, `internal/cli` and `internal/config` passes. `CommandPaths` and `Keys` are at 100%, and `docscheck.go` functions are at 94-97%.
+- Lint: `make lint` was not re-run. In the previous round it reported only a parse error in an untouched fixture. Since then the only change is the merge of main.
+- Tests: `go test` on `internal/docscheck`, `internal/cli` and `internal/config` passes.
 - `mkdocs build --strict` was skipped because mkdocs is not installed here.
-- No stale references to `runbooks/gate-2` remain in the repository.
+
+## Previous findings
+- internal/config/keys.go: still present (low, non-blocking).
+- internal/docscheck/docscheck.go: still present (low, non-blocking).
+- mkdocs.yml: still present as info. The CI workflow remains a human step, per plan.md.
