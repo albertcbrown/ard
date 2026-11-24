@@ -69,3 +69,29 @@ func (g *Git) MergeBase(ctx context.Context, repoDir, a, b string) (string, erro
 	}
 	return strings.TrimSpace(out), nil
 }
+
+// IsAncestor reports whether commit a is an ancestor of (or equal to) b. Exit
+// status 1 of git merge-base --is-ancestor is false, not an error.
+func (g *Git) IsAncestor(ctx context.Context, repoDir, a, b string) (bool, error) {
+	_, _, err := g.run(ctx, repoDir, nil, "", nil, "--git-dir="+gitDirOf(repoDir), "merge-base", "--is-ancestor", a, b)
+	if err == nil {
+		return true, nil
+	}
+	if isExit(err, 1) {
+		return false, nil
+	}
+	return false, fmt.Errorf("gitx: merge-base --is-ancestor %s %s: %w", a, b, err)
+}
+
+// Parents returns the parent commits of rev: two or more for a merge.
+func (g *Git) Parents(ctx context.Context, repoDir, rev string) ([]string, error) {
+	out, _, err := g.run(ctx, repoDir, nil, "", nil, "--git-dir="+gitDirOf(repoDir), "rev-list", "--parents", "-n", "1", rev)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: parents of %s: %w", rev, err)
+	}
+	f := strings.Fields(out)
+	if len(f) == 0 {
+		return nil, nil
+	}
+	return f[1:], nil
+}
