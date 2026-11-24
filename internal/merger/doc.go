@@ -30,7 +30,7 @@
 //     ran on this branch (its id becomes the Ard-Job trailer). Otherwise the PR
 //     gets ard:needs-human.
 //  3. Conflict: only a computed mergeable=false or mergeable_state dirty is a
-//     conflict (ard:needs-human, until #41). A null or unknown mergeable, and
+//     conflict (ard:needs-human; with Deps.Rounds set, a conflict round is requested instead). A null or unknown mergeable, and
 //     a 405 "not mergeable" from the merge call, are GitHub still computing and
 //     mean retry next tick: never a label.
 //  4. Up to date: the branch is behind when main changed outside
