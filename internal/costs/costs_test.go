@@ -435,3 +435,25 @@ func TestExitCodeOutOfRangeFallsBack(t *testing.T) {
 		}
 	}
 }
+
+func TestRowMarksUnreportedTokens(t *testing.T) {
+	e := newEnv(t, nil)
+	n := e.gh.SeedIssue(github.Issue{Title: "t", Body: human})
+	marked := doneRec(1)
+	marked.Job.TokensUnreported = true
+	e.closeJob(jobOpt{stage: "triage", role: "lead", issue: n, rec: marked})
+	e.closeJob(jobOpt{stage: "worker", role: "engineer", issue: n, rec: doneRec(2),
+		usage: &state.StepUsage{Tokens: &state.Tokens{Input: 1, Output: 2}, CostUSD: fp(1)}})
+	rows, err := e.loop.rows(e.ctx, n, slog.New(slog.DiscardHandler))
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows = %+v, %v", rows, err)
+	}
+	if !rows[0].TokensUnreported || rows[1].TokensUnreported {
+		t.Errorf("marks = %v, %v", rows[0].TokensUnreported, rows[1].TokensUnreported)
+	}
+	e.tick()
+	b := e.body(n)
+	if !strings.Contains(b, "| triage:lead | not reported |") || strings.Count(b, "not reported") != 1 {
+		t.Errorf("body:\n%s", b)
+	}
+}
