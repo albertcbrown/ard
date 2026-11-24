@@ -1,0 +1,38 @@
+# Plan for #312
+
+## Implementation
+
+Docs only: edit `docs/proposal.md`, no Go code, no new file (the owner said the proposal plus the decision comment on this issue are the record). The worker must match on text, not line numbers, since they have drifted. Source of the content: the design comment (decisions 1-12), the gaps comment, and the owner's answers on this issue. Where the owner's answers differ from the earlier plan comment, the owner's answers win.
+
+### Steps
+
+1. **Lock mentions.** In "Claims need a single owner", replace "a Kubernetes Lease in-cluster" with: `flock` in both modes; in-cluster the lock file is on the `-home` PVC, which is `ReadWriteOncePod`, with `replicas: 1` and the `Recreate` strategy (decision 9). In "Where it runs", replace "a Lease lock in place of the `flock`" with "the same `flock` on a `ReadWriteOncePod` volume".
+2. **Retries paragraph.** Keep "node eviction under Kubernetes" and name its cause `evicted` (transient; gap 4: new `Status.Transient` and `closeout.CauseEvicted` come in later parts, say so).
+3. **Executors table, Kubernetes column** (keep 3 columns per row; the Labels and Good for rows stay):
+   - Workspace: the same prepared worktree as local, packed into a tarball that the pod fetches from the job API into an `emptyDir` with `sizeLimit`; the result is pushed back as a full tree.
+   - Runtime: a bare Pod (no Job object): init container `fetch`, agent container under `ard job-exec`, and a plain second container `upload` that waits for the done marker, uploads and exits (not a native sidecar, so no Kubernetes 1.29+ minimum); default `ard-agent` image; hard timeout.
+   - Heartbeat: the controller follows `pods/log` into the host log; log mtime.
+   - Logs: followed into `~/.ard/logs/...`; stdout from the tee file shipped in the result.
+4. **New paragraph "Kubernetes-executor details"** right after the table, same style as "Local-executor details". Cover: the flow; decisions 1-8 and 10-12 (volume, push result, pod shape and key isolation, key lifecycle, exit code from the kubelet and `Gone` never `Exited` 0, untar rules, listener, logs and heartbeat, cluster, REST client without client-go, images); the pod paths `/job`, `/work`, `/role`, `/sidecar`, `/ard-config`, `/ard-out`, `/ard-bin`; the result layout (input roots `work/ role/ config/ sidecar/`, result roots `work/ out/`, stdout at `out/stdout` outside `work/`; gap 2); the deadline arithmetic (gap 13: `h.Deadline = Start + Timeout`, job-exec deadline `h.Deadline - min(2m, Timeout/10)`, pod `activeDeadlineSeconds = Timeout + UploadGrace` (2 min), key revoked at `Deadline + UploadGrace`, job-exec exits 124 which maps to `TimedOut`); the exit code stored in `<id>.done` at accept (gap 14); upload grace for the `upload` container; pod name limit (`ard-<id>` at most 63, ids over 59 rejected, lowercased ids; gap 12); `job-exec` reaps orphans as PID 1 (gap 18); handles of the other executor kind report `Gone` (gap 15); orphan-pod sweep scoped by an `ard/repo` hash label (gap 16); default input size limits agreeing with the `emptyDir` `sizeLimit` (gap 19, name the defaults as "from the tarball limits plus the job resources flags"); the executor is not an effect. State the owner's answers: TLS option A (self-signed ECDSA P-256 cert generated in memory at `ard serve` start, SAN the Service DNS name, SHA-256 of the leaf pinned in each per-job Secret as `fingerprint`, verified with `VerifyConnection`; restart rotates it); `--job-api-tls=self-signed|off`, `off` only under dry-run (mark this flag as planned for part 4); cluster settings (jobs namespace, API address, images) are `ard serve` flags set by the chart, not `.ard/config.yaml` (gap 6: the executor is fixed at startup, a later config with a different `executor` is a config error until restart); the agent image is public under `ghcr.io/albertcbrown/ard` and must hold no secrets (an image test checks this); #317 is split into the API layer and the executor.
+5. **Job TTL sentence.** Replace "the Kubernetes `Job` gets a short TTL" with: a Kubernetes job's pod and per-job Secret are deleted (no Job object, no TTL).
+6. **Configuration section.** (a) Dockerfile bullet: under `executor: k8s` every role runs the default `ard-agent` image and a role `Dockerfile` is ignored until in-cluster builds exist (own issue); name the affected starter roles, i.e. the scanners `cve`, `docs`, `error-codes`, `lint`, `missing-tests`, `trufflehog` (`internal/roles/scanners/*/Dockerfile`) and any worker whose tests need a toolchain, and say the rollout must either put their tools in the public image or keep them off under k8s (gap 7). (b) Config yaml: `executor: local # local | k8s; fixed at startup`; add one sentence after the block saying cluster settings are `ard serve` flags set by the chart.
+7. **Guardrails.** Replace the egress clause "in Kubernetes a network policy limits egress to the model API and package registries" with: in Kubernetes job egress is DNS, the job API and the internet minus private ranges and 169.254.169.254 (matching the #276 posture). Add four bullets after that bullet: **Job API key** (decision 4), **Job API listener** (decision 7 plus TLS option A), **Result untar is the boundary** (decision 6), **Cluster** (decision 10). The Cluster bullet lists the residual risks: the model credential sits in a per-job Secret in etcd, so it relies on etcd encryption at rest (gap 17); the tee'd stdout is agent-writable, so the agent can forge its own usage figures, the same exposure local Docker has today, accepted by the owner, exit code still from the kubelet, revisit when split log streams are available (gap 1); pod egress reaches the whole internet; Pod Security `restricted` relies on the cluster's admission. Drop the "key added to the redaction set by value" requirement from the text of decision 4 or mark it not planned (gap 5), and say so in the Open questions entry.
+8. **Open questions.** Append `- [x] **Kubernetes executor (#54).**` with a one-paragraph decided summary linking #54, the design comment and #312, plus the owner's answers. Add one unchecked `- [ ]` entry for each gap the owner has not settled: gap 5 (redaction of the key), gap 3 now moot under the plain upload container (record the grace period instead), gap 11 (worktree registration after the swap: prune versus export tree), gap 15/16 only if the details paragraph does not already decide them. Gaps 1, 4, 6, 13 and the owner's five answers are recorded as decided.
+9. No change to `docs/layout.md`. The Delivery "Agent image" bullet says the image "is never published". Leave that sentence for #320 (the owner assigned the change there), but add to the details paragraph that the k8s agent image will be public, so the two are not read as a contradiction; the worker notes the pending conflict in its PR.
+
+### Test plan
+
+No Go code; run `make lint test` (must stay green). Checks:
+- `grep -n "Lease\|short TTL\|Kubernetes \`Job\`" docs/proposal.md` finds nothing.
+- `grep -n "native sidecar" docs/proposal.md` appears only to say it is not used.
+- Every row of the Executors table still has 3 cells.
+- Links resolve only to issues #54 and #312 and the design comment URL.
+- No remaining statement that egress is limited to the model API and package registries.
+
+### Risk
+
+Low. Docs only; no protected path (`docs/proposal.md` is not in `merge.protected_paths`), no interfaces, no migration. The only risk is drift: later parts are planned against these answers (TLS A, plain upload container, stdout from the tee file, executor fixed at startup, `evicted` cause).
+
+### Size
+
+S to M: about 100-140 changed lines, but the paragraphs are long single lines, so the diff may count more. File touched: `docs/proposal.md`.
