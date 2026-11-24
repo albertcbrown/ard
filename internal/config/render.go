@@ -86,6 +86,7 @@ type roleYAML struct {
 	Dir        string   `yaml:"dir"`
 	Prompt     string   `yaml:"prompt,omitempty"`
 	Scan       string   `yaml:"scan,omitempty"`
+	Aid        string   `yaml:"aid,omitempty"`
 	Dockerfile string   `yaml:"dockerfile,omitempty"`
 	Extra      []string `yaml:"extra,omitempty"`
 
@@ -169,6 +170,7 @@ func (r *Resolved) render() resolvedYAML {
 			Dir:             role.Dir,
 			Prompt:          role.PromptPath,
 			Scan:            role.ScanPath,
+			Aid:             role.AidPath,
 			Dockerfile:      role.Dockerfile,
 			Extra:           role.Extra,
 			Agent:           role.Agent,

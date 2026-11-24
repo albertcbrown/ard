@@ -35,6 +35,50 @@ type ReviewContext struct {
 	// the commit the review pinned. An approve is then not a pass: the review
 	// is posted but no label says done, so the request stays and runs again.
 	HeadMoved bool
+	// HasAid is set when the role has an aid script. Only then do AidFailed
+	// and Injected apply.
+	HasAid bool `json:",omitempty"`
+	// AidFailed is why the aid failed, timed out or produced invalid output;
+	// "" when it ran cleanly. A review whose aid failed cannot approve.
+	AidFailed string `json:",omitempty"`
+	// Injected holds findings ard adds in code (a gitleaks hit on an added
+	// line). The agent cannot drop them, and an approve that leaves them out
+	// becomes changes.
+	Injected []Finding `json:",omitempty"`
+}
+
+// aidAdjust applies the aid rules to a review: the findings ard injected are
+// added to fs unless the agent already reported that line, and an approve
+// becomes changes when the aid failed or a finding was injected. It returns
+// the findings, the verdict and a note ("" when nothing changed).
+func aidAdjust(rc *ReviewContext, verdict string, fs []Finding) ([]Finding, string, string) {
+	if rc == nil || !rc.HasAid {
+		return fs, verdict, ""
+	}
+	for _, in := range rc.Injected {
+		dup := false
+		for _, f := range fs {
+			if f.File == in.File && f.Line == in.Line && strings.HasPrefix(strings.TrimSpace(f.Message), "[secret]") {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			fs = append(fs, in)
+		}
+	}
+	note := ""
+	if verdict == VerdictApprove {
+		switch {
+		case len(rc.Injected) > 0:
+			verdict, note = VerdictChanges, "ard found a secret in the added lines with a pinned tool, so this review cannot approve."
+		case rc.AidFailed != "":
+			verdict, note = VerdictChanges, "The pre-review aid did not complete ("+rc.AidFailed+"), so this review cannot approve."
+		}
+	} else if rc.AidFailed != "" && verdict == VerdictChanges {
+		note = "The pre-review aid did not complete (" + rc.AidFailed + ")."
+	}
+	return fs, verdict, note
 }
 
 // ReviewPlan is the PR review close-out posts for a review job that reached a
@@ -44,9 +88,11 @@ type ReviewPlan struct {
 	Verdict   string // after any downgrade
 	// Downgraded: the role file said approve but carried a blocking finding.
 	Downgraded bool
-	HeadMoved  bool
-	Inline     []Finding // on lines the PR added: posted as inline comments
-	Other      []Finding // everything else: listed in the review body
+	// AidNote says why ard changed the verdict or what the aid did, "" if nothing.
+	AidNote   string `json:",omitempty"`
+	HeadMoved bool
+	Inline    []Finding // on lines the PR added: posted as inline comments
+	Other     []Finding // everything else: listed in the review body
 	// NoLines: the added lines were not known (a Reaper close-out after a
 	// restart), so every finding is in Other.
 	NoLines bool
@@ -137,6 +183,9 @@ func RenderReview(r Record, repo github.Repo, dryRun, allInBody bool) string {
 	var notes []string
 	if rp.Downgraded {
 		notes = append(notes, "The review approved but listed a blocking finding, so ard treats it as changes requested.")
+	}
+	if rp.AidNote != "" {
+		notes = append(notes, sanitize(cutRunes(rp.AidNote, 400)))
 	}
 	if rp.HeadMoved && rp.PRGone == "" {
 		notes = append(notes, "The branch gained code after this commit was reviewed. The review stays requested and runs again on the new head.")

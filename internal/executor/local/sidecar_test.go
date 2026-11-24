@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/executor/workspace"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
@@ -79,7 +80,7 @@ func (sf *scFixture) sjob(ref string) executor.Job {
 
 func (sf *scFixture) cacheDir(t *testing.T) string {
 	t.Helper()
-	d, err := sf.l.sidecarCache("o/r", "acme/specs")
+	d, err := workspace.SidecarCache(sf.root, "o/r", "acme/specs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func (sf *scFixture) cacheDir(t *testing.T) string {
 func (sf *scFixture) assertCleanFailure(t *testing.T, j executor.Job) {
 	t.Helper()
 	wt, _ := sf.l.WorktreePath(j.Repo, j.ID)
-	home, _ := sf.l.homePath(j.Repo, j.ID)
+	home, _ := sf.l.ws.HomePath(j.Repo, j.ID)
 	for _, p := range []string{wt, home} {
 		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			t.Errorf("%s remains: %v", p, err)
@@ -99,7 +100,7 @@ func (sf *scFixture) assertCleanFailure(t *testing.T, j executor.Job) {
 	if list := sh(t, sf.repo, "git", "worktree", "list"); strings.Count(list, "\n") != 0 {
 		t.Errorf("registered worktree left: %s", list)
 	}
-	logDir, _ := sf.l.logDir(j.Repo, j.Issue)
+	logDir, _ := sf.l.ws.LogDir(j.Repo, j.Issue)
 	if ents, _ := os.ReadDir(logDir); len(ents) != 0 {
 		t.Errorf("log files left: %v", ents)
 	}
