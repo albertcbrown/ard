@@ -1,0 +1,24 @@
+site_name: ard
+site_description: Automated repository development
+site_url: https://albertcbrown.github.io/ard/
+repo_url: https://github.com/albertcbrown/ard
+docs_dir: docs/site
+strict: true
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - search.suggest
+plugins:
+  - search
+nav:
+  - Overview: index.md
+  - Install: install.md
+  - Getting started: getting-started.md
+  - Configuration: configuration.md
+  - Roles: roles.md
+  - Operations:
+      - operations.md
+      - Gate 2 runbook: operations/gate-2-runbook.md
+  - Security model: security.md
+  - Troubleshooting: troubleshooting.md
