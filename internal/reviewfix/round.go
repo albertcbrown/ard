@@ -111,7 +111,7 @@ func (l *Loop) RequestRound(ctx context.Context, r Request) (bool, error) {
 	}
 	count := Requested(rs)
 	if count >= r.Max {
-		return false, l.capPath(ctx, r.Issue, r.PR, r.Head, r.Worker, count, r.Roles, fmt.Sprintf("the limit of %d review rounds is reached", r.Max))
+		return false, l.capPath(ctx, r.Issue, r.PR, r.Head, r.Worker, count, r.Roles, fmt.Sprintf("the limit of %d review rounds is reached", r.Max), r.Reason)
 	}
 	err = l.appendRound(ctx, r.Issue, Round{N: count + 1, Phase: PhaseRequested, Reason: r.Reason, PR: r.PR, Head: r.Head, Worker: r.Worker, Roles: r.Roles})
 	if err != nil {

@@ -33,9 +33,11 @@ var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 // stubGit answers from fields: no repository is involved.
 type stubGit struct {
-	tip     string   // RevParse answer; "" means the PR head
-	changed []string // CodeChanged answer
-	head    string
+	tip      string   // RevParse answer; "" means the PR head
+	changed  []string // CodeChanged answer
+	head     string
+	ancestor bool
+	parents  []string
 }
 
 func (g *stubGit) FetchRef(context.Context, string, string, string, gitx.TokenFunc) error { return nil }
@@ -47,6 +49,13 @@ func (g *stubGit) RevParse(context.Context, string, string) (string, error) {
 }
 func (g *stubGit) CodeChanged(context.Context, string, string, string, ...string) ([]string, error) {
 	return g.changed, nil
+}
+
+func (g *stubGit) IsAncestor(context.Context, string, string, string) (bool, error) {
+	return g.ancestor, nil
+}
+func (g *stubGit) Parents(context.Context, string, string) ([]string, error) {
+	return g.parents, nil
 }
 
 type harness struct {

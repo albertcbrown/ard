@@ -2,6 +2,7 @@ package reviewfix
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -217,5 +218,90 @@ func TestOneFailureDoesNotStopTheTick(t *testing.T) {
 	}
 	if h.has(a.issue, lblWorkerDone) || h.has(b.issue, lblWorkerDone) || h.phases(a.issue) != "requested" {
 		t.Errorf("replay failed: a=%q", h.phases(a.issue))
+	}
+}
+
+// conflictLanding seeds a requested conflict round at h1 whose worker has
+// finished, and ticks once with the stub git answers given.
+func conflictLanding(t *testing.T, ancestor bool, parents []string) (*harness, seeded) {
+	t.Helper()
+	h := newHarness(t, 3, false)
+	s := h.seed([]string{lblWorkerDone}, cat(reqChanges(engRev), reqDone(secRev)), nil)
+	h.closeoutChanges(s, engRev)
+	err := h.loop.appendRound(t.Context(), s.issue, Round{N: 1, Phase: PhaseRequested, Reason: ReasonConflict, PR: s.pr, Head: "h1", Worker: wrk, Roles: []string{engRev}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.workerJob(s, true)
+	h.git.ancestor, h.git.parents = ancestor, parents
+	if err := h.tick(); err != nil {
+		t.Fatal(err)
+	}
+	return h, s
+}
+
+func TestLandingConflictMergeHead(t *testing.T) {
+	h, s := conflictLanding(t, true, []string{"h1", "m1"})
+	if got := h.phases(s.issue); got != "requested,applied" {
+		t.Fatalf("phases = %q", got)
+	}
+	if h.comments(s.issue) != 0 {
+		t.Error("a landed round must not comment")
+	}
+	pr, _ := h.gh.GetPR(t.Context(), s.pr)
+	for _, l := range pr.Labels {
+		if strings.EqualFold(l, labels.Changes(engRev)) || strings.EqualFold(l, labels.Done(labels.StageReview, secRev)) {
+			t.Errorf("pr kept %s", l)
+		}
+	}
+}
+
+func TestLandingConflictNotLanded(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ancestor bool
+		parents  []string
+	}{
+		"plain commit on top": {true, []string{"h1"}},
+		"merge without head":  {false, []string{"x", "m1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, s := conflictLanding(t, tc.ancestor, tc.parents)
+			rs, _ := Rounds(t.Context(), h.store, s.issue)
+			if got := h.phases(s.issue); got != "requested,capped" || rs[1].Reason != ReasonConflict || !h.has(s.issue, labels.NeedsHuman) {
+				t.Fatalf("phases = %q rounds %+v", got, rs)
+			}
+		})
+	}
+}
+
+func TestLandingConflictHeadUnmoved(t *testing.T) {
+	h := newHarness(t, 3, false)
+	s := h.seed([]string{lblWorkerDone}, reqChanges(engRev), func(p *github.PullRequest) { p.HeadSHA = "h1" })
+	h.closeoutChanges(s, engRev)
+	if err := h.loop.appendRound(t.Context(), s.issue, Round{N: 1, Phase: PhaseRequested, Reason: ReasonConflict, PR: s.pr, Head: "h1", Worker: wrk, Roles: []string{engRev}}); err != nil {
+		t.Fatal(err)
+	}
+	h.workerJob(s, true)
+	h.git.head, h.git.ancestor, h.git.parents = "h1", true, []string{"a", "b"}
+	if err := h.tick(); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.phases(s.issue); got != "requested,capped" {
+		t.Fatalf("phases = %q", got)
+	}
+}
+
+func TestLandingReviewNoCodeStillCaps(t *testing.T) {
+	h := newHarness(t, 3, false)
+	s := h.seed([]string{lblWorkerDone}, reqChanges(engRev), nil)
+	h.closeoutChanges(s, engRev)
+	h.round(s, 1, PhaseRequested, "h1")
+	h.workerJob(s, true)
+	h.git.ancestor, h.git.parents = true, []string{"a", "b"} // must not matter
+	if err := h.tick(); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.phases(s.issue); got != "requested,capped" {
+		t.Fatalf("phases = %q", got)
 	}
 }
