@@ -12,6 +12,7 @@ import (
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/executor/local"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/labels"
@@ -40,11 +41,17 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 	} else if res, loadErr, err = loadRef(ctx, root, o.Ref); err != nil {
 		return err
 	}
+	agentImage := os.Getenv("ARD_AGENT_IMAGE")
+	if agentImage != "" {
+		if ie := executor.CheckImageRef(agentImage); ie != nil {
+			loadErr = errors.Join(loadErr, fmt.Errorf("ARD_AGENT_IMAGE: %w", ie))
+		}
+	}
 	if res != nil {
 		if ie := intakeErr(res); ie != nil {
 			loadErr = errors.Join(loadErr, ie)
 		}
-		for _, r := range res.HostUntrusted() {
+		for _, r := range res.HostUntrustedWith(agentImage != "") {
 			local.WarnHostRole(e.Log, string(r.Kind), r.Name)
 			// Loud: also straight to stderr, whatever --log-level says.
 			fmt.Fprint(e.Stderr, local.HostRoleText(string(r.Kind), r.Name))

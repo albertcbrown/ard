@@ -20,12 +20,16 @@ import (
 
 // Options configures Local.
 type Options struct {
-	Root       string    // default $HOME/.ard
-	Git        gitRunner // default: the git binary on PATH
-	DockerBin  string    // default "docker"
-	PathEnv    string    // PATH for host jobs; default the controller's PATH
-	AllowEnv   []string  // model-key names; default ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
-	AllowFixed []string  // names allowed in Command.Fixed; default CLAUDE_CONFIG_DIR, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
+	Root      string    // default $HOME/.ard
+	Git       gitRunner // default: the git binary on PATH
+	DockerBin string    // default "docker"
+	// AgentImage, if set, is the digest-pinned ref or local image ID that
+	// runs every job that reads untrusted input and has no Dockerfile. A
+	// role's own Dockerfile wins. "" = such jobs run on the host as before.
+	AgentImage string
+	PathEnv    string   // PATH for host jobs; default the controller's PATH
+	AllowEnv   []string // model-key names; default ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+	AllowFixed []string // names allowed in Command.Fixed; default CLAUDE_CONFIG_DIR, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
 	// ConfigDirEnv is the Fixed name whose value must equal View.ConfigDir,
 	// the job's own config dir. Default CLAUDE_CONFIG_DIR.
 	ConfigDirEnv string
@@ -55,6 +59,7 @@ type Options struct {
 // Local implements executor.Executor on this host.
 type Local struct {
 	root, dockerBin, pathEnv string
+	agentImage               string
 	git                      gitRunner
 	allowEnv, allowFixed     map[string]bool
 	configDirEnv             string
@@ -97,6 +102,11 @@ func New(o Options) (*Local, error) {
 	}
 	if o.Git == nil {
 		o.Git = execGit{bin: "git"}
+	}
+	if o.AgentImage != "" {
+		if err := executor.CheckImageRef(o.AgentImage); err != nil {
+			return nil, err
+		}
 	}
 	if o.DockerBin == "" {
 		o.DockerBin = "docker"
@@ -142,7 +152,7 @@ func New(o Options) (*Local, error) {
 	for _, n := range o.AllowFixed {
 		fixed[n] = true
 	}
-	return &Local{configDirEnv: o.ConfigDirEnv, allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, pathEnv: o.PathEnv, git: o.Git,
+	return &Local{configDirEnv: o.ConfigDirEnv, allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, agentImage: o.AgentImage, pathEnv: o.PathEnv, git: o.Git,
 		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log, onHostUntrusted: o.OnHostUntrusted,
 		tracks: map[string]*track{}, sgit: o.SidecarGit, sidecarURL: o.SidecarURL, sidecarToken: o.SidecarToken,
 		sidecarTimeout: o.SidecarTimeout, cloneDir: cleanDir(o.CloneDir)}, nil
@@ -288,10 +298,22 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 			return h, fmt.Errorf("make sidecar read-only: %w", err)
 		}
 	}
-	if j.Dockerfile != "" {
+	useDocker := j.Dockerfile != ""
+	if !useDocker && l.agentImage != "" && !j.TrustedInput {
+		useDocker = true
+	}
+	if useDocker {
 		h.Kind = "docker"
 		h.Container = "ard-" + j.ID
-		if h.Image, err = l.ensureImage(ctx, j, h.LogPath); err != nil {
+		if j.Dockerfile != "" {
+			// A role's own Dockerfile wins over the default image.
+			h.Image, err = l.ensureImage(ctx, j, h.LogPath)
+		} else {
+			// No fallback to host mode: any failure fails Prepare.
+			h.Image = l.agentImage
+			err = l.ensurePulled(ctx, l.agentImage, h.LogPath)
+		}
+		if err != nil {
 			return h, err
 		}
 		h.View = executor.Paths{Work: "/work", Role: "/role", ConfigDir: "/ard-config"}

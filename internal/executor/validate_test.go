@@ -82,3 +82,17 @@ func TestTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckImageRef(t *testing.T) {
+	d := strings.Repeat("a1", 32)
+	for _, ok := range []string{"x/y@sha256:" + d, "sha256:0123456789ab", "sha256:" + d} {
+		if err := CheckImageRef(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "ard-agent:dev", "-x", "a b", "x@sha256:abc", "x@sha256:" + strings.Repeat("g", 64), "sha256:abc", "-v/x@sha256:" + d, "x\n@sha256:" + d} {
+		if err := CheckImageRef(bad); !errors.Is(err, ErrImageRef) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+}

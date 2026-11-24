@@ -12,7 +12,7 @@ import (
 // EventHostUntrusted is the slog message of every host-mode warning.
 const EventHostUntrusted = "executor.host_untrusted"
 
-const hostHint = "add a Dockerfile to the role directory to run it under Docker"
+const hostHint = "add a Dockerfile to the role directory, or set ARD_AGENT_IMAGE, to run it under Docker"
 
 // HostReach lists what a host-mode job can reach as the controller's uid.
 // It returns a fresh slice.
@@ -37,7 +37,7 @@ func WarnHostRole(log *slog.Logger, kind, name string) {
 // HostRoleText is the plain-text form of the warning, for writing straight to
 // stderr so it survives --log-level. It ends in a newline.
 func HostRoleText(kind, name string) string {
-	return fmt.Sprintf("WARNING: %s role %q reads untrusted input but has no Dockerfile, so its jobs run as a host subprocess "+
+	return fmt.Sprintf("WARNING: %s role %q reads untrusted input but has no Dockerfile and ARD_AGENT_IMAGE is not set, so its jobs run as a host subprocess "+
 		"under the controller's uid and can reach: %s. Hint: %s.\n",
 		kind, name, strings.Join(HostReach(), "; "), hostHint)
 }
