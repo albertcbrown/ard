@@ -1,14 +1,19 @@
 ---
 role: lead
-status: blocked
+status: done
 attempt: 1
+next: [triage:engineer]
+worker: engineer
 ---
-The request is clear, but it cannot start yet. It needs the default ard-agent image from #55, which is still open in docs/TODO.md as parts #243, #244 and #245. The security-review starter's Dockerfile has to build on that image. Part A (#43, the security-review starter role) has already landed in internal/roles/reviewers/security-review.
+The blocker is gone: the local ard-agent image (#243) and the default image under the local executor (#244) are both on main, and the owner has answered all five open questions. This issue can move to planning. It adds an optional `aid` executable to the reviewer role-directory contract, runs it as its own executor job before the reviewer agent, and ships a pinned security-review aid, so the engineer plan has to cover config discovery, the reviewer loop, the executor, the starter role and the proposal.
 
 ## Routing
-None until #55 lands. Then the plan should be: triage:engineer for implementation steps and tests, and worker engineer for the code change. No architect, product-manager, designer or documentation-planner triage role exists in this repository, so the engineer plan will also have to cover the cross-package design (config discovery, the reviewer loop, the executor and the role-directory contract).
+- triage:engineer: implementation steps and tests across config discovery (`Role.AidPath`, `ard config check`, `roles.ExecutableNames`), the reviewer loop and executor job (read-only worktree, empty credential environment, no network under Docker, its own timeout), JSONL validation and redaction, the owner's rules for blocking and failed aids, the security-review starter aid and Dockerfile, and the proposal update.
+- worker engineer: Go code, fake-executor and Docker integration tests, the starter role files and docs.
 
 ## Open issues
-- Waits for #55 (at least #243, the local ard-agent image, and #244, the default image under the local executor) so the aid Dockerfile has a base image to pin tools on.
-- The issue lists five open questions a maintainer should settle before or during planning: whether a high-confidence aid hit blocks in code, whether a failed aid fails the job, whether host mode without a Dockerfile runs aid on the host or requires Docker, whether network access is allowed for vulnerability databases, and whether a gitleaks scan adds enough over the diff guard's built-in secret patterns.
-- The starter files go under internal/roles/, which agents may change. Copying them into .ard/reviewers/security-review/ in this repository's own dogfooding config is a protected-path change that needs human approval.
+- This repository has no architect, product-manager or documentation-planner triage role. The engineer plan must therefore also settle the cross-package design and the proposal changes: the role-directory contract, Reviewer loop step 3, the reviewer table, and the host-mode residual-risk note next to #84's.
+- The owner's decisions in the comments change the scope from the issue body. A gitleaks hit on an added line becomes a blocking high finding that ard injects in code. A security review whose aid failed can only return changes. Host mode without a Dockerfile runs aid on the host. The aid gets no network access. gitleaks is included. The plan should follow these decisions.
+- #245 (role image builds for k8s) is still open. This change should target the local executor and leave k8s role images to #245.
+- The starter files belong under internal/roles/. Copying the aid into this repository's own .ard/reviewers/ config is a protected-path change and needs a human. The dogfooding config has only eng-review today.
+- The pinned tool versions and the vendored semgrep ruleset need checksums or digests. A worker without network access may not be able to fetch them, so the plan should say how to get them.

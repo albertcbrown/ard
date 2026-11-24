@@ -22,6 +22,13 @@ func userMessage(s agent.Spec) string {
 	} else {
 		b.WriteString("Network: unavailable.\n")
 	}
+	if len(s.WorkerRoles) > 0 {
+		parts := make([]string, 0, len(s.WorkerRoles))
+		for _, w := range s.WorkerRoles {
+			parts = append(parts, fmt.Sprintf("%s (network: %t)", w.Role, w.Network))
+		}
+		fmt.Fprintf(&b, "Worker roles: %s\n", strings.Join(parts, ", "))
+	}
 	fmt.Fprintf(&b, "When you are done, write %s with the frontmatter your instructions describe.\n", agent.RoleFilePath(s.Issue, s.Stage, s.Role))
 	b.WriteString("Do not run git commit, git push or any GitHub command; the controller does that.\n")
 	return b.String()
