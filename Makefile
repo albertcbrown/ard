@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test docs-check
+.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test docs-check release-check
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ard ./cmd/ard
@@ -62,6 +62,11 @@ lint-scanner-fixtures:
 docs-check:
 	mkdocs build --strict -d /tmp/ard-site
 	go test ./internal/docscheck/...
+
+# Validates .goreleaser.yaml and builds a snapshot release of all four targets
+# (needs goreleaser v2 and python3; not part of `make test`).
+release-check:
+	deploy/test-release.sh
 
 clean:
 	rm -rf bin

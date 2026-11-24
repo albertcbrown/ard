@@ -848,6 +848,10 @@ func TestHostUntrusted(t *testing.T) {
 	if got := res.HostUntrusted(); len(got) != 0 {
 		t.Errorf("executor k8s: HostUntrusted = %v, want none", got)
 	}
+	res.Executor = "local"
+	if got := res.HostUntrustedWith(true); len(got) != 0 {
+		t.Errorf("agent image set: HostUntrustedWith = %v, want none", got)
+	}
 }
 
 func TestRoleLookupHelpers(t *testing.T) {
