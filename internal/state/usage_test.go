@@ -164,3 +164,23 @@ func TestSpendSinceSurvivesReopen(t *testing.T) {
 		t.Fatalf("repo = %+v, err = %v", repo, err)
 	}
 }
+
+func TestSpendBetween(t *testing.T) {
+	ctx := tctx(t)
+	s, c := newStoreClock(t, t.TempDir())
+	day := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
+	j, _ := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "engineer", Issue: 7})
+	for i, at := range []time.Time{day.Add(-time.Second), day, day.Add(time.Hour), day.Add(24 * time.Hour)} {
+		c.t = at
+		if _, err := s.RecordStepUsage(ctx, j.ID, string(rune('a'+i)), StepUsage{CostUSD: fp(float64(int(1) << i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, repo, err := s.SpendBetween(ctx, day, day.Add(24*time.Hour))
+	if err != nil || repo.USD != 6 {
+		t.Errorf("between = %+v, %v; want 6 (bounds [from, to))", repo, err)
+	}
+	if _, since, _ := s.SpendSince(ctx, day); since.USD != 14 {
+		t.Errorf("since = %+v, want 14", since)
+	}
+}
