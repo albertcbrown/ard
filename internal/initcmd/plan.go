@@ -22,6 +22,13 @@ const (
 	actOverwrite action = "overwrite"
 )
 
+// ContextPaths are the optional repo context docs. ard init proposes each
+// only when it is missing on main: it never overwrites one or reports a
+// conflict, even with --force.
+func ContextPaths() []string {
+	return []string{".ard/PRODUCT.md", ".ard/VISION.md", ".ard/TECH_STACK.md"}
+}
+
 // op is one starter file and what proposing it does.
 type op struct {
 	File committer.InitFile
@@ -56,7 +63,8 @@ func starter() ([]committer.InitFile, error) {
 }
 
 // plan compares files with existing (main's config tree) and assigns each a
-// create, unchanged or overwrite action. A file that differs without force is
+// create, unchanged or overwrite action. A context doc (ContextPaths) that
+// exists on main in any form is unchanged, whatever force is. A file that differs without force is
 // a conflict; the error names every such path. A different exec bit counts as
 // a difference.
 func plan(existing fs.FS, files []committer.InitFile, force bool) ([]op, error) {
@@ -66,6 +74,9 @@ func plan(existing fs.FS, files []committer.InitFile, force bool) ([]op, error) 
 		o := op{File: f, Act: actCreate}
 		fi, err := fs.Stat(existing, f.Path)
 		switch {
+		case err == nil && slices.Contains(ContextPaths(), f.Path):
+			// create-if-absent: present in any form is left alone
+			o.Act = actUnchanged
 		case err != nil:
 			// absent on main
 		case fi.IsDir():
