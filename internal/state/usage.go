@@ -248,3 +248,47 @@ func (s *Store) spendBetween(ctx context.Context, dayStart, until time.Time) (ma
 	}
 	return per, repo, nil
 }
+
+// Counted is the tokens that count toward a role's token cap: input, output
+// and cache write. Cache reads are excluded.
+func (t Tokens) Counted() int64 { return t.Input + t.Output + t.CacheWrite }
+
+const countedSQL = `COALESCE(u.tokens_in, 0) + COALESCE(u.tokens_out, 0) + COALESCE(u.tokens_cache_write, 0)`
+
+// RoleTokens sums the counted tokens of step usage recorded at or after
+// dayStart, per (stage, role). A step that reported no tokens adds nothing.
+func (s *Store) RoleTokens(ctx context.Context, dayStart time.Time) (map[RoleKey]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT j.stage, j.role, COALESCE(SUM(`+countedSQL+`), 0)
+		FROM step_usage u JOIN jobs j ON j.id = u.job_id
+		WHERE u.recorded_at >= ? GROUP BY j.stage, j.role`, dayStart.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("role tokens since %s: %w", dayStart.UTC().Format(time.RFC3339), err)
+	}
+	defer rows.Close()
+	out := map[RoleKey]int64{}
+	for rows.Next() {
+		var k RoleKey
+		var n int64
+		if err := rows.Scan(&k.Stage, &k.Role, &n); err != nil {
+			return nil, fmt.Errorf("role tokens: %w", err)
+		}
+		out[k] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("role tokens: %w", err)
+	}
+	return out, nil
+}
+
+// RoleWorstTokens is the largest counted-token total of one job of the role,
+// over all history and from reported usage only; 0 when there is none.
+func (s *Store) RoleWorstTokens(ctx context.Context, k RoleKey) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(t), 0) FROM (
+		SELECT SUM(`+countedSQL+`) AS t FROM step_usage u JOIN jobs j ON j.id = u.job_id
+		WHERE j.stage = ? AND j.role = ? AND u.tokens_in IS NOT NULL GROUP BY u.job_id)`, k.Stage, k.Role).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("role worst tokens %s:%s: %w", k.Stage, k.Role, err)
+	}
+	return n, nil
+}

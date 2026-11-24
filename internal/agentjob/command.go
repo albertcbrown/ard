@@ -49,6 +49,11 @@ func AgentCommand(reg *agent.Registry, cfg *config.Resolved, role config.Role, s
 		PromptFile: h.View.Role + "/prompt.txt", Untrusted: untrusted,
 		ConfigDir: h.View.ConfigDir, Model: role.Model, MaxBudgetUSD: budget, Auth: cred.Auth, Network: role.Network,
 	}
+	if stage == agent.StageTriage {
+		for _, w := range cfg.RolesOf(config.KindWorker) {
+			spec.WorkerRoles = append(spec.WorkerRoles, agent.WorkerNetwork{Role: w.Name, Network: w.Network})
+		}
+	}
 	if h.View.Sidecar != "" {
 		spec.ReadDirs = []string{h.View.Sidecar}
 	}

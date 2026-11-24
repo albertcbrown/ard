@@ -342,3 +342,46 @@ func TestCauseUsageLimitResume(t *testing.T) {
 		t.Errorf("record = %+v, %v", rec.Job.Cause, err)
 	}
 }
+
+// The unreported-tokens mark is stored with the record: a resumed close-out
+// shows it once, and FactsOf carries it to the cost table.
+func TestTokensUnreportedMarkOnceOnResumeAndFacts(t *testing.T) {
+	e := newEnv(t)
+	j := e.causeJob(StageTriage, "lead", Cause{Kind: CauseNoProcess})
+	j.TokensUnreported = true
+	e.d = e.deps(0)
+	e.fstore.failAt = 3
+	c := New(e.d)
+	if _, err := c.Run(context.Background(), j); err == nil {
+		t.Fatal("expected the injected store failure")
+	}
+	e.fstore.failAt = 0
+	if _, err := c.ResumeJob(context.Background(), j.ID); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, time.Time{})
+	n := 0
+	for _, cm := range cs {
+		if strings.HasPrefix(cm.Body, markerFor(j.ID)) {
+			n++
+			if got := strings.Count(cm.Body, "Tokens not reported"); got != 1 {
+				t.Errorf("mark count = %d in\n%s", got, cm.Body)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("marker comments = %d, want 1", n)
+	}
+	f, err := FactsOf(e.sjob(j.ID))
+	if err != nil || !f.TokensUnreported {
+		t.Errorf("facts = %+v, %v", f, err)
+	}
+	// Without the flag the facts carry no mark.
+	j2 := e.causeJob(StageTriage, "lead", Cause{Kind: CauseNoProcess})
+	if _, err := New(e.deps(0)).Run(context.Background(), j2); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := FactsOf(e.sjob(j2.ID)); err != nil || f.TokensUnreported {
+		t.Errorf("facts = %+v, %v", f, err)
+	}
+}

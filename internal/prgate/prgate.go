@@ -103,26 +103,79 @@ type Git interface {
 // is not covered. Any git error fails closed: the error is returned and the
 // head is not covered.
 func Covers(ctx context.Context, g Git, repoDir, reviewed, head, base string, issue int) (bool, []string, error) {
+	c, err := cover(ctx, g, nil, repoDir, reviewed, head, base, issue)
+	return c.OK, c.Broken, err
+}
+
+// PatchGit is the part of *gitx.Git CoversDetail adds to Git.
+type PatchGit interface {
+	Git
+	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
+	Parents(ctx context.Context, repoDir, rev string) ([]string, error)
+	PatchID(ctx context.Context, repoDir, from, to, path string) (string, error)
+}
+
+// Cover is the outcome of CoversDetail.
+type Cover struct {
+	OK         bool
+	Broken     []string // paths that break the cover
+	PatchEqual []string // paths both sides changed whose PR patch is unchanged
+}
+
+// CoversDetail is Covers with one more rule for base != "": a path both the PR
+// and main changed is still covered when the PR's own patch to it (stable
+// patch id of the diff from the merge base) is the same before and after the
+// update. That needs head to reach reviewed along first parents through
+// two-parent merges only (update-branch merges). Any git error fails closed.
+func CoversDetail(ctx context.Context, g PatchGit, repoDir, reviewed, head, base string, issue int) (Cover, error) {
+	return cover(ctx, g, g, repoDir, reviewed, head, base, issue)
+}
+
+// maxChain caps the update-branch merges walked from head back to reviewed.
+const maxChain = 100
+
+// firstUpdateMerge walks first parents from head to reviewed. It returns the
+// merge whose first parent is reviewed, or "" when head is not reached only
+// through two-parent merges.
+func firstUpdateMerge(ctx context.Context, g PatchGit, repoDir, reviewed, head string) (string, error) {
+	cur := head
+	for i := 0; i < maxChain; i++ {
+		ps, err := g.Parents(ctx, repoDir, cur)
+		if err != nil {
+			return "", err
+		}
+		if len(ps) != 2 {
+			return "", nil
+		}
+		if ps[0] == reviewed {
+			return ps[1], nil
+		}
+		cur = ps[0]
+	}
+	return "", nil
+}
+
+func cover(ctx context.Context, g Git, pg PatchGit, repoDir, reviewed, head, base string, issue int) (Cover, error) {
 	if reviewed == "" || head == "" {
-		return false, nil, nil
+		return Cover{}, nil
 	}
 	if reviewed == head {
-		return true, nil, nil
+		return Cover{OK: true}, nil
 	}
 	since, err := g.CodeChanged(ctx, repoDir, reviewed, head)
 	if err != nil {
-		return false, nil, err
+		return Cover{}, err
 	}
 	since = dropIssuePaths(since, issue)
 	if len(since) == 0 {
-		return true, nil, nil
+		return Cover{OK: true}, nil
 	}
 	if base == "" {
-		return false, since, nil
+		return Cover{Broken: since}, nil
 	}
 	own, err := g.CodeChanged(ctx, repoDir, base, head)
 	if err != nil {
-		return false, nil, err
+		return Cover{}, err
 	}
 	ownSet := make(map[string]bool, len(own))
 	for _, p := range own {
@@ -134,7 +187,38 @@ func Covers(ctx context.Context, g Git, repoDir, reviewed, head, base string, is
 			broken = append(broken, p)
 		}
 	}
-	return len(broken) == 0, broken, nil
+	if len(broken) == 0 || pg == nil {
+		return Cover{OK: len(broken) == 0, Broken: broken}, nil
+	}
+	second, err := firstUpdateMerge(ctx, pg, repoDir, reviewed, head)
+	if err != nil {
+		return Cover{}, err
+	}
+	if second == "" {
+		return Cover{Broken: broken}, nil
+	}
+	oldBase, err := pg.MergeBase(ctx, repoDir, reviewed, second)
+	if err != nil {
+		return Cover{}, err
+	}
+	var c Cover
+	for _, p := range broken {
+		a, err := pg.PatchID(ctx, repoDir, oldBase, reviewed, p)
+		if err != nil {
+			return Cover{}, err
+		}
+		b, err := pg.PatchID(ctx, repoDir, base, head, p)
+		if err != nil {
+			return Cover{}, err
+		}
+		if a == b {
+			c.PatchEqual = append(c.PatchEqual, p)
+		} else {
+			c.Broken = append(c.Broken, p)
+		}
+	}
+	c.OK = len(c.Broken) == 0
+	return c, nil
 }
 
 func dropIssuePaths(paths []string, issue int) []string {

@@ -249,6 +249,12 @@ func (f *Finisher) FinishWith(ctx context.Context, jobID string, h executor.Hand
 	} else if u, ok := StepUsageOf(res); ok {
 		cj.Usage = usageOf(state.JobUsage{Models: u.Models, Tokens: u.Tokens, CostUSD: u.CostUSD, Steps: 1})
 	}
+	// An agent step that reported no tokens is not counted anywhere: mark it on
+	// the issue so the day's token count for the role is known to be low.
+	if agentStep(jobID, h.JobID) && cause.Kind != closeout.CauseCloneFail && res.Usage == nil {
+		cj.TokensUnreported = true
+		f.log().Warn("reaper.tokens_unreported", "job", jobID, "stage", sj.Stage, "role", sj.Role)
+	}
 	cj.Worker, cj.ExtraLogs, cj.Review = o.Worker, o.ExtraLogs, o.Review
 	// End the attempt before close-out: a crash after it leaves a resumable
 	// close-out and an ended attempt, never the reverse.

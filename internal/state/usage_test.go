@@ -184,3 +184,65 @@ func TestSpendBetween(t *testing.T) {
 		t.Errorf("since = %+v, want 14", since)
 	}
 }
+
+func TestRoleTokens(t *testing.T) {
+	ctx := tctx(t)
+	s, c := newStoreClock(t, t.TempDir())
+	day := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
+	w, _ := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "engineer", Issue: 7})
+	tr, _ := s.CreateJob(ctx, NewJob{Stage: "triage", Role: "engineer", Issue: 7})
+	rec := func(at time.Time, id, step string, tok *Tokens) {
+		t.Helper()
+		c.t = at
+		if _, err := s.RecordStepUsage(ctx, id, step, StepUsage{Tokens: tok, CostUSD: fp(1)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec(day.Add(-time.Second), w.ID, "a", &Tokens{1000, 0, 0, 0}) // 23:59:59 the day before
+	rec(day, w.ID, "b", &Tokens{1, 2, 4, 1000})                   // midnight counts; cache read excluded
+	rec(day.Add(time.Hour), w.ID, "c", nil)                       // no tokens reported adds 0
+	rec(day.Add(2*time.Hour), tr.ID, "a", &Tokens{10, 20, 30, 0})
+	got, err := s.RoleTokens(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[RoleKey{"worker", "engineer"}] != 7 || got[RoleKey{"triage", "engineer"}] != 60 {
+		t.Errorf("tokens = %v", got)
+	}
+	next, _ := s.RoleTokens(ctx, day.Add(24*time.Hour))
+	if len(next) != 0 {
+		t.Errorf("next day = %v", next)
+	}
+	worst, err := s.RoleWorstTokens(ctx, RoleKey{"worker", "engineer"})
+	if err != nil || worst != 1007 {
+		t.Errorf("worst = %d, %v", worst, err)
+	}
+	none, err := s.RoleWorstTokens(ctx, RoleKey{"review", "x"})
+	if err != nil || none != 0 {
+		t.Errorf("none = %d, %v", none, err)
+	}
+}
+
+func TestRoleTokensSurviveReopen(t *testing.T) {
+	ctx := tctx(t)
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	s, err := Open(ctx, dir, Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, _ := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "engineer", Issue: 7})
+	if _, err := s.RecordStepUsage(ctx, j.ID, "a", StepUsage{Tokens: &Tokens{5, 6, 7, 8}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(ctx, dir, Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, err := s.RoleTokens(ctx, t0.Truncate(24*time.Hour))
+	if err != nil || got[RoleKey{"worker", "engineer"}] != 18 {
+		t.Fatalf("tokens = %v, %v", got, err)
+	}
+}
