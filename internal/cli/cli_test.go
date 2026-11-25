@@ -212,6 +212,21 @@ func TestRunHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("serve --ui and --no-ui", func(t *testing.T) {
+		var got string
+		h := Handlers{Serve: func(_ context.Context, _ *Env, o ServeOpts) error { got = o.UI; return nil }}
+		var stdout, stderr strings.Builder
+		for args, want := range map[string]string{"serve": "", "serve --ui": "on", "serve --no-ui": "off"} {
+			got = "x"
+			if code := Run(strings.Fields(args), &stdout, &stderr, h, "dev"); code != 0 || got != want {
+				t.Errorf("%q: exit %d, UI = %q, want %q", args, code, got, want)
+			}
+		}
+		if code := Run([]string{"serve", "--ui", "--no-ui"}, &stdout, &stderr, h, "dev"); code != 2 {
+			t.Errorf("--ui --no-ui: exit %d, want 2", code)
+		}
+	})
+
 	t.Run("handler error exits 1 and prints", func(t *testing.T) {
 		h := Handlers{
 			Serve: func(context.Context, *Env, ServeOpts) error { return errors.New("boom") },

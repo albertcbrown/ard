@@ -5,12 +5,19 @@ image:
   digest: ""   # sha256:<64 hex>
   commit: ""   # the 40-character commit the image was built from; the child chart is read at it
 
+# The agent image pin (#320), passed to every child as agentImage when its digest is set; children with
+# executor k8s need it.
+agentImage:
+  repository: ghcr.io/albertcbrown/ard/agent
+  digest: ""   # sha256:<64 hex>
+
 # Site values from the deployment repository (secret store, storage, resources), passed verbatim to every
 # child as its values; see deploy/charts/ard-serve/values.yaml for the keys.
 site: {}
 
-# One `ard serve` per target repository (docs/proposal.md: one process per repo). dryRun only for now;
-# the ard-serve chart refuses dryRun: false.
+# One `ard serve` per target repository (docs/proposal.md: one process per repo). An instance may set
+# executor ({kind: k8s, jobsNamespace: ...}), passed to its child, so instances go live one at a time; the
+# ard-serve chart refuses dryRun: false unless executor.kind is k8s with its live requirements met.
 instances:
   - name: albertcbrown-ard
     repo: albertcbrown/ard

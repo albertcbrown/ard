@@ -1,0 +1,114 @@
+{{- /* executor k8s: a ValidatingAdmissionPolicy on every pod created in the jobs namespace, so a controller bug or a
+stolen controller token cannot widen a job pod. It encodes the pod contract (internal/jobpod, built by
+internal/executor/kube/pod.go): the ard-job ServiceAccount and no token; no shared process namespace, host
+namespaces or image pull secrets; only emptyDir volumes and the pod's own Secret (named after the pod, so the App
+Secret and any other Secret are unreachable); containers exactly pre (init), agent and post, pinned by digest; the
+agent mounts no Secret and reads only its model credential; agent and sidecars run as different UIDs. Fails closed.
+The cluster-scoped names carry the release name, so several instances can coexist. The CEL runs in #321. */ -}}
+{{- if include "ard-serve.k8s" . }}
+{{- $name := printf "%s-jobs" (include "ard-serve.name" .) }}
+{{- $agentUID := int .Values.jobs.agentUID }}
+{{- $sidecarUID := int .Values.jobs.sidecarUID }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [UPDATE]
+        resources: [pods/ephemeralcontainers]
+  variables:
+    - name: spec
+      expression: object.spec
+    - name: init
+      expression: "has(object.spec.initContainers) ? object.spec.initContainers : []"
+    - name: all
+      expression: object.spec.containers + variables.init
+    - name: volumes
+      expression: "has(object.spec.volumes) ? object.spec.volumes : []"
+    - name: podUID
+      expression: >-
+        has(object.spec.securityContext) && has(object.spec.securityContext.runAsUser)
+        ? object.spec.securityContext.runAsUser : -1
+  validations:
+    - expression: "has(variables.spec.serviceAccountName) && variables.spec.serviceAccountName == 'ard-job'"
+      message: job pods run as the ard-job ServiceAccount
+    - expression: "has(variables.spec.automountServiceAccountToken) && variables.spec.automountServiceAccountToken == false"
+      message: job pods set automountServiceAccountToken false
+    - expression: "!has(variables.spec.shareProcessNamespace) || variables.spec.shareProcessNamespace == false"
+      message: job pods do not share a process namespace
+    - expression: >-
+        !(has(variables.spec.hostNetwork) && variables.spec.hostNetwork) &&
+        !(has(variables.spec.hostPID) && variables.spec.hostPID) &&
+        !(has(variables.spec.hostIPC) && variables.spec.hostIPC)
+      message: job pods use no host namespace
+    - expression: "!has(variables.spec.imagePullSecrets) || size(variables.spec.imagePullSecrets) == 0"
+      message: job pods have no imagePullSecrets
+    - expression: "!has(variables.spec.ephemeralContainers) || size(variables.spec.ephemeralContainers) == 0"
+      message: job pods have no ephemeral containers
+    - expression: "variables.volumes.all(v, has(v.emptyDir) || has(v.secret))"
+      message: job pod volumes are emptyDir or Secret only (no hostPath, projected token, CSI or PVC)
+    - expression: "variables.volumes.all(v, !has(v.secret) || v.secret.secretName == object.metadata.name)"
+      message: the only Secret a job pod mounts is its own, named after the pod
+    - expression: >-
+        size(variables.init) == 1 && variables.init[0].name == 'pre' &&
+        size(object.spec.containers) == 2 &&
+        object.spec.containers.exists(c, c.name == 'agent') && object.spec.containers.exists(c, c.name == 'post')
+      message: job pods have exactly the init container pre and the containers agent and post
+    - expression: "variables.all.all(c, has(c.image) && c.image.contains('@sha256:'))"
+      message: every job pod image is pinned by digest
+    - expression: "variables.all.all(c, !has(c.envFrom) || size(c.envFrom) == 0)"
+      message: job pod containers use no envFrom
+    - expression: >-
+        variables.all.all(c, !has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) ||
+        e.valueFrom.secretKeyRef.name == object.metadata.name))
+      message: secretKeyRef names only the pod's own Secret
+    - expression: >-
+        object.spec.containers.all(c, c.name != 'agent' || !has(c.volumeMounts) ||
+        c.volumeMounts.all(m, variables.volumes.exists(v, v.name == m.name && has(v.emptyDir))))
+      message: the agent container mounts no Secret volume
+    - expression: >-
+        object.spec.containers.all(c, c.name != 'agent' || !has(c.env) ||
+        c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) ||
+        e.valueFrom.secretKeyRef.key in ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']))
+      message: the agent container reads only its model credential from the Secret
+    - expression: >-
+        variables.all.all(c,
+        (has(c.securityContext) && has(c.securityContext.runAsUser) ? c.securityContext.runAsUser : variables.podUID)
+        == (c.name == 'agent' ? {{ $agentUID }} : {{ $sidecarUID }}))
+      message: the agent runs as uid {{ $agentUID }} and pre and post as uid {{ $sidecarUID }}
+    - expression: >-
+        has(object.metadata.labels) &&
+        'app.kubernetes.io/part-of' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/part-of'] == 'ard' &&
+        'app.kubernetes.io/component' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/component'] == 'ard-job' &&
+        'app.kubernetes.io/instance' in object.metadata.labels &&
+        object.metadata.labels['app.kubernetes.io/instance'] == '{{ include "ard-serve.name" . }}' &&
+        'ard.albertcbrown/repo' in object.metadata.labels && 'ard.albertcbrown/job' in object.metadata.labels &&
+        'ard.albertcbrown/network' in object.metadata.labels &&
+        object.metadata.labels['ard.albertcbrown/network'] in ['true', 'false']
+      message: job pods carry the ard job labels
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ include "ard-serve.jobsNamespace" . }}
+{{- end }}

@@ -1,7 +1,10 @@
 apiVersion: v2
 name: ard-serve
 description: >-
-  One `ard serve --dry-run` for one target repository: Deployment (Recreate), a PVC home, a closed
-  NetworkPolicy and the GitHub App Secret. Rendered as a child of ard-root (deploy/argocd).
+  One `ard serve` for one target repository: Deployment (Recreate), a PVC home, a closed NetworkPolicy and the
+  GitHub App Secret; with executor k8s also the jobs namespace, its policies, RBAC and admission policy (#54).
+  Rendered as a child of ard-root (deploy/argocd).
 type: application
-version: 0.1.0
+version: 0.2.0
+# ValidatingAdmissionPolicy v1 is GA in 1.30; ReadWriteOncePod in 1.29.
+kubeVersion: ">=1.30.0-0"

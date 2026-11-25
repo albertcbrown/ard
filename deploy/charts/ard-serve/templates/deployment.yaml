@@ -1,10 +1,13 @@
 {{- include "ard-serve.guard" . -}}
 {{- $image := include "ard-serve.image" . -}}
 {{- $name := include "ard-serve.name" . -}}
+{{- $k8s := include "ard-serve.k8s" . -}}
 {{- /*
 One ard serve per repository. Recreate, never RollingUpdate: the leader lock is an flock under ~/.ard/locks, so a new
 pod beside the old one would block on it. Pause: kubectl -n ard exec deploy/<name> -- touch
 /home/ard/.ard/pause/<owner>/<repo> (the kill switch; rm to resume).
+With executor k8s the pod gets its own ServiceAccount and a short-lived projected token (still no automount), and the
+--k8s-* settings as ARD_K8S_* env; it serves nothing, so there is no Service and no container port.
 */ -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -25,6 +28,9 @@ spec:
       labels:
         {{- include "ard-serve.labels" . | nindent 8 }}
     spec:
+      {{- if $k8s }}
+      serviceAccountName: {{ $name }}
+      {{- end }}
       automountServiceAccountToken: false
       enableServiceLinks: false
       securityContext:
@@ -39,7 +45,9 @@ spec:
           image: {{ $image }}
           args:
             - serve
+            {{- if eq (toString .Values.instance.dryRun) "true" }}
             - --dry-run
+            {{- end }}
             - --repo
             - {{ .Values.instance.repo }}
             {{- with .Values.instance.loops }}
@@ -58,6 +66,15 @@ spec:
             - name: ARD_GITHUB_INSTALLATION_ID
               valueFrom: {secretKeyRef: {name: {{ .Values.githubApp.secretName }}, key: ARD_GITHUB_INSTALLATION_ID}}
             - {name: ARD_GITHUB_PRIVATE_KEY_FILE, value: /var/run/ard/github-app/private-key.pem}
+            {{- if $k8s }}
+            - {name: ARD_K8S_NAMESPACE, value: {{ include "ard-serve.jobsNamespace" . }}}
+            - {name: ARD_K8S_INSTANCE, value: {{ $name }}}
+            - {name: ARD_K8S_POD_IMAGE, value: {{ $image | quote }}}
+            - {name: ARD_K8S_AGENT_IMAGE, value: {{ include "ard-serve.agentImage" . | quote }}}
+            {{- with .Values.jobs.resources }}
+            - {name: ARD_K8S_RESOURCES, value: {{ . | quote }}}
+            {{- end }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -67,6 +84,9 @@ spec:
             - {name: home, mountPath: /home/ard}
             - {name: tmp, mountPath: /var/tmp}
             - {name: github-app, mountPath: /var/run/ard/github-app, readOnly: true}
+            {{- if $k8s }}
+            - {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -82,3 +102,12 @@ spec:
             items:
               - {key: private-key.pem, path: private-key.pem}
             defaultMode: 0400
+        {{- if $k8s }}
+        - name: kube-api-access
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 3600}
+              - configMap: {name: kube-root-ca.crt, items: [{key: ca.crt, path: ca.crt}]}
+              - downwardAPI: {items: [{path: namespace, fieldRef: {apiVersion: v1, fieldPath: metadata.namespace}}]}
+        {{- end }}

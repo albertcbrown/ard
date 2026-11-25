@@ -1,7 +1,8 @@
 instance:
   name: albertcbrown-ard
   repo: albertcbrown/ard
-  # dry-run only for now: live ard serve in a cluster needs the k8s executor (#54) and a Lease lock.
+  # dryRun: false is refused unless executor.kind is k8s with the live requirements met (apiServer, jobs.githubCIDRs,
+  # agentImage.digest, storage.accessMode ReadWriteOncePod); see the guard in templates/_helpers.tpl.
   dryRun: true
   # The controller loops this instance runs (ard serve --loops, #187). The soak runs only the deterministic ones: the
   # agent loops (triage, workers, reviewers) would run their roles in host mode in a pod that holds the App key.
@@ -28,6 +29,9 @@ githubApp:
 storage:
   size: 20Gi
   storageClassName: ""     # empty: the cluster's default StorageClass
+  # ReadWriteOnce or ReadWriteOncePod. Live (dryRun: false) needs ReadWriteOncePod: the leader lock is an flock on this
+  # volume. Access modes are immutable on a bound claim: see templates/pvc.yaml for the migration.
+  accessMode: ReadWriteOnce
 
 resources:
   requests:
@@ -37,3 +41,54 @@ resources:
     memory: 4Gi
 
 tmpSizeLimit: 4Gi
+
+# Executor (#54). local: the default; nothing below renders and the chart output is unchanged. k8s: ard serve runs
+# job steps as bare Pods in a jobs namespace this chart creates (Pod Security restricted, NetworkPolicies, quota,
+# Role for the controller, ValidatingAdmissionPolicy). The repository's .ard/config.yaml must also say executor: k8s.
+# The cluster needs Kubernetes 1.30 or later, a CNI that enforces egress ipBlock.except, and a CSI StorageClass for
+# ReadWriteOncePod. The deployment repository's AppProject must allow the jobs namespace and the cluster-scoped
+# Namespace, ValidatingAdmissionPolicy and ValidatingAdmissionPolicyBinding kinds.
+executor:
+  kind: local
+  jobsNamespace: ""        # empty: ard-jobs-<instance.name>
+
+# The agent container's image (#320), pinned by digest; required with executor k8s. pre and post run image above.
+agentImage:
+  repository: ghcr.io/albertcbrown/ard/agent
+  digest: ""
+
+# The kube-apiserver endpoints ard serve reaches (executor k8s): {cidr, port} each, e.g. {cidr: 172.18.0.2/32, port: 6443}.
+# NetworkPolicy usually sees the endpoint address after the Service is resolved, and it is usually inside the private
+# ranges the egress rule excepts, so it is allowed explicitly. kubectl get endpoints kubernetes -n default lists it.
+apiServer: []
+
+jobs:
+  # Fixed by the pod contract (internal/jobpod/contract.go: ResultPort, AgentUID, SidecarUID); a Go test checks
+  # these equal the constants. They feed the NetworkPolicies and the admission policy, not the pods.
+  resultPort: 8080
+  agentUID: 65532
+  sidecarUID: 65533
+  # IPv4 CIDRs every job pod may reach on TCP 443, even a network: false one: pre fetches from GitHub. Required with
+  # executor k8s; deploy/github-cidrs.sh prints the list from api.github.com/meta. Stale entries fail closed.
+  githubCIDRs: []
+  # The model API's IPv4 CIDRs on TCP 443, for network: false agents (network: true agents reach the internet anyway).
+  # Take them from the provider's published list; empty means network: false agents cannot reach the model API.
+  modelAPICIDRs: []
+  # --k8s-resources for ard serve (cpu, memory, memory-limit, ephemeral-storage of the agent container); empty: defaults.
+  resources: ""
+  # Sized for max_pods 3 with headroom for pods still terminating (internal/executor/kube/pod.go DefaultResources:
+  # per pod about 1.35 CPU and 2.3 GiB requested, 7.25 GiB memory limit, 9.7 GiB ephemeral storage).
+  quota:
+    pods: "6"
+    secrets: "12"
+    requests.cpu: "10"
+    requests.memory: 16Gi
+    limits.memory: 48Gi
+    requests.ephemeral-storage: 64Gi
+    limits.ephemeral-storage: 64Gi
+  # Per container. The executor sets requests and limits on every container; defaults cover anything else, max bounds
+  # --k8s-resources.
+  limitRange:
+    default: {memory: 1Gi, ephemeral-storage: 256Mi}
+    defaultRequest: {cpu: 100m, memory: 64Mi, ephemeral-storage: 64Mi}
+    max: {memory: 8Gi, ephemeral-storage: 16Gi}
