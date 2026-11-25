@@ -470,3 +470,10 @@ func TestSwapCrashResume(t *testing.T) {
 		t.Errorf("done mode %v", fi.Mode())
 	}
 }
+
+func TestPruneDelegatesToWorkspace(t *testing.T) {
+	e := newEnv(t, nil)
+	if err := e.ex.Prune(context.Background(), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+}

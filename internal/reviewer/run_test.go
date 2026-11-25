@@ -190,6 +190,7 @@ func TestPrepareErrorsFinishWithACause(t *testing.T) {
 		retry bool
 	}{
 		{"clone", func(h *harness) { h.ex.prepareErr = fmt.Errorf("x: %w", executor.ErrClone) }, closeout.CauseCloneFail, true},
+		{"inputs too large", func(h *harness) { h.ex.prepareErr = fmt.Errorf("x: %w", executor.ErrInputsTooLarge) }, closeout.CauseInputsTooLarge, false},
 		{"prepare", func(h *harness) { h.ex.prepareErr = errBoom }, closeout.CauseNoProcess, false},
 		{"start", func(h *harness) { h.ex.startErr = errBoom }, closeout.CauseNoProcess, false},
 	} {

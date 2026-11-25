@@ -68,6 +68,7 @@ func AgentCommand(reg *agent.Registry, cfg *config.Resolved, role config.Role, s
 // Dockerfile and Sidecar from cfg and Timeout from the role.
 func ExecJob(cfg *config.Resolved, role config.Role, j executor.Job) executor.Job {
 	j.RoleDir = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dir))
+	j.RoleSource = executor.RoleSource{SHA: cfg.SHA, Path: role.Dir}
 	j.Timeout = role.Timeout
 	if role.Dockerfile != "" {
 		j.Dockerfile = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dockerfile))
