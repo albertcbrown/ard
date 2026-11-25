@@ -25,7 +25,7 @@ type deps struct {
 // Command is the handler behind `ard labels sync`.
 func Command(ctx context.Context, e *cli.Env) error {
 	return run(ctx, e, func(ctx context.Context, root string) (deps, error) {
-		repo, err := resolveRepo(ctx, e, root)
+		repo, err := ResolveRepo(ctx, e, root)
 		if err != nil {
 			return deps{}, err
 		}
@@ -72,9 +72,9 @@ func run(ctx context.Context, e *cli.Env, open func(ctx context.Context, root st
 	return err
 }
 
-// resolveRepo takes --repo, or falls back to the origin remote of the
+// ResolveRepo takes --repo, or falls back to the origin remote of the
 // repository that holds the config. config.Resolved carries no owner/name.
-func resolveRepo(ctx context.Context, e *cli.Env, root string) (github.Repo, error) {
+func ResolveRepo(ctx context.Context, e *cli.Env, root string) (github.Repo, error) {
 	if e.Repo != "" {
 		return github.ParseRepo(e.Repo)
 	}
