@@ -71,10 +71,10 @@ func ManifestURL(owner string, ownerIsOrg bool, state string) string {
 	return base + "?state=" + url.QueryEscape(state)
 }
 
-// CheckPermissions compares granted repository permissions with the built-in
+// ComparePermissions compares granted repository permissions with the built-in
 // definition. missing lists permissions that are absent or too weak; extra
 // lists forbidden ones that are granted. Both are sorted.
-func CheckPermissions(granted map[string]string) (missing, extra []string) {
+func ComparePermissions(granted map[string]string) (missing, extra []string) {
 	for k, want := range AppPermissions {
 		got := granted[k]
 		if got == want || (want == "read" && got == "write") {

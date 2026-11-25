@@ -31,7 +31,7 @@ func TestManifestPermissionsMatchBuiltIn(t *testing.T) {
 	if !reflect.DeepEqual(m.DefaultPermissions, AppPermissions) {
 		t.Errorf("permissions = %v", m.DefaultPermissions)
 	}
-	if miss, extra := CheckPermissions(m.DefaultPermissions); len(miss)+len(extra) != 0 {
+	if miss, extra := ComparePermissions(m.DefaultPermissions); len(miss)+len(extra) != 0 {
 		t.Errorf("check disagrees: missing %v extra %v", miss, extra)
 	}
 	for _, f := range ForbiddenPermissions {
@@ -43,7 +43,7 @@ func TestManifestPermissionsMatchBuiltIn(t *testing.T) {
 	if m.Public || strings.Contains(string(b), "hook_attributes") {
 		t.Errorf("manifest must be private with no webhook: %s", b)
 	}
-	miss, extra := CheckPermissions(map[string]string{"contents": "read", "workflows": "write"})
+	miss, extra := ComparePermissions(map[string]string{"contents": "read", "workflows": "write"})
 	if len(miss) == 0 || len(extra) != 1 {
 		t.Errorf("missing %v extra %v", miss, extra)
 	}

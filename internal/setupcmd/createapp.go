@@ -71,6 +71,8 @@ func (d *createDeps) defaults() {
 // CreateApp creates ard's GitHub App through the manifest flow, stores the
 // key and prints the environment lines. On success it also sets them in this
 // process so the normal setup checks use the new App.
+// --dry-run makes one read-only GET /users/{owner} to choose the user or
+// organization manifest URL; it creates nothing and starts no listener.
 func CreateApp(ctx context.Context, e *cli.Env, repo github.Repo, o CreateAppOpts) error {
 	var d createDeps
 	return createApp(ctx, e, repo, o, d)
