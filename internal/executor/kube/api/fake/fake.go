@@ -320,3 +320,20 @@ func cloneData(m map[string][]byte) map[string][]byte {
 	}
 	return c
 }
+
+// SetInitContainer sets the state of the named init container status,
+// replacing an existing entry or appending one.
+func (f *Fake) SetInitContainer(ns, pod, name string, st api.ContainerState) error {
+	return f.mutate(ns, pod, func(p *api.Pod) {
+		for i := range p.Status.InitContainerStatuses {
+			if p.Status.InitContainerStatuses[i].Name == name {
+				p.Status.InitContainerStatuses[i].State = st
+				return
+			}
+		}
+		p.Status.InitContainerStatuses = append(p.Status.InitContainerStatuses, api.ContainerStatus{Name: name, State: st})
+	})
+}
+
+// Mutate applies fn to the stored pod, for tests that need a field no setter covers.
+func (f *Fake) Mutate(ns, name string, fn func(*api.Pod)) error { return f.mutate(ns, name, fn) }
