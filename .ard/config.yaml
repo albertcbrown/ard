@@ -7,6 +7,12 @@
 # all: every human-filed issue enters.
 intake: { mode: label }
 
+# Loop poll intervals. Unset loops keep their defaults (scanners 4h, triage
+# 15m, workers 5m, reviewers 5m, prwatch 5m); 1m is the minimum. The merger
+# is controller code with no agent or job slot, so a short interval costs only
+# GitHub API reads and gets reviewed PRs merged sooner.
+intervals: { merger: 1m }
+
 merge:
   # A PR touching any of these waits for a human approval. There is no
   # built-in list: removing an entry removes its gate. An entry ending in /
