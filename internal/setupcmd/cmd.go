@@ -48,19 +48,12 @@ func Command(ctx context.Context, e *cli.Env, o cli.SetupOpts) error {
 		return fmt.Errorf("setup: %w", err)
 	}
 	d := Deps{
-		Reader:  rd,
-		Policy:  rd,
-		Repo:    repo,
-		Writer:  fx,
-		Desired: want,
-		// Placeholder until the shared permission check (#302) lands: the
-		// repository must be readable with the configured credentials.
-		Permissions: func(ctx context.Context) Row {
-			if _, err := rd.ListLabels(ctx); err != nil {
-				return Row{Status: StatusManual, Detail: "check ARD_GITHUB_* credentials and that the App is installed on " + repo.String()}
-			}
-			return Row{Status: StatusOK, Detail: "repository reachable"}
-		},
+		Reader:      rd,
+		Policy:      rd,
+		Repo:        repo,
+		Writer:      fx,
+		Desired:     want,
+		Permissions: func(ctx context.Context) Row { return CheckPermissions(ctx, rd, repo) },
 		LocalVsMain: func(ctx context.Context) (string, error) { return LocalVsMain(ctx, root) },
 		DryRun:      dry,
 		Log:         e.Log,
@@ -101,4 +94,14 @@ func LocalVsMain(ctx context.Context, root string) (string, error) {
 		return "./.ard/ differs from origin/main (ard serve reads origin/main)", nil
 	}
 	return "", nil
+}
+
+// CheckPermissions is the permission check shared by `ard setup` and
+// `ard init`. Until the full check (#302) lands it only verifies that the
+// repository is readable with the configured credentials.
+func CheckPermissions(ctx context.Context, r labelsync.Reader, repo github.Repo) Row {
+	if _, err := r.ListLabels(ctx); err != nil {
+		return Row{Status: StatusManual, Detail: "check ARD_GITHUB_* credentials and that the App is installed on " + repo.String()}
+	}
+	return Row{Status: StatusOK, Detail: "repository reachable"}
 }

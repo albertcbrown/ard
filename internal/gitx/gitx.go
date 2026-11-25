@@ -131,3 +131,25 @@ func (g *Git) RemoteURL(ctx context.Context, dir, remote string) (string, error)
 	}
 	return strings.TrimSpace(out), nil
 }
+
+// DirtyPaths lists the paths under pathspec that differ from HEAD or the
+// index, untracked files included.
+func (g *Git) DirtyPaths(ctx context.Context, dir, pathspec string) ([]string, error) {
+	out, _, err := g.run(ctx, dir, nil, "", nil, "status", "--porcelain", "-z", "--untracked-files=all", "--", pathspec)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: status: %w", err)
+	}
+	var paths []string
+	parts := strings.Split(out, "\x00")
+	for i := 0; i < len(parts); i++ {
+		e := parts[i]
+		if len(e) < 4 {
+			continue
+		}
+		paths = append(paths, e[3:])
+		if e[0] == 'R' || e[0] == 'C' {
+			i++ // the source path of a rename follows
+		}
+	}
+	return paths, nil
+}

@@ -27,7 +27,6 @@ import (
 	"github.com/albertcbrown/ard/internal/github/fake"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
-	"github.com/albertcbrown/ard/internal/labels"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -216,41 +215,11 @@ func TestInitOpensPR(t *testing.T) {
 	if strings.Contains(pr.Body, "@") || strings.Contains(strings.ToLower(pr.Body), "closes") {
 		t.Errorf("PR body has a mention or closing keyword:\n%s", pr.Body)
 	}
-	have, err := h.fake.ListLabels(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, l := range have {
-		found = found || l.Name == labels.Scanner("cve")
-	}
-	if !found {
-		t.Errorf("label %s missing: %v", labels.Scanner("cve"), have)
-	}
-	foundDocs := false
-	for _, l := range have {
-		foundDocs = foundDocs || l.Name == labels.Scanner("docs")
-	}
-	if !foundDocs {
-		t.Errorf("label %s missing: %v", labels.Scanner("docs"), have)
-	}
-	names := map[string]bool{}
-	for _, l := range have {
-		names[l.Name] = true
-	}
-	if !names[labels.Scanner("lint")] {
-		t.Errorf("label %s missing: %v", labels.Scanner("lint"), have)
+	if have, err := h.fake.ListLabels(context.Background()); err != nil || len(have) != 0 {
+		t.Errorf("init must not sync labels: %v, %v", have, err)
 	}
 	if !strings.Contains(pr.Body, "The lint scanner fails until you commit `.ard/scanners/lint/baseline`") {
 		t.Errorf("PR body lacks the lint baseline bullet:\n%s", pr.Body)
-	}
-	for _, want := range []string{labels.Running(labels.StageTriage, "lead"), labels.Done(labels.StageTriage, "lead"), "ard:triage:engineer", labels.Running(labels.StageTriage, "engineer"), labels.Done(labels.StageTriage, "engineer"), labels.Request(labels.StageWorker, "engineer"), labels.Running(labels.StageWorker, "engineer"), labels.Done(labels.StageWorker, "engineer"), labels.Request(labels.StageReview, "eng-review"), labels.Running(labels.StageReview, "eng-review"), labels.Done(labels.StageReview, "eng-review"), labels.Changes("eng-review"), labels.Request(labels.StageReview, "security-review"), labels.Running(labels.StageReview, "security-review"), labels.Done(labels.StageReview, "security-review"), labels.Changes("security-review"), labels.Request(labels.StageReview, "product-manager-review"), labels.Running(labels.StageReview, "product-manager-review"), labels.Done(labels.StageReview, "product-manager-review"), labels.Changes("product-manager-review")} {
-		if !names[want] {
-			t.Errorf("label %s missing", want)
-		}
-	}
-	if names["ard:triage:lead"] {
-		t.Error("label ard:triage:lead must not exist: the lead's request label is ard:pending")
 	}
 	for _, s := range []string{"add  .ard/scanners/cve/scan (0755)", "add  .ard/config.yaml", "opened PR #"} {
 		if !strings.Contains(out, s) {
@@ -289,7 +258,7 @@ func TestInitDryRun(t *testing.T) {
 	if w := h.fake.Writes(); len(w) != 0 {
 		t.Errorf("dry-run made %d GitHub writes: %v", len(w), w)
 	}
-	for _, s := range []string{"would add .ard/config.yaml", "dry-run: would open a PR from ard-init", "would create"} {
+	for _, s := range []string{"would add .ard/config.yaml", "dry-run: would open a PR from ard-init"} {
 		if !strings.Contains(out, s) {
 			t.Errorf("stdout lacks %q:\n%s", s, out)
 		}
@@ -363,9 +332,8 @@ func TestInitNothingToPropose(t *testing.T) {
 	if prs, _ := h.fake.ListPRs(context.Background(), github.ListPRsOpts{State: github.StateAll}); len(prs) != 0 {
 		t.Errorf("prs = %v", prs)
 	}
-	have, _ := h.fake.ListLabels(context.Background())
-	if len(have) == 0 {
-		t.Error("labels were not synced")
+	if have, _ := h.fake.ListLabels(context.Background()); len(have) != 0 {
+		t.Error("init must not sync labels")
 	}
 }
 
@@ -472,15 +440,15 @@ func TestInitCreatePRFailsAfterPush(t *testing.T) {
 	}
 }
 
-func TestInitLabelSyncFailureStopsBeforePush(t *testing.T) {
+func TestInitPRPermissionFailureStopsBeforePush(t *testing.T) {
 	h := newHarness(t)
-	h.fake.FailNext("CreateLabel", errors.New("denied"))
+	h.fake.FailNext("ListLabels", errors.New("denied"))
 	_, err := h.run(t, false)
 	if err == nil {
 		t.Fatal("want an error")
 	}
 	if strings.Contains(h.branches(t), "ard-init") {
-		t.Error("pushed after a label failure")
+		t.Error("pushed after a permission failure")
 	}
 }
 
