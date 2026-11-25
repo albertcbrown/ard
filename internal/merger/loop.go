@@ -67,6 +67,7 @@ type Git interface {
 	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
 	Parents(ctx context.Context, repoDir, rev string) ([]string, error)
 	PatchID(ctx context.Context, repoDir, from, to, path string) (string, error)
+	MergeTreeEqual(ctx context.Context, repoDir, merge string) (bool, error)
 	CodeChanged(ctx context.Context, repoDir, from, to string, exclude ...string) ([]string, error)
 }
 
