@@ -34,4 +34,4 @@ The worker could not get `tests` green within `max_test_fixes` rounds. Read the 
 
 ## Labels are missing or stale
 
-Run `ard labels sync`. It creates and updates labels and reports stale ones, but never deletes them.
+Run `ard setup`. It creates and updates labels and reports stale ones, but never deletes them.
