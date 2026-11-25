@@ -48,6 +48,7 @@ type intervalsYAML struct {
 	Reviewers Duration `yaml:"reviewers"`
 	Merger    Duration `yaml:"merger"`
 	PRWatch   Duration `yaml:"prwatch"`
+	Approvals Duration `yaml:"approvals"`
 }
 
 type intakeYAML struct {
@@ -146,6 +147,7 @@ func (r *Resolved) render() resolvedYAML {
 			Reviewers: r.Intervals.Reviewers,
 			Merger:    r.Intervals.Merger,
 			PRWatch:   r.Intervals.PRWatch,
+			Approvals: r.Intervals.Approvals,
 		},
 		Intake:         intakeYAML{Mode: r.Intake.Mode, Label: r.Intake.Label},
 		ProtectedPaths: r.ProtectedPaths,

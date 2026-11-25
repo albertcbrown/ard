@@ -10,7 +10,7 @@ func Keys() []string {
 		"max_pods", "executor", "agent", "require_approval",
 		"budget_usd_per_day", "tokens_per_day", "max_budget_usd", "global_max_open", "paused",
 		"intervals.scanners", "intervals.triage", "intervals.workers",
-		"intervals.reviewers", "intervals.merger", "intervals.prwatch",
+		"intervals.reviewers", "intervals.merger", "intervals.prwatch", "intervals.approvals",
 		"pr_watch.pending_timeout", "roles_repo",
 		"intake.mode", "intake.label",
 		"merge.protected_paths",

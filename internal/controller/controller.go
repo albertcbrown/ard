@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -68,6 +69,12 @@ type Controller struct {
 
 	mu     sync.Mutex
 	active map[string]bool
+
+	// runners, wakePending and wakeTimer implement WakeLoops; all guarded by mu.
+	runners     map[string]*runner
+	wakeStopped bool
+	wakePending map[string]map[string]bool // reason -> loop names
+	wakeTimer   *time.Timer
 }
 
 // New validates deps and loop names. It returns an error for a nil Log,
@@ -166,6 +173,12 @@ func (c *Controller) Run(ctx context.Context) error {
 			r.run(workCtx, stopping)
 		}()
 	}
+	c.mu.Lock()
+	c.runners = make(map[string]*runner, len(runners))
+	for _, r := range runners {
+		c.runners[r.loop.Name()] = r
+	}
+	c.mu.Unlock()
 	log.Info("controller.start", "loops", names)
 	if c.deps.Wake != nil {
 		wg.Add(1)
@@ -206,6 +219,12 @@ func (c *Controller) Run(ctx context.Context) error {
 	<-ctx.Done()
 	log.Info("controller.stopping")
 	close(stopping)
+	c.mu.Lock()
+	c.wakeStopped = true
+	if c.wakeTimer != nil {
+		c.wakeTimer.Stop()
+	}
+	c.mu.Unlock()
 
 	grace := c.deps.Grace
 	if grace == 0 {
@@ -294,5 +313,70 @@ func (c *Controller) wakeOnFreed(freed <-chan struct{}, runners []*runner, stopp
 		if len(woken) > 0 {
 			c.deps.Log.Info("controller.wake", "reason", "slot_freed", "loops", woken)
 		}
+	}
+}
+
+// WakeLoops asks the named loops to run one tick soon, for a hand-off (a
+// close-out that requested the next stage, an approval, an unblock). Calls
+// within the debounce window merge into one wake per loop, a loop that is
+// mid-tick runs once more after it finishes, unknown names and calls before
+// Run or after shutdown are ignored. A woken loop still goes through the
+// kill switch and the pool like a scheduled tick, so a wake while paused
+// starts nothing. It is safe to call from any goroutine.
+func (c *Controller) WakeLoops(reason string, names ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.wakeStopped || c.runners == nil {
+		return
+	}
+	for _, n := range names {
+		if _, ok := c.runners[n]; !ok {
+			continue
+		}
+		if c.wakePending == nil {
+			c.wakePending = map[string]map[string]bool{}
+		}
+		if c.wakePending[reason] == nil {
+			c.wakePending[reason] = map[string]bool{}
+		}
+		c.wakePending[reason][n] = true
+	}
+	if len(c.wakePending) == 0 || c.wakeTimer != nil {
+		return
+	}
+	window := c.deps.FreedDebounce
+	if window <= 0 {
+		window = DefaultFreedDebounce
+	}
+	c.wakeTimer = time.AfterFunc(window, c.flushWakes)
+}
+
+// flushWakes wakes every loop collected by WakeLoops, one log line per reason.
+func (c *Controller) flushWakes() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pending := c.wakePending
+	c.wakePending, c.wakeTimer = nil, nil
+	if c.wakeStopped {
+		return
+	}
+	reasons := make([]string, 0, len(pending))
+	for reason := range pending {
+		reasons = append(reasons, reason)
+	}
+	slices.Sort(reasons)
+	for _, reason := range reasons {
+		var woken []string
+		for n := range pending[reason] {
+			woken = append(woken, n)
+		}
+		slices.Sort(woken)
+		for _, n := range woken {
+			select {
+			case c.runners[n].wake <- struct{}{}:
+			default: // one already pending
+			}
+		}
+		c.deps.Log.Info("controller.wake", "reason", reason, "loops", woken)
 	}
 }

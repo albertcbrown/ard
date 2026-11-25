@@ -14,6 +14,7 @@ intervals:
   reviewers: 5m
   merger: 5m
   prwatch: 10m
+  approvals: 1m
 intake:
   mode: label
 protected_paths:
