@@ -4,4 +4,5 @@ mkdocs-material==9.8.2
 certifi>=2026.10.18
 # pymdown-extensions: GHSA-9xwg-3r6f-jcx2 fixed in 11.0.0
 # pymdown-extensions: GHSA-gm37-52c6-37mw fixed in 11.0.1
+# pymdown-extensions: GHSA-62q4-447f-wv8h fixed in 10.21.3 (covered by >=11.0.1)
 pymdown-extensions>=11.0.1

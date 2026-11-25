@@ -19,6 +19,7 @@ func (w *wiring) budgetGate() *budget.Gate {
 			now = time.Now
 		}
 		w.bgt = budget.New(w.Store, func() *config.Resolved { return w.cfg.Load() }, now, w.Log)
+		w.bgt.SetTokenReader(w.Store)
 	}
 	return w.bgt
 }
@@ -27,7 +28,7 @@ func (w *wiring) budgetGate() *budget.Gate {
 // UTC day. It shares the gate, so its caps match what the pool enforces.
 func budgetLoop(w *wiring) controller.Loop {
 	return budget.NewLoop(budget.Deps{
-		Gate: w.budgetGate(), Store: w.Store, Effects: w.Effects,
+		Gate: w.budgetGate(), Tokens: w.budgetGate(), Store: w.Store, Effects: w.Effects,
 		StatusIssue: func() int { return int(w.statusIssue.Load()) },
 		Log:         w.Log, Now: w.budgetNow,
 	})
