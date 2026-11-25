@@ -2,6 +2,8 @@ mkdocs==1.6.1
 mkdocs-material==9.8.2
 # certifi: GHSA-6q48-6c7w-9gw2 fixed in 2026.10.18
 certifi>=2026.10.18
+# idna: GHSA-65pc-fj4g-8rjx fixed in 3.15
+idna>=3.15
 # pymdown-extensions: GHSA-9xwg-3r6f-jcx2 fixed in 11.0.0
 # pymdown-extensions: GHSA-gm37-52c6-37mw fixed in 11.0.1
 # pymdown-extensions: GHSA-62q4-447f-wv8h fixed in 10.21.3 (covered by >=11.0.1)
