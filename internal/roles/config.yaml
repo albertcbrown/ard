@@ -13,6 +13,8 @@ merge:
   protected_paths:
     - .github/
     - .ard/config.yaml
+    # ard init records the starter hashes here; editing it changes what init may overwrite.
+    - .ard/ard-init.lock
     - .ard/scanners/
     - .ard/triage/
     - .ard/workers/

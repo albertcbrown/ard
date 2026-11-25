@@ -29,10 +29,10 @@ type InitFile struct {
 	Exec bool
 }
 
-var initPathRe = regexp.MustCompile(`^\.ard/(?:config\.yaml|PRODUCT\.md|VISION\.md|TECH_STACK\.md|(?:scanners|triage|workers|reviewers)/([a-z0-9][a-z0-9-]*)/[^/]+(?:/[^/]+)*)$`)
+var initPathRe = regexp.MustCompile(`^\.ard/(?:config\.yaml|ard-init\.lock|PRODUCT\.md|VISION\.md|TECH_STACK\.md|(?:scanners|triage|workers|reviewers)/([a-z0-9][a-z0-9-]*)/[^/]+(?:/[^/]+)*)$`)
 
 // CheckInitPath reports why p may not be proposed by ard init, or nil. It
-// accepts exactly .ard/config.yaml, the repo context docs .ard/PRODUCT.md, .ard/VISION.md and .ard/TECH_STACK.md, and files under
+// accepts exactly .ard/config.yaml, .ard/ard-init.lock, the repo context docs .ard/PRODUCT.md, .ard/VISION.md and .ard/TECH_STACK.md, and files under
 // .ard/{scanners,triage,workers,reviewers}/<role>/, where <role> matches the
 // role-name rule and is not all digits. It applies CheckPath's checks for
 // empty, canonical, backslash, control characters and .git segments. It
@@ -56,7 +56,7 @@ func CheckInitPath(p string) error {
 	}
 	m := initPathRe.FindStringSubmatch(p)
 	if m == nil {
-		return reason("not .ard/config.yaml, a context doc or a file under a role directory")
+		return reason("not .ard/config.yaml, the init lock, a context doc or a file under a role directory")
 	}
 	if m[1] != "" && strings.Trim(m[1], "0123456789") == "" {
 		return reason("numeric role name")

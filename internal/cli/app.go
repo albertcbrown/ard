@@ -53,7 +53,8 @@ type ConfigCheckOpts struct {
 
 // InitOpts is the parsed flag set of `ard init`.
 type InitOpts struct {
-	Force bool
+	// Version is the ard build version, recorded in .ard/ard-init.lock.
+	Version string
 }
 
 // ErrNotImplemented is returned (wrapped) by stub commands whose handler

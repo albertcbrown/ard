@@ -50,7 +50,7 @@ ard writes a cost table into each issue body, between ard-owned markers, from re
 
 ## Upgrades
 
-Build the new `ard`, stop `ard serve` and start the new binary. Run `ard config check` first, because a new release may reject a key the old one accepted. Review the release for changes to the starter roles; `ard init` proposes updates as a pull request and never deletes.
+Build the new `ard`, stop `ard serve` and start the new binary. Run `ard config check` first, because a new release may reject a key the old one accepted. Review the release for changes to the starter roles; `ard init` proposes updates as a pull request: it updates starter files you have not edited (judged by `.ard/ard-init.lock`), leaves edited files alone and prints their diff, and never deletes.
 
 ## Backups and rebuilding
 
