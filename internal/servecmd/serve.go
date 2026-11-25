@@ -95,7 +95,7 @@ func loopNames(loops []controller.Loop) []string {
 // knownLoops are the names registerLoops' loops report (Loop.Name), in the
 // order they register. "budget" selects the status-issue notice loop; the
 // claim gate itself is built into the pool whatever --loops says.
-var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", prwatch.Name, janitor.Name, "reaper", "budget", digest.Name}
+var knownLoops = []string{"scanners", stale.Name, "triage", "workers", "reviewers", "reviewfix", "merger", prwatch.Name, janitor.Name, "reaper", "budget", digest.Name, controller.ApprovalsName}
 
 // selectLoops keeps the loops named in want, in registration order; an empty
 // want keeps every loop. A name that is not a known loop is a usage error
@@ -355,6 +355,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
+	w.ctl.Store(cc)
 	startSHA := ""
 	if cfg != nil {
 		startSHA = cfg.SHA
@@ -388,6 +389,10 @@ type wiring struct {
 	// and the costs loop share it, so they never interleave on one body.
 	bodyLocks costblock.Locks
 	pool      atomic.Pointer[pool.Pool]
+
+	// ctl is the controller, set once it is built (after the loops and the
+	// Closer); close-out and the approval watch wake loops through it.
+	ctl atomic.Pointer[controller.Controller]
 
 	statusIssue atomic.Int64 // the status issue number; 0 until the startup hook has run
 
@@ -696,6 +701,9 @@ var registerLoops = func(w *wiring) []controller.Loop {
 		Repo: w.Repo, Locks: &w.bodyLocks, Log: w.Log}))
 	loops = append(loops, budgetLoop(w))
 	loops = append(loops, digestLoop(w))
+	loops = append(loops, &controller.ApprovalWatch{Search: func(ctx context.Context, q string, o github.SearchOpts) ([]github.Issue, error) {
+		return w.Reader.SearchIssues(ctx, q, o)
+	}, Wake: w.wakeLoops, Paused: w.Paused})
 	return loops
 }
 
