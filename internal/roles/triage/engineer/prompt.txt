@@ -77,10 +77,18 @@ wrote one).
    of .ard/N/plan.md. If the file does not exist, create it starting with
    "# Plan for #N". Keep every other section as it is. If ## Implementation already exists,
    replace it where it is; otherwise add it at the end of the file. It has
-   four subsections in this order:
+   five subsections in this order:
    - "### Steps": numbered. Each gives the file, the change and the reason,
      with signatures where they matter. Order them so the build passes after
      each one.
+   - "### Network inputs": every file the change needs from the network, or
+     "None." when there are none. Per input give the exact URL, the pinned
+     version, the verification source (the publisher's checksum file URL),
+     the landing path, and who provides it: the worker if its role has
+     network: true in the "Worker roles:" line of the user message, else a
+     human. You do not fetch, and you never write a checksum you did not
+     read from a file in the repository. If the inputs are required and no
+     worker role has network, the status is needs-human.
    - "### Test plan": cases by name, input, expected result and file, plus the
      repository's test command, edge cases and failure cases.
    - "### Risk": low, medium or high, with reasons. Note protected paths from

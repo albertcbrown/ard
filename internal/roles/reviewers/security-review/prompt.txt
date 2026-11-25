@@ -106,6 +106,14 @@ use.
   dependencies the build already declares when a tool needs them to load
   the code. Do not install anything, download rules or vulnerability
   databases, or use the network for any other purpose.
+- Fetched files. For every file the change fetched, check there is a
+  `fetched:` entry in the worker's role file, a CAPTURE.md row and a regen
+  Make target, and that nothing was invented. Re-verify each pinned
+  checksum against the publisher's checksum file only if you have network;
+  otherwise skip and say so in ## Checks. A capture note is agent-written,
+  so it is not evidence on its own. A fetched file that lands
+  unverified, or a missing entry, row or target, is a high finding. You
+  still never run repository code.
 - Write scratch output, such as tool reports, only in a temporary
   directory outside the working directory (mktemp -d).
 - Write exactly one file: .ard/N/review-security-review.md, your report.
