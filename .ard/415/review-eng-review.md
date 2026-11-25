@@ -2,31 +2,23 @@
 role: eng-review
 status: done
 attempt: 1
-verdict: changes
+verdict: approve
 findings:
-  - file: "internal/servecmd/serve.go"
-    line: 464
-    severity: high
-    blocking: true
-    message: |
-      The `pool.max_override` log is never emitted in production: `slotOverride.log` is never set.
-      `w.slots` is a zero-value `slotOverride`, and `logf` returns early when `log` is nil. The issue requires logging `pool.max_override` (key changes and the clear on a config change). Only the unit tests, which inject a logger, see it. Set `w.slots.log` to the serve logger where `wiring` is built, and add a test that goes through the wiring.
-  - file: "internal/servecmd/serve.go"
-    line: 324
-    severity: medium
-    blocking: false
-    message: |
-      The reload path (`SetMax(w.slots.Effective(...))`) has no test that goes through serveLoops or the reload closure. The acceptance criteria ask for tests with config reloads. The tests only call `slotOverride.Effective` directly, so a regression in this wiring would pass. Consider extracting the reload step into a function and testing it against a real pool.
   - file: "internal/servecmd/controls.go"
-    line: 66
+    line: 115
     severity: low
     blocking: false
     message: |
-      `step` calls `slots.Step` and then `p.SetMax(n)` outside the override's lock, so a concurrent config reload can interleave and leave the pool cap briefly different from the override. Low impact, since the next reload corrects it.
+      `step` calls `slots.Step` and then `p.SetMax(n)` outside the override's lock, so a concurrent config reload can briefly leave the pool cap different from the override. The next reload or key press corrects it. Low impact.
 ---
-The slot override and pause key logic is sound and tested, but the required `pool.max_override` log is never emitted in a real run because the logger is never wired in, so this needs changes.
+The previous blocking finding is fixed: `initSlots` now gives the override the serve logger, so `pool.max_override` is emitted in a real run, and a wiring test covers it. The rest of the change matches the plan and is tested, so I approve.
 
 ## Checks
-- Lint: no repository lint entry point was run (budget); `go build ./...` and `go vet ./internal/...` showed no errors.
+- Lint: `make lint` was not run (budget). `go vet ./internal/...` printed no findings.
 - Tests: `go test ./internal/servecmd ./internal/ui ./internal/snapshot` passes.
-- Diff coverage: not measured; the new controls and slot functions are exercised by unit tests, but the serve.go reload wiring is not.
+- Diff coverage: not measured. The new slot, controls and key-handling code is exercised by unit tests.
+
+## Previous findings
+- internal/servecmd/serve.go (logger never wired): resolved. `w.initSlots()` is called right after `wiring` is built, and `TestWiringLogsOverride` checks it.
+- internal/servecmd/serve.go (reload path untested): resolved enough. The step is now `w.reloadMax`, and a test covers it. The one-line `SetMax` call in the reload closure is still not run by a test.
+- internal/servecmd/controls.go (SetMax outside the lock): still present, low and non-blocking.
