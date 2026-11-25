@@ -30,10 +30,17 @@ func (w *wiring) newSnapshotTaker(c *controller.Controller, events *snapshot.Rin
 			}
 			return nil
 		},
-		State:     w.Store,
-		Control:   c,
-		Caps:      w.budgetGate(),
-		Config:    func() *config.Resolved { return w.cfg.Load() },
+		State:   w.Store,
+		Control: c,
+		Caps:    w.budgetGate(),
+		Config:  func() *config.Resolved { return w.cfg.Load() },
+		Override: func() (int, bool) {
+			c := w.cfg.Load()
+			if c == nil {
+				return 0, false
+			}
+			return w.slots.Active(c.MaxPods)
+		},
 		Ring:      events,
 		Approvals: queueSource{&w.approvals},
 	})

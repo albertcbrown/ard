@@ -50,6 +50,8 @@ type Snapshot struct {
 // PoolView is the slot pool.
 type PoolView struct {
 	Used, Max int
+	ConfigMax int  // max_pods from config; 0 when no config has loaded
+	Override  bool // Max is a runtime override
 	Waiting   []Waiting
 }
 
@@ -186,12 +188,14 @@ type CapSource interface {
 // (or return nil), for example before startup hooks have run; Config may
 // return nil.
 type Sources struct {
-	Pool      func() PoolSource
-	Limits    func() LimitSource
-	State     StateSource
-	Control   ControlSource
-	Caps      CapSource
-	Config    func() *config.Resolved
+	Pool    func() PoolSource
+	Limits  func() LimitSource
+	State   StateSource
+	Control ControlSource
+	Caps    CapSource
+	Config  func() *config.Resolved
+	// Override reports the runtime max_pods override, if any (optional).
+	Override  func() (int, bool)
 	Ring      *Ring
 	Approvals QueueSource // may be nil
 	Now       func() time.Time
@@ -240,6 +244,7 @@ func (t *Taker) Take(ctx context.Context) Snapshot {
 	if t.s.Pool != nil {
 		if p := t.s.Pool(); p != nil {
 			snap.Pool, held = poolView(p.Stats()), p.HeldSlots()
+			t.addOverride(&snap.Pool)
 			snap.Pool.Used = len(held)
 		}
 	}
@@ -487,4 +492,16 @@ func spendView(per map[state.RoleKey]state.Spend, repo state.Spend, cfg *config.
 		return v.Roles[i].Role < v.Roles[j].Role
 	})
 	return v
+}
+
+// addOverride fills the config max and the override flag of the pool view.
+func (t *Taker) addOverride(v *PoolView) {
+	if t.s.Config != nil {
+		if c := t.s.Config(); c != nil {
+			v.ConfigMax = c.MaxPods
+		}
+	}
+	if t.s.Override != nil {
+		_, v.Override = t.s.Override()
+	}
 }

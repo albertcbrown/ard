@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/albertcbrown/ard/internal/controller"
 )
 
 const (
@@ -54,6 +56,18 @@ func Render(m Model) string {
 
 	add(titleStyle.Render("ard serve") + "  " + Clean(m.Repo))
 	hdr := fmt.Sprintf("%s  pool %d/%d  spend $%.2f", s.TakenAt.UTC().Format("2006-01-02 15:04:05Z"), s.Pool.Used, s.Pool.Max, s.Spend.RepoUSD)
+	if s.Pool.Override {
+		hdr = strings.Replace(hdr, fmt.Sprintf("pool %d/%d", s.Pool.Used, s.Pool.Max), fmt.Sprintf("pool %d/%d max_pods %d (config %d)", s.Pool.Used, s.Pool.Max, s.Pool.Max, s.Pool.ConfigMax), 1)
+	}
+	if s.Pool.Used > s.Pool.Max {
+		hdr += "  draining"
+	}
+	for _, p := range s.Pause {
+		if p.Reason == controller.ReasonPauseFile {
+			hdr += "  PAUSED (file)"
+			break
+		}
+	}
 	if s.Spend.RepoCap > 0 {
 		hdr += fmt.Sprintf(" of $%.2f", s.Spend.RepoCap)
 	}
@@ -143,7 +157,9 @@ func Render(m Model) string {
 
 	if m.help {
 		lines = append(lines, headStyle.Render("Help"),
-			"?  toggle help", "j/k, arrows  select issue", "o  open selected issue in the browser", "a  approve the selected issue (asks first)", "q  quit (asks first)", "ctrl+c  stop now")
+			"?  toggle help", "j/k, arrows  select issue", "o  open selected issue in the browser", "a  approve the selected issue (asks first)", "p  pause (pause file) / unpause (asks first)", "+ / -  raise / lower max_pods (1..min(2x config,16)); lowering drains, never kills",
+			"dry-run: the pause file and slot override still apply locally; they are local controls, not GitHub effects",
+			"q  quit (asks first)", "ctrl+c  stop now")
 	}
 
 	room := h - len(lines) - len(tail) - 2 // issues heading and footer
@@ -173,9 +189,15 @@ func Render(m Model) string {
 	}
 	lines = append(lines, tail...)
 
-	footer := "? help  j/k select  o open  a approve  q quit"
+	footer := "? help  j/k select  o open  a approve  p pause  +/- slots  q quit"
+	if m.toast != "" {
+		footer = Clean(m.toast)
+	}
 	if m.status != "" {
 		footer = m.status
+	}
+	if m.confirmUnpause {
+		footer = "unpause? y/enter"
 	}
 	if m.confirmQuit {
 		footer = "quit? y/n"
