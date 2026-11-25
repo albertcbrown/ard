@@ -1,0 +1,40 @@
+{{- /* executor k8s: what the controller may do in the jobs namespace, exactly the calls internal/executor/kube/api's
+Client makes from internal/executor/kube (pods create/get/list/delete, pods/log get, secrets create/delete). No
+watch (status is polled with get), no pods/exec, no services, no patch or update, no PVCs, no secrets get or list
+(the controller never reads a Secret back). */ -}}
+{{- if include "ard-serve.k8s" . }}
+{{- $ns := include "ard-serve.jobsNamespace" . }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ard-serve.name" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, delete, get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ard-serve.name" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "ard-serve.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ard-serve.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
