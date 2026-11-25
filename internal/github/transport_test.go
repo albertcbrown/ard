@@ -233,35 +233,58 @@ func TestRetryTransportCancelDuringSleep(t *testing.T) {
 }
 
 func TestRetryTransportSearchSpacing(t *testing.T) {
-	r := newRig(t, time.Minute, status(200))
-	r.rt.search = rate.NewLimiter(rate.Every(100*time.Millisecond), 5)
-	start := time.Now()
-	for i := 0; i < 5; i++ {
-		resp, err := r.do(t, context.Background(), "GET", "/search/issues", "")
+	bg := context.Background()
+	search := func(t *testing.T, r *rig, ctx context.Context) error {
+		t.Helper()
+		resp, err := r.do(t, ctx, "GET", "/search/issues", "")
+		if err == nil {
+			resp.Body.Close()
+		}
+		return err
+	}
+
+	t.Run("burst and non-search", func(t *testing.T) {
+		r := newRig(t, time.Minute, status(200))
+		// The interval is so long that no token refills during the test.
+		r.rt.search = rate.NewLimiter(rate.Every(time.Hour), 5)
+		for i := 0; i < 5; i++ {
+			if err := search(t, r, bg); err != nil {
+				t.Fatalf("search %d of the burst: %v", i+1, err)
+			}
+		}
+		// The sixth would have to wait about an hour, which passes the
+		// deadline, so Wait fails at once.
+		ctx, cancel := context.WithTimeout(bg, time.Second)
+		defer cancel()
+		if err := search(t, r, ctx); err == nil {
+			t.Error("sixth search was not throttled")
+		}
+		// non-search requests are not limited
+		resp, err := r.do(t, ctx, "GET", "/repos/o/r", "")
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("non-search request was throttled: %v", err)
 		}
 		resp.Body.Close()
-	}
-	if time.Since(start) > 80*time.Millisecond {
-		t.Errorf("burst of 5 was throttled: %v", time.Since(start))
-	}
-	before := time.Now()
-	resp, err := r.do(t, context.Background(), "GET", "/search/issues", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if d := time.Since(before); d < 60*time.Millisecond {
-		t.Errorf("sixth search did not wait: %v", d)
-	}
-	// non-search requests are not limited
-	before = time.Now()
-	resp, _ = r.do(t, context.Background(), "GET", "/repos/o/r", "")
-	resp.Body.Close()
-	if time.Since(before) > 50*time.Millisecond {
-		t.Error("non-search request was throttled")
-	}
+	})
+
+	t.Run("spacing", func(t *testing.T) {
+		r := newRig(t, time.Minute, status(200))
+		r.rt.search = rate.NewLimiter(rate.Every(100*time.Millisecond), 5)
+		start := time.Now()
+		for i := 0; i < 5; i++ {
+			if err := search(t, r, bg); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := search(t, r, bg); err != nil {
+			t.Fatal(err)
+		}
+		// The sixth token is available 100ms after the limiter was created,
+		// however long the burst took; only a lower bound is asserted.
+		if d := time.Since(start); d < 95*time.Millisecond {
+			t.Errorf("sixth search did not wait: %v since start", d)
+		}
+	})
 }
 
 func TestReadOnlyTransport(t *testing.T) {
