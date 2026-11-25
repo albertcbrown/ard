@@ -52,6 +52,18 @@ func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if it := m.confirmApprove; it != nil {
+		m.confirmApprove = nil
+		if key != "y" || m.approve == nil {
+			return m, nil // default No: every other key cancels
+		}
+		n, run := it.Issue, m.approve
+		m.status = fmt.Sprintf("approving #%d...", n)
+		return m, func() tea.Msg {
+			line, err := run(n)
+			return approveDoneMsg{n: n, line: line, err: err}
+		}
+	}
 	switch key {
 	case "p":
 		m.pauseKey()
@@ -59,6 +71,18 @@ func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.slotKey(func() (string, error) { return m.ctl.SlotUp() })
 	case "-", "_":
 		m.slotKey(func() (string, error) { return m.ctl.SlotDown() })
+	case "a":
+		if m.approve != nil && m.selected >= 0 && m.selected < len(m.snap.Issues) {
+			n := m.snap.Issues[m.selected].Issue
+			for _, q := range m.snap.Queue {
+				if q.Issue == n && n > 0 {
+					q := q
+					m.confirmApprove = &q
+					m.status = ""
+					break
+				}
+			}
+		}
 	case "?":
 		m.help = !m.help
 	case "j", "down":

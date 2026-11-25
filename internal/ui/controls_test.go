@@ -22,7 +22,7 @@ func (f *fakeCtl) Unpause() error            { f.unpause++; return f.err }
 func (f *fakeCtl) SlotUp() (string, error)   { f.up++; return "max_pods 4 (config 3)", f.err }
 func (f *fakeCtl) SlotDown() (string, error) { f.down++; return "max_pods 2", f.err }
 
-func press(m Model, s string) Model {
+func pressKey(m Model, s string) Model {
 	r := []rune(s)
 	var k tea.KeyPressMsg
 	if s == "enter" {
@@ -44,12 +44,12 @@ func ctlModel(f *fakeCtl, pause ...snapshot.PauseView) (Model, *time.Time) {
 func TestPauseKeyWritesAtOnce(t *testing.T) {
 	f := &fakeCtl{}
 	m, _ := ctlModel(f)
-	m = press(m, "p")
+	m = pressKey(m, "p")
 	if f.pause != 1 || m.confirmUnpause {
 		t.Fatalf("pause=%d confirm=%v", f.pause, m.confirmUnpause)
 	}
 	f.err = errors.New("disk full")
-	m = press(m, "p")
+	m = pressKey(m, "p")
 	if !strings.Contains(m.toast, "pause failed") {
 		t.Errorf("toast %q", m.toast)
 	}
@@ -59,15 +59,15 @@ func TestUnpauseAsksToConfirm(t *testing.T) {
 	f := &fakeCtl{}
 	file := snapshot.PauseView{Loop: "w", Reason: controller.ReasonPauseFile}
 	m, _ := ctlModel(f, file)
-	m = press(m, "p")
+	m = pressKey(m, "p")
 	if !m.confirmUnpause || f.pause != 0 || !strings.Contains(Render(m), "unpause?") || !strings.Contains(Render(m), "PAUSED (file)") {
 		t.Fatalf("confirm=%v pause=%d", m.confirmUnpause, f.pause)
 	}
-	m = press(m, "n")
+	m = pressKey(m, "n")
 	if f.unpause != 0 || m.confirmUnpause {
 		t.Fatal("n must cancel")
 	}
-	m = press(press(m, "p"), "y")
+	m = pressKey(pressKey(m, "p"), "y")
 	if f.unpause != 1 {
 		t.Fatalf("unpause=%d", f.unpause)
 	}
@@ -77,7 +77,7 @@ func TestPauseKeyLeavesOtherSources(t *testing.T) {
 	for r, want := range map[controller.Reason]string{controller.ReasonLabel: "label", controller.ReasonConfig: "paused: false on main"} {
 		f := &fakeCtl{}
 		m, _ := ctlModel(f, snapshot.PauseView{Loop: "w", Reason: r})
-		m = press(m, "p")
+		m = pressKey(m, "p")
 		if f.pause+f.unpause != 0 || m.confirmUnpause || !strings.Contains(m.toast, want) {
 			t.Errorf("%s: pause=%d unpause=%d toast=%q", r, f.pause, f.unpause, m.toast)
 		}
@@ -87,11 +87,11 @@ func TestPauseKeyLeavesOtherSources(t *testing.T) {
 func TestSlotKeysToastAndExpiry(t *testing.T) {
 	f := &fakeCtl{}
 	m, now := ctlModel(f)
-	m = press(m, "+")
+	m = pressKey(m, "+")
 	if f.up != 1 || !strings.Contains(Render(m), "max_pods 4 (config 3)") {
 		t.Fatalf("up=%d", f.up)
 	}
-	m = press(m, "-")
+	m = pressKey(m, "-")
 	if f.down != 1 || m.toast != "max_pods 2" {
 		t.Fatalf("down=%d toast=%q", f.down, m.toast)
 	}
@@ -105,7 +105,7 @@ func TestSlotKeysToastAndExpiry(t *testing.T) {
 func TestNilControlsInert(t *testing.T) {
 	m := model(100, 30, snapshot.Snapshot{})
 	for _, k := range []string{"p", "+", "-"} {
-		m = press(m, k)
+		m = pressKey(m, k)
 	}
 	if m.toast != "" || m.confirmUnpause {
 		t.Error("keys must be inert without controls")

@@ -50,6 +50,8 @@ import (
 	"github.com/albertcbrown/ard/internal/snapshot"
 	"github.com/albertcbrown/ard/internal/state"
 	"github.com/albertcbrown/ard/internal/state/scannerdb"
+	"github.com/albertcbrown/ard/internal/triage"
+	"github.com/albertcbrown/ard/internal/ui"
 )
 
 // deps is what serve needs from the outside world. Tests inject fakes
@@ -393,7 +395,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	}
 	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun, "pause_file", pausePath, "config_sha", startSHA)
 	if useUI {
-		return runWithUI(ctx, cc.Run, w.snap.Take, &controls{w: w, pausePath: pausePath, loops: loopNames(selected)}, repo.String(), logPath, os.Stdin, e.Stdout)
+		return runWithUI(ctx, cc.Run, w.snap.Take, &controls{w: w, pausePath: pausePath, loops: loopNames(selected)}, approveFn(w.Effects, w.wakeLoops, repo.String(), ui.OpenBrowser), repo.String(), logPath, os.Stdin, e.Stdout)
 	}
 	return cc.Run(ctx)
 }
@@ -403,6 +405,8 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 // pool-adopt startup hook builds it inside Run), so loops must call Pool()
 // at tick time, never in their constructors.
 type wiring struct {
+	// approvals lists the issues the triage gate waits on; the UI's approve key reads it.
+	approvals triage.ApprovalQueue
 	// AgentImage is the default agent image (ARD_AGENT_IMAGE); "" = host mode for roles without a Dockerfile.
 	AgentImage string
 	Log        *slog.Logger

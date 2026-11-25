@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -17,6 +18,8 @@ type Model struct {
 
 	take func(context.Context) snapshot.Snapshot
 	open func(url string) error
+	// approve runs the approval and returns a status line. It may block.
+	approve func(n int) (string, error)
 
 	snap           snapshot.Snapshot
 	width, height  int
@@ -25,10 +28,12 @@ type Model struct {
 	confirmQuit    bool
 	confirmUnpause bool
 
-	ctl        Controls
-	now        func() time.Time
-	toast      string
-	toastUntil time.Time
+	ctl            Controls
+	now            func() time.Time
+	toast          string
+	toastUntil     time.Time
+	confirmApprove *snapshot.QueueItem
+	status         string // result of the last approval, shown in the footer
 }
 
 // Controls are the local actions the keys p, + and - perform. They are local
@@ -55,6 +60,18 @@ func (m Model) clock() time.Time {
 
 func (m *Model) setToast(s string) {
 	m.toast, m.toastUntil = s, m.clock().Add(ToastFor)
+}
+
+type approveDoneMsg struct {
+	n    int
+	line string
+	err  error
+}
+
+// WithApprove enables the approve key; fn runs the operator's approval.
+func (m Model) WithApprove(fn func(n int) (string, error)) Model {
+	m.approve = fn
+	return m
 }
 
 type tickMsg struct{}
@@ -94,6 +111,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.snap = snapshot.Snapshot(msg)
 		m.move(0)
 		return m, m.tick()
+	case approveDoneMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("approve #%d failed: %s", msg.n, Clean(msg.err.Error()))
+		} else {
+			m.status = Clean(msg.line)
+		}
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}

@@ -157,7 +157,7 @@ func Render(m Model) string {
 
 	if m.help {
 		lines = append(lines, headStyle.Render("Help"),
-			"?  toggle help", "j/k, arrows  select issue", "o  open selected issue in the browser", "p  pause (pause file) / unpause (asks first)", "+ / -  raise / lower max_pods (1..min(2x config,16)); lowering drains, never kills",
+			"?  toggle help", "j/k, arrows  select issue", "o  open selected issue in the browser", "a  approve the selected issue (asks first)", "p  pause (pause file) / unpause (asks first)", "+ / -  raise / lower max_pods (1..min(2x config,16)); lowering drains, never kills",
 			"dry-run: the pause file and slot override still apply locally; they are local controls, not GitHub effects",
 			"q  quit (asks first)", "ctrl+c  stop now")
 	}
@@ -189,15 +189,29 @@ func Render(m Model) string {
 	}
 	lines = append(lines, tail...)
 
-	footer := "? help  j/k select  o open  p pause  +/- slots  q quit"
+	footer := "? help  j/k select  o open  a approve  p pause  +/- slots  q quit"
 	if m.toast != "" {
 		footer = Clean(m.toast)
+	}
+	if m.status != "" {
+		footer = m.status
 	}
 	if m.confirmUnpause {
 		footer = "unpause? y/enter"
 	}
 	if m.confirmQuit {
 		footer = "quit? y/n"
+	}
+	if q := m.confirmApprove; q != nil {
+		lines = []string{
+			titleStyle.Render("Approve issue #" + fmt.Sprint(q.Issue)),
+			Trunc("title: "+Clean(q.Title), w),
+			Trunc("worker: "+Clean(q.Role), w),
+			Trunc("plan: "+Clean(q.PlanURL), w),
+			"",
+			warnStyle.Render("Approve? [y/N]"),
+		}
+		footer = "y approve  any other key cancels"
 	}
 	if len(lines) > h-1 {
 		lines = lines[:h-1]
