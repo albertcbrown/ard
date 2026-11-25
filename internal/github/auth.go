@@ -305,3 +305,14 @@ func checkPEM(key []byte) error {
 	}
 	return errors.New("github: GitHub App private key is not a parseable RSA key")
 }
+
+// DiscoverInstallation returns the id of this App's installation on repo,
+// or an error while it is not installed. baseURL may be empty for
+// api.github.com.
+func (a *AppAuth) DiscoverInstallation(ctx context.Context, repo Repo, baseURL string) (int64, error) {
+	a.configure(repo, baseURL)
+	return a.discover(ctx, http.DefaultTransport)
+}
+
+// DefaultAPIBaseURL is the public GitHub API root.
+func DefaultAPIBaseURL() string { return defaultBaseURL }

@@ -4,6 +4,8 @@ Agents cannot write under `.github/`, so a maintainer does these steps once. The
 
 ## 1. Add `.github/workflows/docs.yml`
 
+Done: the workflow is in the repository. It is described here so changes to it keep these properties.
+
 - **Triggers:** `push` to `main` and `pull_request`, both with `paths: [docs/site/**, mkdocs.yml, internal/config/**, internal/cli/**, internal/docscheck/**]`.
 - **`build` job:** check out, set up Python and Go, `pip install -r docs/site/requirements.txt`, then `make docs-check` (`mkdocs build --strict` plus the Go drift test).
 - **`deploy` job** (push to `main` only, `needs: build`): `actions/configure-pages`, build to `site/`, `actions/upload-pages-artifact`, `actions/deploy-pages`. Permissions: `contents: read`, `pages: write`, `id-token: write`. Environment `github-pages`.
