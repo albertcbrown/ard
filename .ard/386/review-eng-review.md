@@ -1,34 +1,30 @@
 ---
 role: eng-review
 status: done
-attempt: 2
+attempt: 3
 verdict: approve
 findings:
   - file: "internal/gitx/local.go"
-    line: 573
+    line: 620
     severity: medium
     blocking: false
     message: |
-      EntryAt (the ls-tree parser behind the inputs gate) has no test in gitx.
-      Its bad-path guard, the missing-path case, the blob/symlink/submodule parsing and the size field are only exercised through fakes in triage. Add a test against a temporary repository.
+      EntryAt (the ls-tree parser behind the inputs gate) still has no test in gitx.
+      Add a test against a temporary repository covering the bad-path guard, a missing path, blob, symlink and submodule entries, and the size field.
   - file: "internal/servecmd/reaping.go"
     line: 68
     severity: low
     blocking: false
     message: |
-      plan.md's TestCloserHasNetwork was not written, so nothing pins that the bounce stays switched on in servecmd. Add a small test that wiring.closer() builds a Closer with Deps.Network set.
+      plan.md's TestCloserHasNetwork is still not written, so nothing pins that servecmd keeps the bounce switched on.
+      Add a small test that wiring.closer() builds a Closer with Deps.Network set.
 ---
-The previous blocking findings are fixed: the persisted round state, resume replay, approval per round, the digest "waiting for inputs" counter and the other missing tests now exist and pass. Two small gaps remain (EntryAt and the servecmd wiring have no test), and neither blocks.
+The change still matches the plan and no blocking problem was found: the round state, the lead re-arm, the inputs gate and the approval per round are in place and tested. The two non-blocking gaps from the last round are unchanged.
 
 ## Checks
-- Lint: `make lint` was not re-run. `gofmt -l internal` is clean on the changed files; its only output is a parse error in testdata (`internal/roles/testdata/docs/skips/src/_x.go`), which the change did not touch.
-- Tests with coverage: `go test -cover` on closeout (90.1%), triage (87.4%), digest (91.7%), servecmd (79.3%), gitx (78.8%), roles and docscheck all pass. `EntryAt` has no direct test.
+- Lint: `make lint` was not run. `go build ./...` succeeds.
+- Tests: `go test` on gitx, servecmd and closeout passes. Coverage was not re-measured. A grep of the test files finds no test of `EntryAt` and no `TestCloserHasNetwork`.
 
 ## Previous findings
-- internal/closeout/prepare.go (persisted round state tests): resolved
-- internal/triage/fanin.go (approval per round tests): resolved
-- internal/triage/inputs.go (status issue waiting counter): resolved
-- internal/triage/inputs.go (gate paths: single SHA read, cache, read error): resolved
-- internal/closeout/network.go (InputsOf and NetworkRoundCount tests): resolved
-- internal/triage/intake.go (TestRearmedLeadReclaimed): resolved; TestCloserHasNetwork is still missing (see the low finding)
-- docs/proposal.md (docs depth): resolved
+- internal/gitx/local.go (EntryAt untested): still present
+- internal/servecmd/reaping.go (TestCloserHasNetwork missing): still present
