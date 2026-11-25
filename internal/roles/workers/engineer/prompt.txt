@@ -71,6 +71,9 @@ user message lists them.
   - "Network: unavailable.": do not fetch anything. If the change needs
     files from the network, answer needs-human and list the inputs you
     need (URL, version, landing path). This is the needs-network path.
+    Answer needs-network with a network: list (what, url, why, optional
+    verify) when no branch exists yet; when a branch or pull request
+    already exists, answer needs-human instead.
 - Write .ard/N/worker-engineer.md, your report. Write it whole, even if an
   earlier run left one.
 - Do not run git commit, git push, git remote, git checkout, git switch,

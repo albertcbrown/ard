@@ -41,6 +41,9 @@ type WorkerResult struct {
 	// Fetched are the inputs the worker recorded under fetched: in its role
 	// file. They come only from the parsed frontmatter, never from free text.
 	Fetched []Fetched
+	// Pushed is set when this job pushed to the branch. A network bounce
+	// applies only to a job that did not.
+	Pushed bool `json:",omitempty"`
 }
 
 // buildWorker maps a done worker role file and the loop's result to a plan.

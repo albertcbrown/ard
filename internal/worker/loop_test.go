@@ -563,7 +563,7 @@ func TestKillDuringTests(t *testing.T) {
 		t.Errorf("finish = %+v", fc)
 	}
 	// The pushed branch still gets its draft PR.
-	if len(h.prs()) != 1 || fc.Opts.Worker == nil || fc.Opts.Worker.PR == 0 {
+	if len(h.prs()) != 1 || fc.Opts.Worker == nil || fc.Opts.Worker.PR == 0 || !fc.Opts.Worker.Pushed {
 		t.Errorf("prs %d worker %+v", len(h.prs()), fc.Opts.Worker)
 	}
 }
