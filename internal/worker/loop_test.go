@@ -328,7 +328,7 @@ func TestGuardHolds(t *testing.T) {
 // held for the lines it did not write; a new token-shaped literal is, and a
 // fixture built at run time is not.
 func TestOnlyAddedLinesAreScanned(t *testing.T) {
-	tok := "AK" + "IA" + "IOSFODNN7EXAMPLE"
+	tok := "AK" + "IA" + "QZ7K2M9TXW4HPN6B"
 	run := func(t *testing.T, edit func(old string) string) string {
 		h := newHarness(t, noTests)
 		fixture := "package x\n\nvar k = \"" + tok + "\"\n"
@@ -355,7 +355,7 @@ func TestOnlyAddedLinesAreScanned(t *testing.T) {
 	})
 	t.Run("built at run time", func(t *testing.T) {
 		if hold := run(t, func(old string) string {
-			return old + "var k3 = \"AK\" + \"IA\" + \"IOSFODNN7EXAMPLE\"\n"
+			return old + "var k3 = \"AK\" + \"IA\" + \"QZ7K2M9TXW4HPN6B\"\n"
 		}); hold != "" {
 			t.Errorf("hold = %q", hold)
 		}
