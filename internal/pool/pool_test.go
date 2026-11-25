@@ -601,3 +601,104 @@ func TestBudgetVerdict(t *testing.T) {
 		t.Errorf("held verdict = %v", ds[0].Verdict)
 	}
 }
+
+func hasSignal(p *Pool) bool {
+	select {
+	case <-p.Freed():
+		return true
+	default:
+		return false
+	}
+}
+
+func grant(t *testing.T, p *Pool, loop string, c Candidate) *Slot {
+	t.Helper()
+	d := p.Offer(loop, time.Minute, []Candidate{c})
+	if d[0].Slot == nil {
+		t.Fatalf("not granted: %v", d[0].Verdict)
+	}
+	return d[0].Slot
+}
+
+func TestFreedSignalOncePerRelease(t *testing.T) {
+	p, _ := newPool(2)
+	s := grant(t, p, "w", cand(ClassWorker, "w", 1, 0))
+	if hasSignal(p) {
+		t.Fatal("signal before release")
+	}
+	s.Release()
+	if !hasSignal(p) {
+		t.Fatal("no signal after release")
+	}
+	s.Release()
+	if hasSignal(p) {
+		t.Fatal("second release signalled")
+	}
+}
+
+func TestFreedCoalesces(t *testing.T) {
+	p, _ := newPool(3)
+	var ss []*Slot
+	for i := 1; i <= 3; i++ {
+		ss = append(ss, grant(t, p, "w", cand(ClassWorker, "w", i, 0)))
+	}
+	for _, s := range ss {
+		s.Release()
+	}
+	if !hasSignal(p) || hasSignal(p) {
+		t.Fatal("want exactly one buffered signal")
+	}
+}
+
+func TestFreedStaleHandleNoSignal(t *testing.T) {
+	p, _ := newPool(1)
+	c := cand(ClassWorker, "w", 1, 0)
+	s := grant(t, p, "w", c)
+	s.Release()
+	hasSignal(p)
+	s2 := grant(t, p, "w", c)
+	s.released = false // simulate a stale handle that never released
+	s.Release()
+	if hasSignal(p) {
+		t.Fatal("stale handle signalled")
+	}
+	if _, ok := p.Lookup(c.Key()); !ok || s2 == nil {
+		t.Fatal("re-granted slot lost")
+	}
+}
+
+func TestSetMaxRaiseSignals(t *testing.T) {
+	p, _ := newPool(2)
+	p.SetMax(2)
+	p.SetMax(1)
+	if hasSignal(p) {
+		t.Fatal("equal or lower cap signalled")
+	}
+	p.SetMax(4)
+	if !hasSignal(p) {
+		t.Fatal("raise did not signal")
+	}
+}
+
+func TestDemandLoops(t *testing.T) {
+	p, ck := newPool(1)
+	hold := grant(t, p, "w", cand(ClassWorker, "hold", 1, 0))
+	p.Offer("worker", time.Minute, []Candidate{cand(ClassWorker, "w", 2, 0)})
+	p.Offer("review", 10*time.Minute, []Candidate{cand(ClassReview, "r", 3, 0)})
+	p.Offer("scanners", time.Minute, []Candidate{cand(ClassScanner, "s", 4, 0)})
+	p.Offer("none", time.Minute, nil)
+	got := p.DemandLoops(ck.now())
+	if len(got) != 2 || got[0] != "review" || got[1] != "worker" {
+		t.Fatalf("got %v, want [review worker]", got)
+	}
+	ck.t = ck.t.Add(2 * time.Minute) // worker expires
+	if got := p.DemandLoops(ck.now()); len(got) != 1 || got[0] != "review" {
+		t.Fatalf("after expiry got %v", got)
+	}
+	// Holding the review loop's only candidate removes it.
+	hold.Release()
+	grant(t, p, "review", cand(ClassReview, "r", 3, 0))
+	if got := p.DemandLoops(ck.now()); len(got) != 0 {
+		t.Fatalf("held candidate still wakes: %v", got)
+	}
+}

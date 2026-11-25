@@ -1,6 +1,9 @@
 package pool
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // loopDemand is one loop's candidates last denied for lack of a slot. It is a
 // reservation hint only: a loop that has not offered reserves nothing.
@@ -129,4 +132,26 @@ func (p *Pool) checkStarvationLocked(now time.Time) {
 			p.log.Warn("pool.starved", "class", c.String(), "waiting", ws.count, "oldest_wait", ws.oldest.String())
 		}
 	}
+}
+
+// DemandLoops returns the sorted names of loops whose demand is live at now
+// and still has a non-scanner candidate that is not held. It does not change state.
+func (p *Pool) DemandLoops(now time.Time) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []string
+	for l, d := range p.demand {
+		if !now.Before(d.expires) {
+			continue
+		}
+		for k, c := range d.cands {
+			// Scanner runs are never woken by a release; they wait for their schedule.
+			if c.Class != ClassScanner && p.held[k] == nil {
+				out = append(out, l)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }

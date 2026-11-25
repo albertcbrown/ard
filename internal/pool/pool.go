@@ -82,6 +82,7 @@ type Pool struct {
 	demand      map[string]*loopDemand
 	firstDenied map[string]time.Time
 	starved     map[Class]bool
+	freed       chan struct{}
 }
 
 // New builds a pool, adopting o.Held.
@@ -97,6 +98,7 @@ func New(o Options) *Pool {
 		demand:      map[string]*loopDemand{},
 		firstDenied: map[string]time.Time{},
 		starved:     map[Class]bool{},
+		freed:       make(chan struct{}, 1),
 	}
 	if p.now == nil {
 		p.now = time.Now
@@ -125,7 +127,23 @@ func New(o Options) *Pool {
 func (p *Pool) SetMax(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	old := p.max
 	p.max = max(1, n)
+	if p.max > old {
+		p.signalLocked()
+	}
+}
+
+// Freed returns a channel that receives when a slot is released or the cap is
+// raised. It is buffered with one place and sent to without blocking, so
+// several releases coalesce into one pending signal.
+func (p *Pool) Freed() <-chan struct{} { return p.freed }
+
+func (p *Pool) signalLocked() {
+	select {
+	case p.freed <- struct{}{}:
+	default:
+	}
 }
 
 // Lookup returns the held slot for key, for close-out and the Reaper after a restart.

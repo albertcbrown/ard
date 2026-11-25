@@ -17,6 +17,10 @@ import (
 // DefaultGrace is how long shutdown waits for ticks and in-flight work.
 const DefaultGrace = 2 * time.Minute
 
+// DefaultFreedDebounce is how long the controller collects slot releases
+// before waking the loops that have demand.
+const DefaultFreedDebounce = 2 * time.Second
+
 // abandonWait is how long Run waits for goroutines to notice the cancelled
 // work context after the grace period expires or Force closes.
 const abandonWait = 5 * time.Second
@@ -44,6 +48,13 @@ type Deps struct {
 	// Wake, when non-nil, makes every loop run one tick now for each receive
 	// (still behind the kill switch and the pool). Pending wakes coalesce.
 	Wake <-chan struct{}
+	// Freed, when non-nil, is called once after the startup hooks and returns
+	// a channel that signals a freed job slot (nil means never). The loops
+	// that DemandLoops reports get one tick, after FreedDebounce.
+	Freed       func() <-chan struct{}
+	DemandLoops func(now time.Time) []string
+	// FreedDebounce is the collect window; 0 means DefaultFreedDebounce.
+	FreedDebounce time.Duration
 	// Rand returns a value in [0,1); nil means math/rand/v2.Float64.
 	Rand func() float64
 }
@@ -182,6 +193,16 @@ func (c *Controller) Run(ctx context.Context) error {
 		}()
 	}
 
+	if c.deps.Freed != nil && c.deps.DemandLoops != nil {
+		if freed := c.deps.Freed(); freed != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c.wakeOnFreed(freed, runners, stopping)
+			}()
+		}
+	}
+
 	<-ctx.Done()
 	log.Info("controller.stopping")
 	close(stopping)
@@ -224,5 +245,54 @@ func (c *Controller) abandon(cancel context.CancelFunc, drained <-chan struct{})
 	select {
 	case <-drained:
 	case <-t.C:
+	}
+}
+
+// wakeOnFreed waits for slot-freed signals, debounces them, and wakes the
+// runners with live demand for one tick each.
+func (c *Controller) wakeOnFreed(freed <-chan struct{}, runners []*runner, stopping <-chan struct{}) {
+	window := c.deps.FreedDebounce
+	if window <= 0 {
+		window = DefaultFreedDebounce
+	}
+	for {
+		select {
+		case <-stopping:
+			return
+		case <-freed:
+		}
+		timer := time.NewTimer(window)
+		for waiting := true; waiting; {
+			select {
+			case <-stopping:
+				timer.Stop()
+				return
+			case <-freed: // coalesced into this window
+			case <-timer.C:
+				waiting = false
+			}
+		}
+		loops := c.deps.DemandLoops(time.Now())
+		if len(loops) == 0 {
+			continue
+		}
+		want := map[string]bool{}
+		for _, n := range loops {
+			want[n] = true
+		}
+		var woken []string
+		for _, r := range runners {
+			if !want[r.loop.Name()] {
+				continue
+			}
+			woken = append(woken, r.loop.Name())
+			select {
+			case r.wake <- struct{}{}:
+			default: // one already pending
+			}
+		}
+		if len(woken) > 0 {
+			c.deps.Log.Info("controller.wake", "reason", "slot_freed", "loops", woken)
+		}
 	}
 }
