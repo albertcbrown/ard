@@ -68,6 +68,8 @@ type Controller struct {
 
 	mu     sync.Mutex
 	active map[string]bool
+	pauses map[string]PauseState // loop name -> last kill-switch result
+	ticks  map[string]TickInfo   // loop name -> last tick
 }
 
 // New validates deps and loop names. It returns an error for a nil Log,
@@ -92,7 +94,7 @@ func New(d Deps, loops ...Loop) (*Controller, error) {
 		}
 		seen[n] = true
 	}
-	return &Controller{deps: d, loops: loops, active: map[string]bool{}}, nil
+	return &Controller{deps: d, loops: loops, active: map[string]bool{}, pauses: map[string]PauseState{}, ticks: map[string]TickInfo{}}, nil
 }
 
 func (c *Controller) rand() float64 {
@@ -295,4 +297,63 @@ func (c *Controller) wakeOnFreed(freed <-chan struct{}, runners []*runner, stopp
 			c.deps.Log.Info("controller.wake", "reason", "slot_freed", "loops", woken)
 		}
 	}
+}
+
+// TickInfo is what the controller last saw of one loop's ticks.
+type TickInfo struct {
+	Loop  string
+	Count int       // ticks started
+	Start time.Time // last tick start; zero before the first
+	End   time.Time // last tick end; zero while the first is running
+	Err   string    // last tick's error; "" when it succeeded
+}
+
+func (c *Controller) recordPause(loop string, st PauseState) {
+	c.mu.Lock()
+	c.pauses[loop] = st
+	c.mu.Unlock()
+}
+
+func (c *Controller) recordTickStart(loop string, n int, at time.Time) {
+	c.mu.Lock()
+	t := c.ticks[loop]
+	t.Loop, t.Count, t.Start = loop, n, at
+	c.ticks[loop] = t
+	c.mu.Unlock()
+}
+
+func (c *Controller) recordTickEnd(loop string, at time.Time, err error) {
+	c.mu.Lock()
+	t := c.ticks[loop]
+	t.Loop, t.End, t.Err = loop, at, ""
+	if err != nil {
+		t.Err = err.Error()
+	}
+	c.ticks[loop] = t
+	c.mu.Unlock()
+}
+
+// PauseStates returns the last kill-switch result of each claiming loop, as
+// recorded by its latest tick. It never calls the PauseGate, so it makes no
+// GitHub request and is cheap to call often.
+func (c *Controller) PauseStates() map[string]PauseState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]PauseState, len(c.pauses))
+	for k, v := range c.pauses {
+		out[k] = v
+	}
+	return out
+}
+
+// Ticks returns the last tick of every loop that has ticked, sorted by loop name.
+func (c *Controller) Ticks() []TickInfo {
+	c.mu.Lock()
+	out := make([]TickInfo, 0, len(c.ticks))
+	for _, v := range c.ticks {
+		out = append(out, v)
+	}
+	c.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Loop < out[j].Loop })
+	return out
 }

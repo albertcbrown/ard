@@ -37,7 +37,7 @@ internal/worker/            the worker loop: claim, agent/test/fix steps, diff g
 internal/servecmd/          `ard serve` and `ard rebuild-state`: dependency wiring (lock, state, effects, pool adoption, controller); registerLoops takes one line per loop
 internal/redact/            log redaction (secrets and host paths), secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
 internal/roles/             starter .ard/ tree (config.yaml, role dirs) embedded for ard init (scanners/cve, scanners/docs, scanners/error-codes, scanners/lint, scanners/missing-tests, scanners/trufflehog, scanners/trufflehog-history, triage/lead, triage/engineer, workers/engineer, reviewers/eng-review, reviewers/license-review, reviewers/security-review)
-internal/pool/              slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap
+internal/pool/              slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap; Stats also reports recent limited/budget refusals per role (display only, no demand)
 internal/effects/           the only writer: Effects interface, Live and DryRun (JSONL ledger), Open factory; archtest/ enforces "only effects writes"
 internal/gitx/              git CLI wrapper (Commit, Push, StagedPaths, FileAt); gittest/ builds bare-repo fixtures; Commit/Push are for internal/effects only
 internal/wtlock/            serialises git worktree add/remove/prune per repository within the process (git worktree bookkeeping is not concurrency-safe, #109); leaf
@@ -49,6 +49,7 @@ internal/limits/            the book of exhausted usage limits the pool consults
 internal/budget/            the daily dollar-cap gate the pool consults (budget.Gate: role and repo caps from step_usage, UTC day, fails closed)
 internal/intake/            intake admission: Admit decides whether a human-filed issue may enter triage (pure; the triage loop calls it)
 internal/prgate/            decisions shared by the reviewer, the merger and prwatch: reviews-passed-at-head (label rule, head Covers, reviewed heads), ParseWorkerBranch, and the check rule (EvalChecks, ResolveApps)
+internal/snapshot/          the in-process Snapshot for the `ard serve` command center: pool, running jobs, kill switches, limits, today's issues and spend, recent log events (Ring + slog Tee); reads memory and state only, never GitHub (no internal/github import)
 internal/janitor/           the janitor loop: prunes .ard/<issue#>/ of issues closed over 90 days ago through the main committer; no slot
 internal/merger/            the merger loop: gates (reviews, checks from check runs and the rules API, protected-path approval), one update and one squash merge per tick; no slot
 internal/prwatch/           the PR watch loop (#267): observes ard's PRs for closed-unmerged, long-pending checks, human merges and red drafts; labels, comments and events only, never merges; no slot

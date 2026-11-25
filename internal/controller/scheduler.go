@@ -81,10 +81,12 @@ func (r *runner) run(workCtx context.Context, stopping <-chan struct{}) {
 func (r *runner) tick(workCtx context.Context, stopping <-chan struct{}) time.Duration {
 	r.n++
 	log := r.log.With("tick", r.n)
+	r.c.recordTickStart(r.loop.Name(), r.n, time.Now())
 	r.reload(workCtx, log)
 
 	if r.cfg == nil { // never loaded: nothing can run, and claiming loops are paused
 		if r.loop.Claims() {
+			r.c.recordPause(r.loop.Name(), PauseState{Paused: true, Reason: ReasonConfigInvalid})
 			r.transition(log, PauseState{Paused: true, Reason: ReasonConfigInvalid})
 		}
 		return r.nextWait(nil)
@@ -95,6 +97,7 @@ func (r *runner) tick(workCtx context.Context, stopping <-chan struct{}) time.Du
 		if r.cfgBroken {
 			st = PauseState{Paused: true, Reason: ReasonConfigInvalid}
 		}
+		r.c.recordPause(r.loop.Name(), st)
 		r.transition(log, st)
 		if st.Paused {
 			return r.nextWait(nil)
@@ -115,6 +118,7 @@ func (r *runner) tick(workCtx context.Context, stopping <-chan struct{}) time.Du
 	start := time.Now()
 	err := r.safeTick(ctx, Env{Log: log, Cfg: r.cfg, Inflight: r.c.inflight, Stopping: stopping})
 	r.c.setActive(r.loop.Name(), false)
+	r.c.recordTickEnd(r.loop.Name(), time.Now(), err)
 	log.Debug("loop.tick", "duration", time.Since(start).String())
 
 	if err != nil {
