@@ -5,12 +5,13 @@ attempt: 1
 next: [triage:engineer]
 worker: engineer
 ---
-The log secret scan should stop treating AWS's published example access key id and secret as findings, while every other match stays fail-closed. The change is narrow and sits inside the internal/redact package, with table tests, so only the engineer plan is needed.
+The log secret scan should stop reporting AWS's published placeholder access key id and secret as findings, and every other match should still fail closed. The change is narrow. It stays inside the internal/redact rules plus one test fixture and comes with table tests, so only the engineer's plan is needed.
 
 ## Routing
-- triage:engineer: plan the allowlist for AWS's documented example values in the redact rules, keep the scan fail-closed for everything else, cover it with table tests, and check whether redaction (separate from the scan) changes.
-- worker engineer: code change in internal/redact with unit tests.
+- triage:engineer: plan a tightly bounded exemption for AWS's documented placeholder values in the aws-access-key rule (and any rule that matches the placeholder secret), keep everything else fail-closed, define the table tests, and say whether redaction (separate from the scan) changes.
+- worker engineer: code change in internal/redact and the servecmd test fixture, with unit tests.
 
 ## Open issues
-- This loosens a security control. The reviewer should confirm that only the exact documented example values, or a tightly bounded EXAMPLE suffix, are exempt, and that one exempt token cannot hide a real key elsewhere on the same line.
-- If gitleaks also runs on logs (internal/redact/gitleaks.go), the plan should say whether its result for these values also needs handling.
+- This loosens a security control. Review should confirm that only the exact documented placeholder values, or a strictly anchored placeholder suffix, are exempt, and that an exempt token on a line cannot hide a real key elsewhere on the same line.
+- The plan, tests and fixtures should build the placeholder values at runtime, for example by joining their parts, so that no agent log contains a literal scanner match. If a log does contain one, it gets withheld again.
+- The gitleaks integration in internal/redact may flag these values on its own. The plan should say whether its result needs handling too.
