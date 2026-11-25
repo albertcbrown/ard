@@ -79,6 +79,8 @@ type job struct {
 	large    string             // the diff guard's latest "Large change" note; "" when under diff_warn_lines
 
 	stepBudget float64 // max_budget_usd the current agent step runs with
+
+	reopened *state.PendingPR // the record this job reopens the PR from, if any
 }
 
 // run claims one granted candidate and watches the job to the end, following
@@ -207,6 +209,9 @@ func (jb *job) exec(ctx context.Context) {
 		timeout = defaultTimeout
 	}
 	jb.deadline = d.Now().Add(timeout)
+	if jb.reopenPR(ctx) {
+		return
+	}
 	ref := jb.cfg.SHA
 	if jb.exists {
 		ref = localRef(jb.branch)
@@ -867,7 +872,16 @@ func (jb *job) openPR(ctx context.Context, res *closeout.WorkerResult) bool {
 		if err := d.Effects.UpdatePR(ctx, pr.Number, github.PRUpdate{Title: &title, Body: &body}); err != nil {
 			return fail("update", err)
 		}
-	} else if pr, err = d.Effects.CreatePR(ctx, github.NewPR{Title: title, Body: body, Head: jb.branch, Base: "main", Draft: true}); err != nil {
+	} else if pr, err = jb.createWithRetry(ctx, github.NewPR{Title: title, Body: body, Head: jb.branch, Base: "main", Draft: true}); err != nil {
+		if ctx.Err() != nil {
+			jb.log.Warn("worker.pr_stopped", "error", err)
+			return false
+		}
+		if jb.pushed {
+			jb.log.Error("worker.pr_failed", "step", "create", "error", err)
+			jb.failCreate(ctx, jb.head, title, body, res)
+			return false
+		}
 		return fail("create", err)
 	}
 	if err := d.Store.SetPR(ctx, jb.sj.ID, pr.Number); err != nil {

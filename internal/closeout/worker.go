@@ -44,6 +44,12 @@ type WorkerResult struct {
 	// Pushed is set when this job pushed to the branch. A network bounce
 	// applies only to a job that did not.
 	Pushed bool `json:",omitempty"`
+	// Reopened marks a result the worker loop built without an agent step: it
+	// opened the PR of an earlier job's pushed branch from the recorded
+	// close-out. Prepare then reads no role file and takes Summary, the
+	// earlier job's redacted summary, as the role file's.
+	Reopened bool   `json:",omitempty"`
+	Summary  string `json:",omitempty"`
 }
 
 // buildWorker maps a done worker role file and the loop's result to a plan.

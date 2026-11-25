@@ -66,6 +66,8 @@ type Store interface {
 	SetAdmission(ctx context.Context, a state.Admission) error
 	SetBranch(ctx context.Context, id, branch string) error
 	SetPR(ctx context.Context, id string, pr int) error
+	SetPendingPR(ctx context.Context, id string, p state.PendingPR) error
+	LatestPendingPR(ctx context.Context, issue int, role, except string) (state.Job, state.PendingPR, bool, error)
 	CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
 	Events(ctx context.Context, f state.EventFilter) ([]state.Event, error)
 	RecordStepUsage(ctx context.Context, jobID, step string, u state.StepUsage) (bool, error)
@@ -129,8 +131,11 @@ type Deps struct {
 	RemoteURL string
 	Token     gitx.TokenFunc
 	Poll      time.Duration // Status poll interval; default 2s
-	Now       func() time.Time
-	Log       *slog.Logger
+	// Sleep waits between CreatePR retries. nil waits on a real timer; tests
+	// pass a function that returns at once.
+	Sleep func(ctx context.Context, d time.Duration)
+	Now   func() time.Time
+	Log   *slog.Logger
 }
 
 // Loop is the worker loop. It implements controller.Loop.

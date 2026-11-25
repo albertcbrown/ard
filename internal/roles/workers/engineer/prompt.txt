@@ -74,6 +74,9 @@ user message lists them.
     Answer needs-network with a network: list (what, url, why, optional
     verify) when no branch exists yet; when a branch or pull request
     already exists, answer needs-human instead.
+- When the branch already holds a complete implementation of the plan
+  (its own earlier work) and no pull request exists, answer done with the
+  original summary of that work, not needs-human.
 - Write .ard/N/worker-engineer.md, your report. Write it whole, even if an
   earlier run left one.
 - Do not run git commit, git push, git remote, git checkout, git switch,

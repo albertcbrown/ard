@@ -230,7 +230,7 @@ func TestUpgradeFromInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var max int
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&max); err != nil || max != 8 {
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&max); err != nil || max != 9 {
 		t.Fatalf("schema version = %d, %v", max, err)
 	}
 	j, err := s.Job(ctx, "OLD")

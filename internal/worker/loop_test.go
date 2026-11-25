@@ -458,8 +458,189 @@ func TestCreatePRFailure(t *testing.T) {
 	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
 	h.mustTick()
 	fc := h.only()
-	if fc.Opts.Cause.Detail != "could not open the pull request" || fc.Opts.Cause.Retry {
+	// The branch was pushed, so the failure is the retryable-by-label kind.
+	if fc.Opts.Cause.Kind != closeout.CausePRCreateFailed || fc.Opts.Cause.Retry || fc.Opts.Cause.Transient {
 		t.Errorf("cause = %+v", fc.Opts.Cause)
+	}
+}
+
+func TestCreatePRFailureNoPush(t *testing.T) {
+	h := newHarness(t, noTests)
+	n := h.issue("t")
+	br := fmt.Sprintf("worker/engineer-%d-t", n)
+	gittest.Run(t, h.clone, "push", "origin", h.code.shas[0]+":refs/heads/"+br)
+	h.gh.FailNext("CreatePR", errBoom)
+	h.agentWrites(nil, roleDone, nil)
+	h.mustTick()
+	fc := h.only()
+	if fc.Opts.Cause.Kind != closeout.CauseNoProcess || fc.Opts.Cause.Detail != "could not open the pull request" {
+		t.Errorf("cause = %+v", fc.Opts.Cause)
+	}
+}
+
+func http5xx() error { return &github.HTTPError{Status: 502} }
+
+func TestCreatePRRetriesThenOpens(t *testing.T) {
+	h := newHarness(t, noTests)
+	n := h.issue("t")
+	var sleeps int
+	h.loop.d.Sleep = func(context.Context, time.Duration) { sleeps++ }
+	h.gh.FailNext("CreatePR", http5xx())
+	h.gh.FailNext("CreatePR", http5xx())
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	fc := h.only()
+	if fc.Opts.Cause.Kind != "" || fc.Opts.Worker == nil || fc.Opts.Worker.PR == 0 {
+		t.Errorf("opts = %+v", fc.Opts)
+	}
+	if len(h.prs()) != 1 || len(h.ex.jobs) != 1 || sleeps != 2 || h.has(n, labels.ExecutorFailed) {
+		t.Errorf("prs=%d agent steps=%d sleeps=%d failed=%v", len(h.prs()), len(h.ex.jobs), sleeps, h.has(n, labels.ExecutorFailed))
+	}
+}
+
+func TestCreatePRNonTransientNotRetried(t *testing.T) {
+	h := newHarness(t, noTests)
+	h.issue("t")
+	h.gh.FailNext("CreatePR", &github.HTTPError{Status: 422})
+	h.gh.FailNext("CreatePR", &github.HTTPError{Status: 422})
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	if fc := h.only(); fc.Opts.Cause.Kind != closeout.CausePRCreateFailed {
+		t.Errorf("cause = %+v", fc.Opts.Cause)
+	}
+	if len(h.prs()) != 0 {
+		t.Errorf("a PR was opened")
+	}
+}
+
+func TestCreatePRSleepStopsOnCancel(t *testing.T) {
+	h := newHarness(t, noTests)
+	h.loop.d.Sleep = nil // the real timer
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	jb := &job{l: h.loop, log: quiet}
+	if err := jb.sleep(ctx, time.Hour); err == nil {
+		t.Error("sleep ignored a cancelled context")
+	}
+}
+
+// failedPush runs a job whose CreatePR always fails after the push and returns
+// the issue, the branch and the recorded head, ready for the label removal.
+func failedPush(t *testing.T, h *harness) (int, string, string) {
+	t.Helper()
+	n := h.issue("t")
+	for i := 0; i < 4; i++ {
+		h.gh.FailNext("CreatePR", http5xx())
+	}
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	fc := h.only()
+	if fc.Opts.Cause.Kind != closeout.CausePRCreateFailed || fc.Opts.Cause.Retry {
+		t.Fatalf("cause = %+v", fc.Opts.Cause)
+	}
+	if !strings.Contains(fc.Opts.Cause.Detail, "worker/engineer-") && !strings.Contains(fc.Opts.Cause.Detail, h.code.shas[0][:12]) {
+		t.Errorf("detail = %q", fc.Opts.Cause.Detail)
+	}
+	j, err := h.store.Job(context.Background(), fc.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(j.PendingPR) == 0 {
+		t.Fatal("no pending_pr recorded")
+	}
+	var pp state.PendingPR
+	if err := json.Unmarshal(j.PendingPR, &pp); err != nil || pp.Head != h.code.shas[0] || pp.Branch != j.Branch || pp.Body == "" {
+		t.Fatalf("pending = %+v err %v", pp, err)
+	}
+	// Close the job like close-out would, and free the issue for a re-run.
+	if err := h.store.Fail(context.Background(), j.ID, "pr_create_failed", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.gh.RemoveLabel(context.Background(), n, labels.Running(labels.StageWorker, "engineer")); err != nil {
+		t.Fatal(err)
+	}
+	return n, j.Branch, pp.Head
+}
+
+func TestReopenPRWithoutAgent(t *testing.T) {
+	h := newHarness(t, noTests)
+	_, br, head := failedPush(t, h)
+	gittest.Run(t, h.clone, "push", "origin", head+":refs/heads/"+br)
+	h.mustTick()
+	got := h.fin.got()
+	if len(got) != 2 {
+		t.Fatalf("FinishWith calls = %d", len(got))
+	}
+	fc := got[1]
+	if fc.Opts.Cause.Kind != "" || fc.Opts.Worker == nil || !fc.Opts.Worker.Reopened || fc.Opts.Worker.PR == 0 || !fc.Opts.Worker.Pushed {
+		t.Errorf("opts = %+v worker %+v", fc.Opts, fc.Opts.Worker)
+	}
+	if len(h.ex.jobs) != 1 || h.code.n() != 1 {
+		t.Errorf("agent steps = %d, code commits = %d, want 1 and 1", len(h.ex.jobs), h.code.n())
+	}
+	prs := h.prs()
+	if len(prs) != 1 || prs[0].HeadRef != br || !strings.Contains(prs[0].Body, "Closes #") {
+		t.Errorf("prs = %+v", prs)
+	}
+}
+
+func TestReopenPRTolerantOfCloseoutCommit(t *testing.T) {
+	h := newHarness(t, noTests)
+	_, br, head := failedPush(t, h)
+	gittest.Run(t, h.clone, "push", "origin", head+":refs/heads/"+br)
+	// Close-out committed the log under .ard/ on top of the head.
+	gittest.Run(t, h.clone, "checkout", "-q", "--detach", head)
+	if err := os.MkdirAll(filepath.Join(h.clone, ".ard", "1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.clone, ".ard", "1", "usage.md"), []byte("u"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, h.clone, "add", ".ard")
+	gittest.Run(t, h.clone, "commit", "-q", "-m", "log")
+	gittest.Run(t, h.clone, "push", "-f", "origin", "HEAD:refs/heads/"+br)
+	h.mustTick()
+	if got := h.fin.got(); len(got) != 2 || !got[1].Opts.Worker.Reopened || len(h.ex.jobs) != 1 {
+		t.Errorf("finish calls = %d, agent steps = %d", len(got), len(h.ex.jobs))
+	}
+}
+
+func TestReopenPRBranchMoved(t *testing.T) {
+	h := newHarness(t, noTests)
+	h.code.shas[1] = h.commitFiles(map[string]string{"a.txt": "y"})
+	_, br, _ := failedPush(t, h)
+	gittest.Run(t, h.clone, "push", "origin", h.code.shas[1]+":refs/heads/"+br)
+	h.agentWrites(map[string]string{"a.txt": "z"}, roleDone, nil)
+	h.mustTick()
+	if len(h.ex.jobs) < 2 {
+		t.Errorf("agent steps = %d, want the full worker to run", len(h.ex.jobs))
+	}
+}
+
+func TestReopenPRAlreadyExists(t *testing.T) {
+	h := newHarness(t, noTests)
+	_, br, head := failedPush(t, h)
+	gittest.Run(t, h.clone, "push", "origin", head+":refs/heads/"+br)
+	h.gh.SeedPR(github.PullRequest{Title: "x", HeadRef: br, BaseRef: "main", State: github.StateOpen, Draft: true})
+	h.agentWrites(nil, roleDone, nil)
+	h.mustTick()
+	if len(h.ex.jobs) < 2 {
+		t.Errorf("agent steps = %d, want the full run", len(h.ex.jobs))
+	}
+	if len(h.prs()) != 1 {
+		t.Errorf("prs = %d, want no duplicate", len(h.prs()))
+	}
+}
+
+func TestCreatePRDryRunDoesNotRetry(t *testing.T) {
+	h := newHarness(t, noTests, dryRun)
+	h.issue("t")
+	var sleeps int
+	h.loop.d.Sleep = func(context.Context, time.Duration) { sleeps++ }
+	h.agentWrites(map[string]string{"a.txt": "x"}, roleDone, nil)
+	h.mustTick()
+	if sleeps != 0 {
+		t.Errorf("slept %d times under dry-run", sleeps)
 	}
 }
 

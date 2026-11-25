@@ -444,3 +444,47 @@ func TestEventsFilterIssueStageRole(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingPR(t *testing.T) {
+	ctx := tctx(t)
+	s := newStore(t)
+	j, err := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "eng", Issue: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Job(ctx, j.ID); got.PendingPR != nil {
+		t.Errorf("new job pending = %s, want none", got.PendingPR)
+	}
+	if err := s.SetPendingPR(ctx, j.ID, PendingPR{Branch: "b"}); err == nil {
+		t.Error("a record with no head was accepted")
+	}
+	want := PendingPR{Branch: "worker/eng-7-x", Head: "abc", Title: "t", Body: "b", Summary: "s", Result: []byte(`{"PR":0}`)}
+	if err := s.SetPendingPR(ctx, j.ID, want); err != nil {
+		t.Fatal(err)
+	}
+	// The record is read only from an ended job other than the caller's.
+	if _, _, ok, err := s.LatestPendingPR(ctx, 7, "eng", ""); err != nil || ok {
+		t.Fatalf("running job: ok=%v err=%v", ok, err)
+	}
+	if err := s.Fail(ctx, j.ID, "pr_create_failed", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	_, got, ok, err := s.LatestPendingPR(ctx, 7, "eng", "other")
+	if err != nil || !ok || got.Head != "abc" || got.Branch != want.Branch || string(got.Result) != `{"PR":0}` {
+		t.Fatalf("pending = %+v ok=%v err=%v", got, ok, err)
+	}
+	if _, _, ok, _ := s.LatestPendingPR(ctx, 7, "eng", j.ID); ok {
+		t.Error("the caller's own job was returned")
+	}
+	// A newer job without a record supersedes it.
+	s2, err := s.CreateJob(ctx, NewJob{Stage: "worker", Role: "eng", Issue: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Fail(ctx, s2.ID, "x", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, _ := s.LatestPendingPR(ctx, 7, "eng", "other"); ok {
+		t.Error("a superseded record was returned")
+	}
+}
