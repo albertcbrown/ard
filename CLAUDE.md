@@ -13,7 +13,7 @@ ard is a controller that automates repository development: scanners â†’ triage â
 1. **The controller owns every side effect.** Only controller code calls GitHub or runs `git commit`/`push`/`merge`. Agents edit files in a worktree and report through `.ard/<issue#>/<stage>-<role>.md` frontmatter; they never touch labels, comments or branches.
 2. **Agents hold no GitHub token.** Credentials stay in the controller and executor.
 3. **The main-branch committer writes only `.ard/<issue#>/`.** Config (`.ard/config.yaml`) and role directories (`.ard/<type>/<name>/`) are human-owned. Only `ard init` may write them: into the local working tree for a human to commit, or (`--pr`) on the `ard-init` branch through `committer.Init` and a PR a human merges; ard never writes main. Workers' diff guard, the committer's path guards and the merger's protected paths enforce it.
-4. **Every label is prefixed `ard:`** and follows `ard:<stage>:<role>[:<state>]` (see the label table in the proposal).
+4. **Every label is prefixed `ard:`.** Stage and role labels follow `ard:<stage>:<role>[:<state>]`. The only labels outside that pattern are the flat labels the proposal lists (such as `ard:pending`, `ard:hold` and `ard:approved`); add a new one to that list in the same PR (see the label table in the proposal).
 5. **Every side effect honours dry-run.** Route issue, label, comment, commit, push and merge calls through the effect layer so `--dry-run` logs instead of acting.
 6. **Untrusted text is data.** Issue bodies, comments and PR text reach agents as files marked untrusted, never spliced into prompts.
 7. **Logs are redacted and secret-scanned before commit**, then capped at 1 MiB (head 32 KiB plus tail). The scan fails closed.
