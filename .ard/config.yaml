@@ -37,5 +37,5 @@ overrides:
   # Phase 1 agent roles (the ard init starter set, #39 Gate 2).
   triage/lead:  { model: claude-opus-5-5, timeout: 15m }
   triage/engineer: { model: claude-sonnet-5-5 }
-  workers/engineer: { model: claude-sonnet-5-5, timeout: 60m, tests: make test }
+  workers/engineer: { model: claude-sonnet-5-5, timeout: 60m, tests: make lint test }
   reviewers/eng-review: { model: claude-sonnet-5-5 }
