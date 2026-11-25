@@ -49,6 +49,8 @@ func Command(ctx context.Context, e *cli.Env, o cli.SetupOpts) error {
 	}
 	d := Deps{
 		Reader:  rd,
+		Policy:  rd,
+		Repo:    repo,
 		Writer:  fx,
 		Desired: want,
 		// Placeholder until the shared permission check (#302) lands: the

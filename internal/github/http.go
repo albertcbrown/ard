@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -759,11 +760,91 @@ func latestPerContext(all []CommitStatus) []CommitStatus {
 }
 
 func (h *HTTP) AppID(ctx context.Context, slug string) (int64, error) {
+	app, err := h.GetApp(ctx, slug)
+	return app.ID, err
+}
+
+func (h *HTTP) GetApp(ctx context.Context, slug string) (AppInfo, error) {
 	app, _, err := h.gh.Apps.Get(ctx, slug)
 	if err != nil {
-		return 0, h.fail(ctx, fmt.Sprintf("get app %s", slug), 0, err)
+		return AppInfo{}, h.fail(ctx, fmt.Sprintf("get app %s", slug), 0, err)
 	}
-	return app.GetID(), nil
+	out := AppInfo{ID: app.GetID(), Slug: app.GetSlug()}
+	if app.Permissions != nil {
+		b, err := json.Marshal(app.Permissions)
+		if err == nil {
+			_ = json.Unmarshal(b, &out.Permissions)
+		}
+	}
+	return out, nil
+}
+
+func (h *HTTP) ListRulesets(ctx context.Context) ([]Ruleset, error) {
+	opts := &gogh.RepositoryListRulesetsOptions{ListOptions: gogh.ListOptions{PerPage: 100}}
+	stubs, err := paginate(0, func(page int) ([]*gogh.RepositoryRuleset, int, error) {
+		opts.Page = page
+		rs, resp, err := h.gh.Repositories.GetAllRulesets(ctx, h.o(), h.r(), opts)
+		return rs, nextPage(resp), err
+	})
+	if err != nil {
+		return nil, h.fail(ctx, "list rulesets", 0, err)
+	}
+	var out []Ruleset
+	for _, st := range stubs {
+		if st == nil || st.Enforcement != gogh.RulesetEnforcementActive || st.Target == nil || *st.Target != gogh.RulesetTargetBranch {
+			continue
+		}
+		// The list omits bypass actors, conditions and rules.
+		rs, _, err := h.gh.Repositories.GetRuleset(ctx, h.o(), h.r(), st.GetID(), false)
+		if err != nil {
+			return nil, h.fail(ctx, fmt.Sprintf("get ruleset %d", st.GetID()), 0, err)
+		}
+		r := Ruleset{ID: rs.GetID(), Name: rs.Name, Target: "branch", Enforcement: string(rs.Enforcement)}
+		if rs.Conditions != nil && rs.Conditions.RefName != nil {
+			r.Branches = rs.Conditions.RefName.Include
+			r.Exclude = rs.Conditions.RefName.Exclude
+		}
+		if rs.Rules != nil {
+			if b, err := json.Marshal(rs.Rules); err == nil {
+				var rules []struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(b, &rules) == nil {
+					for _, x := range rules {
+						r.Rules = append(r.Rules, x.Type)
+					}
+				}
+			}
+		}
+		for _, a := range rs.BypassActors {
+			if a == nil {
+				continue
+			}
+			r.Bypass = append(r.Bypass, BypassActor{ActorType: deref(a.ActorType), ActorID: a.GetActorID(), Mode: deref(a.BypassMode)})
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (h *HTTP) GetMergeSettings(ctx context.Context) (MergeSettings, error) {
+	repo, _, err := h.gh.Repositories.Get(ctx, h.o(), h.r())
+	if err != nil {
+		return MergeSettings{}, h.fail(ctx, "get repository", 0, err)
+	}
+	return MergeSettings{AllowRebaseMerge: repo.GetAllowRebaseMerge(), AllowSquashMerge: repo.GetAllowSquashMerge(), AllowMergeCommit: repo.GetAllowMergeCommit()}, nil
+}
+
+func (h *HTTP) GetVariable(ctx context.Context, name string) (string, bool, error) {
+	v, _, err := h.gh.Actions.GetRepoVariable(ctx, h.o(), h.r(), name)
+	if err != nil {
+		err = h.fail(ctx, "get variable "+name, 0, err)
+		if errors.Is(err, ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return v.Value, true, nil
 }
 
 // ---- Writer ----
@@ -934,4 +1015,11 @@ func (h *HTTP) DeleteBranch(ctx context.Context, branch string) error {
 		}
 	}
 	return h.fail(ctx, fmt.Sprintf("delete branch %q", branch), 0, err)
+}
+
+func deref[T ~string](p *T) string {
+	if p == nil {
+		return ""
+	}
+	return string(*p)
 }
