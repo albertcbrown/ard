@@ -65,7 +65,15 @@ type Job struct {
 	// (Docker only; host mode does not enforce it),
 	// at Paths.History (and $ARD_HISTORY). Only valid with Stage "scanner".
 	History bool
+	// RoleSource is where the role directory lives in the config repository
+	// at the config commit. Only the Kubernetes executor reads it: its pod
+	// fetches the role itself instead of mounting RoleDir.
+	RoleSource RoleSource
 }
+
+// RoleSource names the role directory in the repository: the config commit
+// and the directory within it.
+type RoleSource struct{ SHA, Path string }
 
 // Sidecar is a read-only companion repo the executor clones for the job.
 type Sidecar struct {
@@ -161,7 +169,21 @@ type Status struct {
 	StartedAt  time.Time
 	FinishedAt time.Time
 	Reason     string
+	// End says why a Gone job ended without an exit code from the agent.
+	// Empty for every other state.
+	End End
 }
+
+// End is the reason a job is Gone with no agent exit.
+type End string
+
+const (
+	EndEvicted     End = "evicted"      // pod evicted, deleted, never scheduled or image not pulled
+	EndCloneFailed End = "clone_failed" // the pre step could not fetch inputs (transient)
+	EndPrepFailed  End = "prep_failed"  // the pre step failed permanently
+	EndNoResult    End = "no_result"    // the agent ended but its result never arrived
+	EndBadResult   End = "bad_result"   // the result archive was unsafe or over a limit
+)
 
 // LogStream selects which log file Logs reads.
 type LogStream int

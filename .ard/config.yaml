@@ -7,11 +7,12 @@
 # all: every human-filed issue enters.
 intake: { mode: label }
 
-# Loop poll intervals. Unset loops keep their defaults (scanners 4h, triage
-# 15m, workers 5m, reviewers 5m, prwatch 5m); 1m is the minimum. The merger
-# is controller code with no agent or job slot, so a short interval costs only
-# GitHub API reads and gets reviewed PRs merged sooner.
-intervals: { merger: 1m }
+# Loop poll intervals. Unset loops keep their defaults (scanners 4h,
+# prwatch 5m); 1m is the minimum. Triage, workers, reviewers and the merger
+# poll every minute so an approval, a finished job or a freed slot is picked
+# up within a minute instead of up to 15. The cost is GitHub API reads, not
+# job slots. Stopgap until approval and close-out wake the next loop directly.
+intervals: { triage: 1m, workers: 1m, reviewers: 1m, merger: 1m }
 
 merge:
   # A PR touching any of these waits for a human approval. There is no
