@@ -3,10 +3,10 @@ role: engineer
 status: done
 attempt: 1
 ---
-Plans an opt-in kind end-to-end test for the Kubernetes executor: one integration-tagged test file, an embedded stub agent script and a `kind-e2e` Makefile target. The test creates its own cluster because the `deploy/` script from the dependency never landed. Size L, risk medium.
+Re-plans the kind end-to-end test for the narrowed scope: network policy enforcement, admission, the happy path and ReadWriteOncePod. It adds the missing stub agent script, pins every fixture image by digest and settles the containerd registry config check. Size M, risk medium.
 
 ## Open issues
-- `deploy/kind-up.sh` does not exist and `deploy/` is protected, so the plan has the test create the cluster and keeps the worker out of `deploy/`, `Dockerfile` and `.github/`.
-- The worker must fetch and pin the kind version, node image digest, registry image digest and, if kindnet does not enforce egress `ipBlock.except`, a Calico manifest digest.
-- The `marker` assertion is pending: the post sidecar cannot see the agent terminate and the done marker is agent-writable. The owner should decide.
-- A human must add the CI workflow and run `make kind-e2e` to accept the change; `make lint test` only checks compilation.
+- The worker cannot run the cluster scenarios, so a human must run `make kind-e2e` for acceptance.
+- Digests and the kind version must be resolved from the network by the worker and refreshed by a human over time.
+- The scenarios moved to #437 are excluded, including the close-out commit assertion and the pending marker case.
+- A human adds the CI workflow under `.github/`.
