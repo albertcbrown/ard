@@ -129,3 +129,20 @@ func TestCommentTokensUnreported(t *testing.T) {
 		t.Errorf("line appears %d times:\n%s", n, got)
 	}
 }
+
+func TestCommentNeedsNetwork(t *testing.T) {
+	j := Job{ID: "01JNET", Issue: 7, Stage: StageWorker, Role: "engineer", Attempt: 1}
+	p := Plan{Outcome: OutcomeNeedsNetwork, Status: StatusNeedsNetwork, Summary: "Stuck.", Network: []NetworkNeed{
+		{What: "spec", URL: "https://example.com/spec.json", Why: "ping @someone now", Verify: "sha256 on the vendor page"},
+		{What: "data", URL: "https://example.com/d", Why: "needed"},
+	}}
+	got := RenderComment(Record{Job: j, Plan: p}, github.Repo{Owner: "o", Name: "r"}, false)
+	for _, want := range []string{"worker:engineer · needs-human**", "Network inputs needed:", "`https://example.com/spec.json`", "`https://example.com/d`", "verify: sha256 on the vendor page"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, " @someone") {
+		t.Errorf("mention not neutralised:\n%s", got)
+	}
+}

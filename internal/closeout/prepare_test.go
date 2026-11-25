@@ -366,3 +366,44 @@ func TestPrepareWorkerIgnoresTriageFileOfSameRole(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareNeedsNetwork(t *testing.T) {
+	doc := func(what string) string {
+		return "---\nrole: engineer\nstatus: needs-network\nattempt: 1\nnetwork:\n  - what: " + what +
+			"\n    url: https://example.com/spec.json\n    why: need it\n---\nCould not fetch.\n"
+	}
+	tests := []struct {
+		name    string
+		what    string
+		outcome Outcome
+		reason  string
+	}{
+		{"valid list carried", "the spec", OutcomeNeedsNetwork, ""},
+		{"list damaged by redaction", secretValue, OutcomeNeedsHuman, "network list unreadable after redaction"},
+	}
+	for _, c := range tests {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			j := e.claim(StageWorker, "engineer")
+			j.PR, j.Worker = 0, &WorkerResult{Tests: TestsNone}
+			e.write(".ard/7/worker-engineer.md", doc(c.what))
+			rec, err := Prepare(context.Background(), j, e.d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := rec.Plan
+			if p.Outcome != c.outcome || !strings.Contains(p.Reason, c.reason) {
+				t.Fatalf("outcome %q reason %q", p.Outcome, p.Reason)
+			}
+			if c.outcome == OutcomeNeedsNetwork && (len(p.Network) != 1 || p.Network[0].What != c.what) {
+				t.Errorf("network: %+v", p.Network)
+			}
+			if c.outcome == OutcomeNeedsHuman && len(p.Network) != 0 {
+				t.Errorf("network kept: %+v", p.Network)
+			}
+			if got := lbls(p.Terminal); len(got) != 1 || got[0] != "7:ard:needs-human" {
+				t.Errorf("terminal %v", got)
+			}
+		})
+	}
+}
