@@ -1,54 +1,34 @@
 ---
 role: eng-review
 status: done
-attempt: 1
-verdict: changes
+attempt: 2
+verdict: approve
 findings:
-  - file: "internal/closeout/prepare.go"
-    line: 251
-    severity: high
-    blocking: true
-    message: |
-      The persisted round state has no test: plan.md's TestPrepareRoundOpen and TestResumeReplaysRound were not written.
-      This is the part the issue says needs architect review (Prepare computes Network.Round/Done and Rerun, ResumeJob must replay the stored plan).
-      Add tests that run Prepare for an engineer done with an open round and for the lead after a re-arm, assert j.Network is persisted, then change the store and check ResumeJob uses the stored plan. Also TestRoundOpenUnclosedWorker (worker record in phase prepared) and the inputsLost needs-human path (prepare.go:171) and TestInputsRedacted.
-  - file: "internal/triage/fanin.go"
-    line: 451
-    severity: high
-    blocking: true
-    message: |
-      The approval-per-round behaviour has no test (plan: TestApprovalMarkerPerRound, TestRerunBeforeGate, and the gate case where inputs land and a fresh "ready for approval" posts).
-      Add tests that an older approval is ignored after a new engineer :done, round 0 keeps the old marker, the round suffix is used for n>0, an approval given while inputs were missing counts once they land, and that a network round with RequireApproval=false and an unclosed worker record still asks.
-  - file: "internal/triage/inputs.go"
-    line: 151
-    severity: high
-    blocking: true
-    message: |
-      The status issue does not show "waiting for inputs". The issue scope and plan step 7 ask for it (servecmd/digest.go StatusIssue); digest.go is not touched and nothing outside the gate comment mentions it. Add the counter and a test.
-  - file: "internal/triage/inputs.go"
-    line: 108
+  - file: "internal/gitx/local.go"
+    line: 573
     severity: medium
     blocking: false
     message: |
-      Untested gate paths from plan.md: the per-tick single MainSHA call and the SHA-keyed cache dropping on a new SHA (mainLookup), a MainSHA/MainEntry error leaving the issue waiting (gateInputs, 80% covered), and symlink/submodule entries through the gate (only decideInputs is table-tested). Add them.
-  - file: "internal/closeout/network.go"
-    line: 164
-    severity: medium
-    blocking: false
-    message: |
-      InputsOf and NetworkRoundCount have no test in this package (0% coverage from closeout tests). Add a case that the newest engineer done record's inputs are returned and that none gives ok=false.
-  - file: "internal/triage/intake.go"
-    severity: medium
-    blocking: false
-    message: |
-      plan.md's TestRearmedLeadReclaimed (an App-added ard:pending re-admits the lead, with the admission hash check and custom intake label mode) and TestCloserHasNetwork in servecmd were not written. The bounce is switched on in servecmd/reaping.go, so the re-claim of the re-armed lead is the live path and should be pinned by a test.
-  - file: "docs/proposal.md"
+      EntryAt (the ls-tree parser behind the inputs gate) has no test in gitx.
+      Its bad-path guard, the missing-path case, the blob/symlink/submodule parsing and the size field are only exercised through fakes in triage. Add a test against a temporary repository.
+  - file: "internal/servecmd/reaping.go"
+    line: 68
     severity: low
+    blocking: false
     message: |
-      Only 4 lines changed. Plan step 11 asks for re-arm, persisted round state, Clear, the inputs gate, per-round approval, approval-while-waiting and the label state machine notes.
+      plan.md's TestCloserHasNetwork was not written, so nothing pins that the bounce stays switched on in servecmd. Add a small test that wiring.closer() builds a Closer with Deps.Network set.
 ---
-The core logic (rounds keyed off the Plan, Clear in request, re-arm in Build, the inputs gate, forced approval) matches the plan and the existing tests pass. But several plan test cases for the persisted round state and approval are missing, and the status issue "waiting for inputs" is not done, so this needs changes.
+The previous blocking findings are fixed: the persisted round state, resume replay, approval per round, the digest "waiting for inputs" counter and the other missing tests now exist and pass. Two small gaps remain (EntryAt and the servecmd wiring have no test), and neither blocks.
 
 ## Checks
-- Lint: `make lint` runs `go vet ./...`; it reported only a parse error in `internal/roles/testdata/docs/skips/src/_x.go` (testdata, not in the change). It was cut short while downloading modules, so the rest did not run.
-- Tests with coverage: `go test -cover ./internal/closeout ./internal/triage` pass (88.8% and 86.3%). `InputsOf` and `NetworkRoundCount` are not executed by closeout's own tests. `servecmd` and `roles` tests were not run (time budget).
+- Lint: `make lint` was not re-run. `gofmt -l internal` is clean on the changed files; its only output is a parse error in testdata (`internal/roles/testdata/docs/skips/src/_x.go`), which the change did not touch.
+- Tests with coverage: `go test -cover` on closeout (90.1%), triage (87.4%), digest (91.7%), servecmd (79.3%), gitx (78.8%), roles and docscheck all pass. `EntryAt` has no direct test.
+
+## Previous findings
+- internal/closeout/prepare.go (persisted round state tests): resolved
+- internal/triage/fanin.go (approval per round tests): resolved
+- internal/triage/inputs.go (status issue waiting counter): resolved
+- internal/triage/inputs.go (gate paths: single SHA read, cache, read error): resolved
+- internal/closeout/network.go (InputsOf and NetworkRoundCount tests): resolved
+- internal/triage/intake.go (TestRearmedLeadReclaimed): resolved; TestCloserHasNetwork is still missing (see the low finding)
+- docs/proposal.md (docs depth): resolved
