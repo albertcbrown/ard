@@ -57,6 +57,22 @@ type Job struct {
 	LimitStop bool
 	// AfterLimit is the id of the usage-limited job this job re-runs.
 	AfterLimit string
+	// PendingPR is the close-out of a worker job whose branch was pushed but
+	// whose pull request could not be opened; nil when there is none.
+	PendingPR json.RawMessage
+}
+
+// PendingPR is what a worker job records when it pushed its branch and could
+// not open the PR: enough to open it later without the agent. Title, Body and
+// Summary are already redacted and sanitised. Result is the close-out's
+// worker result (opaque here).
+type PendingPR struct {
+	Branch  string
+	Head    string
+	Title   string
+	Body    string
+	Summary string
+	Result  json.RawMessage
 }
 
 // NewJob describes a claim. Data goes on the claim event.
@@ -69,20 +85,20 @@ type NewJob struct {
 
 const jobCols = `id, stage, role, issue, pr, status, attempt, handle, closeout_phase, closeout_plan,
 	fail_reason, keep_until, cleaned_at, cost_usd, created_at, updated_at, ended_at,
-	branch, retry_of, auto_retry, kill_reason, limit_stop, after_limit`
+	branch, retry_of, auto_retry, kill_reason, limit_stop, after_limit, pending_pr`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanJob(r scanner) (Job, error) {
 	var j Job
 	var pr, keep, cleaned, ended sql.NullInt64
-	var handle, phase, plan, reason, branch, retryOf, killReason, afterLimit sql.NullString
+	var handle, phase, plan, reason, branch, retryOf, killReason, afterLimit, pending sql.NullString
 	var autoRetry, limitStop int
 	var cost sql.NullFloat64
 	var created, updated int64
 	if err := r.Scan(&j.ID, &j.Stage, &j.Role, &j.Issue, &pr, &j.Status, &j.Attempt, &handle, &phase, &plan,
 		&reason, &keep, &cleaned, &cost, &created, &updated, &ended,
-		&branch, &retryOf, &autoRetry, &killReason, &limitStop, &afterLimit); err != nil {
+		&branch, &retryOf, &autoRetry, &killReason, &limitStop, &afterLimit, &pending); err != nil {
 		return Job{}, err
 	}
 	j.PR = int(pr.Int64)
@@ -101,6 +117,9 @@ func scanJob(r scanner) (Job, error) {
 	}
 	j.Branch, j.RetryOf, j.KillReason, j.AutoRetry = branch.String, retryOf.String, killReason.String, autoRetry != 0
 	j.LimitStop, j.AfterLimit = limitStop != 0, afterLimit.String
+	if pending.Valid {
+		j.PendingPR = json.RawMessage(pending.String)
+	}
 	j.CreatedAt = time.Unix(created, 0).UTC()
 	j.UpdatedAt = time.Unix(updated, 0).UTC()
 	return j, nil
@@ -307,6 +326,43 @@ func (s *Store) SetPR(ctx context.Context, id string, pr int) error {
 		return fmt.Errorf("set pr %s: pr must be positive", id)
 	}
 	return s.updateRunning(ctx, "set pr", id, `pr = ?`, pr)
+}
+
+// SetPendingPR records, on a running worker job, that its branch is pushed and
+// only the pull request is missing. A job that is not running, or does not
+// exist, is ErrNotFound.
+func (s *Store) SetPendingPR(ctx context.Context, id string, p PendingPR) error {
+	if p.Branch == "" || p.Head == "" {
+		return fmt.Errorf("set pending pr %s: branch and head are required", id)
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("set pending pr %s: %w", id, err)
+	}
+	return s.updateRunning(ctx, "set pending pr", id, `pending_pr = ?`, string(b))
+}
+
+// LatestPendingPR returns the newest worker job of the issue and role other
+// than except (the caller's own job) and its recorded pending PR. ok is false
+// when that job has none: a newer job supersedes an older record.
+func (s *Store) LatestPendingPR(ctx context.Context, issue int, role, except string) (Job, PendingPR, bool, error) {
+	j, err := scanJob(s.db.QueryRowContext(ctx, `SELECT `+jobCols+` FROM jobs
+		WHERE stage = 'worker' AND role = ? AND issue = ? AND id <> ? AND status <> 'running'
+		ORDER BY created_at DESC, id DESC LIMIT 1`, role, issue, except))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, PendingPR{}, false, nil
+	}
+	if err != nil {
+		return Job{}, PendingPR{}, false, fmt.Errorf("latest worker job %s issue %d: %w", role, issue, err)
+	}
+	if len(j.PendingPR) == 0 {
+		return j, PendingPR{}, false, nil
+	}
+	var p PendingPR
+	if err := json.Unmarshal(j.PendingPR, &p); err != nil {
+		return j, PendingPR{}, false, fmt.Errorf("pending pr of %s: %w", j.ID, err)
+	}
+	return j, p, true, nil
 }
 
 func (s *Store) updateRunning(ctx context.Context, op, id, set string, args ...any) error {

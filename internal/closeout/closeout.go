@@ -118,6 +118,11 @@ const (
 	// not a failure and never hands off to the automatic retry (Retry is
 	// false); the issue is re-claimed after the reset.
 	CauseUsageLimit CauseKind = "usage_limit"
+	// CausePRCreateFailed: the worker pushed its branch but GitHub would not
+	// open the pull request, even after retries. Not transient and never
+	// retried automatically: the job ends executor:failed, and the loop opens
+	// the PR from the recorded close-out when the label is removed.
+	CausePRCreateFailed CauseKind = "pr_create_failed"
 )
 
 // Cause is why a job ended. Detail is fixed, non-secret text.

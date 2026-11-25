@@ -79,6 +79,9 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		if j.Cause.Detail != "" {
 			failed += ": " + j.Cause.Detail
 		}
+	case j.Stage == StageWorker && j.Worker != nil && j.Worker.Reopened:
+		// No agent ran: the result is the earlier job's, passed in Summary.
+		rf = RoleFile{Role: j.Role, Status: StatusDone, Summary: j.Worker.Summary}
 	case j.ExitCode != 0:
 		failed = fmt.Sprintf("agent exited %d", j.ExitCode)
 	default:
@@ -287,6 +290,13 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 			plan = needsHumanPlan(j, rf.Status, "")
 		}
 		plan.Summary = summary
+		if j.Stage == StageWorker && j.Worker != nil && j.Worker.Reopened {
+			if res, terr := red.Text(ctx, []byte(j.Worker.Summary)); terr == nil && !res.Flagged {
+				plan.Summary = string(res.Clean)
+			} else {
+				plan.Summary = ""
+			}
+		}
 		if roleSeen {
 			plan.RolePath = rolePath
 		}

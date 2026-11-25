@@ -348,7 +348,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		Pool: func() Offerer { return h.pool }, Agents: reg, Model: cred,
 		Secrets: func() *redact.Secrets { s := redact.NewSecrets(); _ = s.Add("MODEL_KEY", tokenVal); return s },
 		Repo:    github.Repo{Owner: "o", Name: "r"}, RepoDir: clone, RemoteURL: "file://" + bare,
-		Poll: 2 * time.Millisecond, Now: func() time.Time { return h.now }, Log: quiet,
+		Poll: 2 * time.Millisecond, Sleep: func(context.Context, time.Duration) {}, Now: func() time.Time { return h.now }, Log: quiet,
 	})
 	return h
 }
