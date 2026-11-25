@@ -176,6 +176,25 @@ func TestRunHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("setup --create-gh-app flags", func(t *testing.T) {
+		var got SetupOpts
+		h := Handlers{Setup: func(_ context.Context, _ *Env, o SetupOpts) error { got = o; return nil }}
+		var stdout, stderr strings.Builder
+		args := []string{"setup", "--create-gh-app", "--app-name", "n", "--key-file", "/k.pem", "--force"}
+		if code := Run(args, &stdout, &stderr, h, "dev"); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr.String())
+		}
+		if want := (SetupOpts{CreateGHApp: true, AppName: "n", KeyFile: "/k.pem", Force: true}); got != want {
+			t.Errorf("got %+v", got)
+		}
+		if code := Run([]string{"setup", "--create-gh-app", "--check"}, &stdout, &stderr, h, "dev"); code == 0 {
+			t.Error("--create-gh-app --check accepted")
+		}
+		if code := Run([]string{"setup", "--force"}, &stdout, &stderr, h, "dev"); code == 0 {
+			t.Error("--force without --create-gh-app accepted")
+		}
+	})
+
 	t.Run("serve --loops reaches the handler", func(t *testing.T) {
 		var got []string
 		h := Handlers{Serve: func(_ context.Context, _ *Env, o ServeOpts) error { got = o.Loops; return nil }}

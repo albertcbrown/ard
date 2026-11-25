@@ -4,7 +4,18 @@ This takes a repository from nothing to a first triaged issue. Run the `ard` com
 
 ## 1. Create and install the GitHub App
 
-ard acts as a GitHub App, never as a personal token. Create an App you own and give it exactly these repository permissions:
+ard acts as a GitHub App, never as a personal token. The quickest way to create one with the right permissions is the manifest flow:
+
+```sh
+ard setup --create-gh-app --dry-run   # preview the manifest and URL; creates nothing
+ard setup --create-gh-app
+```
+
+ard opens a page on a loopback-only local server, you confirm the App on GitHub once, and ard stores the private key in `~/.ard/keys/<slug>.pem` (mode 0600; change it with `--key-file`, overwrite with `--force`). It then prints the install link, waits for you to install the App on the repository, prints the `ARD_GITHUB_*` lines to add to ard's environment, and runs the normal setup checks. The App name defaults to `ard-<owner>-<repo>`; override it with `--app-name`.
+
+### Fallback: create the App by hand
+
+Create an App you own and give it exactly these repository permissions:
 
 | Permission | Access |
 | --- | --- |
