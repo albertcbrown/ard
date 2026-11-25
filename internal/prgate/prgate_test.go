@@ -358,7 +358,8 @@ func TestCoversHandEditInMerge(t *testing.T) {
 
 type errPatchGit struct {
 	Git
-	mbErr, parErr, patchErr error
+	mbErr, parErr, patchErr, mtErr error
+	notMech                        bool
 }
 
 func (g errPatchGit) MergeBase(context.Context, string, string, string) (string, error) {
@@ -369,6 +370,10 @@ func (g errPatchGit) Parents(context.Context, string, string) ([]string, error) 
 }
 func (g errPatchGit) PatchID(context.Context, string, string, string, string) (string, error) {
 	return "id", g.patchErr
+}
+
+func (g errPatchGit) MergeTreeEqual(context.Context, string, string) (bool, error) {
+	return !g.notMech, g.mtErr
 }
 
 func TestCoversPatchGitError(t *testing.T) {
@@ -382,6 +387,7 @@ func TestCoversPatchGitError(t *testing.T) {
 		"mb":      {Git: fg, mbErr: boom},
 		"parents": {Git: fg, parErr: boom},
 		"patch":   {Git: fg, patchErr: boom},
+		"merge":   {Git: fg, mtErr: boom},
 	} {
 		c, err := CoversDetail(context.Background(), g, "", "rev", "head", "base", 1)
 		if name == "ok" {
@@ -398,5 +404,82 @@ func TestCoversPatchGitError(t *testing.T) {
 	c, err := CoversDetail(context.Background(), errPatchGit{Git: fg, patchErr: boom}, "", "rev", "head", "", 1)
 	if err != nil || c.OK || len(c.PatchEqual) != 0 {
 		t.Errorf("base empty: %+v %v", c, err)
+	}
+}
+
+func TestCoversNotMechanicalFake(t *testing.T) {
+	fg := fakeGit{diffs: map[[2]string][]string{
+		{"rev", "head"}:  {"doc.md"},
+		{"base", "head"}: {"doc.md"},
+	}}
+	c, err := CoversDetail(context.Background(), errPatchGit{Git: fg, notMech: true}, "", "rev", "head", "base", 1)
+	if err != nil || c.OK || !reflect.DeepEqual(c.Broken, []string{"doc.md"}) {
+		t.Fatalf("%+v %v", c, err)
+	}
+}
+
+// A merge that re-indents the PR's lines keeps the patch id but is not the
+// mechanical merge: not covered.
+func TestCoversWhitespaceMerge(t *testing.T) {
+	for _, tc := range []struct{ file, before, after string }{
+		{"a.py", "if x:\n    y()\n", "if x:\n  y()\n"},
+		{"a.yaml", "k:\n  v: 1\n", "k:\n    v: 1\n"},
+		{"Makefile", "all:\n\techo hi\n", "all:\n        echo hi\n"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			r := newPatchRepo(t)
+			r.put(tc.file, tc.before+docBody("a", "z"))
+			r.run("commit", "-q", "-m", "base")
+			r.run("checkout", "-q", "-b", "worker/eng-1-x")
+			r.put(tc.file, tc.before+docBody("a", "PR"))
+			r.run("commit", "-q", "-m", "pr")
+			reviewed := r.run("rev-parse", "HEAD")
+			r.run("checkout", "-q", "main")
+			r.put(tc.file, strings.Replace(tc.before+docBody("a", "z"), "a\n", "main1\n", 1))
+			r.run("commit", "-q", "-m", "main edit")
+			r.run("checkout", "-q", "worker/eng-1-x")
+			r.run("merge", "-q", "--no-commit", "--no-ff", "main")
+			r.put(tc.file, strings.Replace(tc.after+docBody("main1", "PR"), "", "", 1))
+			r.run("commit", "-q", "-m", "merge")
+			c, err := r.cover(reviewed)
+			if err != nil || c.OK || !reflect.DeepEqual(c.Broken, []string{tc.file}) {
+				t.Fatalf("%+v %v", c, err)
+			}
+		})
+	}
+}
+
+// A hand-crafted merge via commit-tree whose tree is not the clean merge.
+func TestCoversNonMechanicalMerge(t *testing.T) {
+	r := newPatchRepo(t)
+	reviewed := r.setup()
+	r.mainEdit("main1")
+	r.run("checkout", "-q", "worker/eng-1-x")
+	r.put("doc.md", docBody("main1", "PR"))
+	r.put("extra.txt", "sneaky\n")
+	tree := r.run("write-tree")
+	m := r.run("commit-tree", tree, "-p", "HEAD", "-p", "main", "-m", "crafted")
+	r.run("reset", "-q", "--hard", m)
+	c, err := r.cover(reviewed)
+	if err != nil || c.OK {
+		t.Fatalf("%+v %v", c, err)
+	}
+}
+
+// The second merge of a chain is not mechanical: not covered.
+func TestCoversChainSecondMergeNotMechanical(t *testing.T) {
+	r := newPatchRepo(t)
+	reviewed := r.setup()
+	r.mainEdit("main1")
+	r.run("checkout", "-q", "worker/eng-1-x")
+	r.run("merge", "-q", "--no-edit", "main")
+	r.mainEdit("main2")
+	r.run("checkout", "-q", "worker/eng-1-x")
+	r.run("merge", "-q", "--no-commit", "--no-ff", "main")
+	r.put("doc.md", docBody("main2", "PR")+"\n")
+	r.run("commit", "-q", "-m", "merge 2")
+	c, err := r.cover(reviewed)
+	if err != nil || c.OK {
+		t.Fatalf("%+v %v", c, err)
 	}
 }

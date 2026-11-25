@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -526,5 +527,79 @@ func TestPatchIDAndParents(t *testing.T) {
 	}
 	if _, err := g.Parents(ctx, dir, "nope"); err == nil {
 		t.Error("parents of bad rev: want error")
+	}
+}
+
+func TestMergeTreeEqual(t *testing.T) {
+	_, dir := gittest.NewRemote(t)
+	g := New("")
+	ctx := context.Background()
+	run := func(args ...string) string { return strings.TrimSpace(gittest.Run(t, dir, args...)) }
+	put := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", name)
+	}
+	lines := func(first, last string) string {
+		return first + "\n" + strings.Repeat("x\n", 30) + last + "\n"
+	}
+	put("f.py", lines("a", "z"))
+	run("commit", "-q", "-m", "base")
+	base := run("rev-parse", "HEAD")
+	run("checkout", "-q", "-b", "pr")
+	put("f.py", lines("a", "PR"))
+	run("commit", "-q", "-m", "pr")
+	run("checkout", "-q", "main")
+	put("f.py", lines("main", "z"))
+	run("commit", "-q", "-m", "main")
+	run("checkout", "-q", "pr")
+	run("merge", "-q", "--no-edit", "main")
+	clean := run("rev-parse", "HEAD")
+	if ok, err := g.MergeTreeEqual(ctx, dir, clean); err != nil || !ok {
+		t.Fatalf("clean merge: %v %v", ok, err)
+	}
+
+	// Same merge with one line indented: not mechanical.
+	put("f.py", " "+lines("main", "PR"))
+	tree := run("write-tree")
+	ws := run("commit-tree", tree, "-p", "HEAD~1", "-p", "main", "-m", "ws")
+	if ok, err := g.MergeTreeEqual(ctx, dir, ws); err != nil || ok {
+		t.Fatalf("whitespace merge: %v %v", ok, err)
+	}
+
+	// A conflict resolved by hand: false, not an error.
+	run("checkout", "-q", "-f", "-b", "c1", base)
+	put("f.py", lines("c1", "z"))
+	run("commit", "-q", "-m", "c1")
+	run("checkout", "-q", "-b", "c2", base)
+	put("f.py", lines("c2", "z"))
+	run("commit", "-q", "-m", "c2")
+	tree = run("write-tree")
+	cm := run("commit-tree", tree, "-p", "c1", "-p", "c2", "-m", "resolved")
+	if ok, err := g.MergeTreeEqual(ctx, dir, cm); err != nil || ok {
+		t.Fatalf("conflict merge: %v %v", ok, err)
+	}
+
+	// Not a merge, and a bad rev: errors.
+	if _, err := g.MergeTreeEqual(ctx, dir, base); err == nil {
+		t.Error("non-merge: want error")
+	}
+	if _, err := g.MergeTreeEqual(ctx, dir, "nope"); err == nil {
+		t.Error("bad rev: want error")
+	}
+
+	// A git that rejects merge-tree --write-tree fails closed.
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	stub := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = merge-tree ] && exit 129; done\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := New(stub).MergeTreeEqual(ctx, dir, clean); err == nil || ok {
+		t.Fatalf("old git: %v %v, want error", ok, err)
 	}
 }
