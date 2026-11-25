@@ -136,11 +136,13 @@ type SecurityContext struct {
 
 // PodSecurityContext is the pod-level security context.
 type PodSecurityContext struct {
-	RunAsUser      *int64          `json:"runAsUser,omitempty"`
-	RunAsGroup     *int64          `json:"runAsGroup,omitempty"`
-	RunAsNonRoot   *bool           `json:"runAsNonRoot,omitempty"`
-	FSGroup        *int64          `json:"fsGroup,omitempty"`
-	SeccompProfile *SeccompProfile `json:"seccompProfile,omitempty"`
+	RunAsUser    *int64 `json:"runAsUser,omitempty"`
+	RunAsGroup   *int64 `json:"runAsGroup,omitempty"`
+	RunAsNonRoot *bool  `json:"runAsNonRoot,omitempty"`
+	FSGroup      *int64 `json:"fsGroup,omitempty"`
+	// FSGroupChangePolicy is "OnRootMismatch" or "Always".
+	FSGroupChangePolicy string          `json:"fsGroupChangePolicy,omitempty"`
+	SeccompProfile      *SeccompProfile `json:"seccompProfile,omitempty"`
 }
 
 // Capabilities lists Linux capabilities to drop.
