@@ -49,6 +49,11 @@ comments, when there are any).
 
 ## Steps
 
+Network: inputs found only on the network are not, alone, a reason for
+needs-human. Route them to triage:engineer. The "Worker roles:" line in the
+user message shows which worker roles have network: true; if none does, say
+under Open issues that a human must provide the inputs.
+
 1. Read .ard-input/N/issue.md and, if it exists, .ard-input/N/comments.md.
 2. Find the roles that exist. Every directory under .ard/triage/ (except
    lead), .ard/workers/ and .ard/reviewers/ that contains a prompt.txt is a

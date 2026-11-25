@@ -84,6 +84,13 @@ use.
   The repository's package manager may fetch the dependencies the build
   already declares. Do not install system packages, download anything else
   or use the network for any other purpose.
+- Fetched files. For every file the change fetched, check there is a
+  `fetched:` entry in the worker's role file, a CAPTURE.md row and a regen
+  Make target, and that nothing was invented. Re-verify each pinned
+  checksum against the publisher's checksum file only if you have network;
+  otherwise skip and say so in ## Checks. A capture note is agent-written,
+  so it is not evidence on its own. A missing entry, row or
+  target, or an unverifiable checksum, is a high finding.
 - Write scratch output, such as coverage profiles and lint reports, only
   in a temporary directory outside the working directory (mktemp -d).
 - Write exactly one file: .ard/N/review-eng-review.md, your report. Write
