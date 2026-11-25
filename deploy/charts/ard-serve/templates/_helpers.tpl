@@ -115,6 +115,19 @@ matched against a strict pattern first. */ -}}
 {{- fail (printf "jobs.githubCIDRs and jobs.modelAPICIDRs take IPv4 CIDRs, got %q" (toString .)) -}}
 {{- end -}}
 {{- end -}}
+{{- $mc := .Values.modelCredential | default dict -}}
+{{- if not (has (toString $mc.env) (list "ANTHROPIC_API_KEY" "CLAUDE_CODE_OAUTH_TOKEN")) -}}
+{{- fail (printf "modelCredential.env must be ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (the names ard serve forwards to agent jobs), got %q" (toString $mc.env)) -}}
+{{- end -}}
+{{- if and (ne (toString .Values.instance.dryRun) "true") (not $mc.secretName) -}}
+{{- fail "modelCredential.secretName is required for a live k8s install: agent jobs get the model credential from ard serve's environment" -}}
+{{- end -}}
+{{- if not (regexMatch "^([a-z0-9]([a-z0-9-.]{0,251}[a-z0-9])?)?$" (toString $mc.secretName)) -}}
+{{- fail (printf "modelCredential.secretName must be a Secret name, got %q" (toString $mc.secretName)) -}}
+{{- end -}}
+{{- if not (regexMatch "^[-._A-Za-z0-9]*$" (toString $mc.key)) -}}
+{{- fail (printf "modelCredential.key must be a Secret key, got %q" (toString $mc.key)) -}}
+{{- end -}}
 {{- if not (regexMatch "^[a-z=0-9.,-]*$" (toString .Values.jobs.resources)) -}}
 {{- fail (printf "jobs.resources must be name=quantity pairs, got %q" (toString .Values.jobs.resources)) -}}
 {{- end -}}

@@ -46,6 +46,9 @@ spec:
         {{- with .executor }}
         {{- $_ := set $v "executor" . }}
         {{- end }}
+        {{- with .modelCredential }}
+        {{- $_ := set $v "modelCredential" . }}
+        {{- end }}
         {{- if $agent.digest }}
         {{- $_ := set $v "agentImage" (dict "repository" $agent.repository "digest" $agent.digest) }}
         {{- end }}

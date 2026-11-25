@@ -147,6 +147,7 @@ agentImage: {digest: "$AGENT"}
 apiServer: [{cidr: 172.18.0.2/32, port: 6443}]
 storage: {accessMode: ReadWriteOncePod}
 jobs: {githubCIDRs: [140.82.112.0/20, 192.30.252.0/22], modelAPICIDRs: [160.79.104.0/23]}
+modelCredential: {secretName: ard-model-credential}
 EOF
 if ! helm template ard-albertcbrown-ard "$SERVE_CHART" -f "$work/k8s.yaml" --namespace ard >"$work/k8s-out.yaml" 2>"$work/k8s.err"; then
   echo "ERROR: ard-serve does not render with executor k8s: $(cat "$work/k8s.err")" >&2; exit 1
@@ -244,6 +245,25 @@ kdep_ok() {
 }
 check "live k8s deployment: no --dry-run, projected token, ARD_K8S_* env, ReadWriteOncePod home" kdep_ok
 
+# ---- model credential (#434) ---------------------------------------------------------------------------------------
+model_ok() {
+  # exactly one model credential, from the Secret, never a literal value; the default key is the env name
+  [ "$(kctr '.env[] | select(.name == "ANTHROPIC_API_KEY" or .name == "CLAUDE_CODE_OAUTH_TOKEN") | .name + "=" + .valueFrom.secretKeyRef.name + "/" + .valueFrom.secretKeyRef.key')" = \
+    "ANTHROPIC_API_KEY=ard-model-credential/ANTHROPIC_API_KEY" ] || return 1
+  ! kctr '.env[] | select(.value != null) | .name' | grep -Eq 'ANTHROPIC|CLAUDE' || return 1
+}
+check "live k8s: the controller gets one model credential from the Secret" model_ok
+helm template x "$SERVE_CHART" -f "$work/k8s.yaml" --namespace ard --set modelCredential.env=CLAUDE_CODE_OAUTH_TOKEN --set modelCredential.key=token >"$work/k8s-oauth.yaml" 2>&1
+check "modelCredential.env and key select the OAuth token" test \
+  "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "CLAUDE_CODE_OAUTH_TOKEN") | .valueFrom.secretKeyRef.key' "$work/k8s-oauth.yaml")" = "token"
+helm template x "$SERVE_CHART" -f "$work/k8s.yaml" --namespace ard --set modelCredential.externalSecret.enabled=true \
+  --set modelCredential.externalSecret.storeName=s --set modelCredential.externalSecret.itemId=item --set modelCredential.externalSecret.property=credential >"$work/k8s-es.yaml" 2>&1
+check "modelCredential External Secret writes one key from one field" test \
+  "$(yq 'select(.kind == "ExternalSecret" and .metadata.name == "ard-model-credential") | .spec.data[0].secretKey + " " + .spec.data[0].remoteRef.key + " " + .spec.data[0].remoteRef.property' "$work/k8s-es.yaml")" = "ANTHROPIC_API_KEY item credential"
+helm template x "$SERVE_CHART" -f "$work/k8s.yaml" --set instance.dryRun=true --set storage.accessMode=ReadWriteOnce --set modelCredential.secretName= >"$work/k8s-dry-nocred.yaml" 2>&1
+check "k8s dry-run without a model credential renders and has no credential env" bash -c \
+  "grep -q 'kind: Deployment' '$work/k8s-dry-nocred.yaml' && ! yq 'select(.kind == \"Deployment\") | .spec.template.spec.containers[0].env[].name' '$work/k8s-dry-nocred.yaml' | grep -Eq 'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN'"
+
 quota_ok() {
   [ "$(k '.kind == "ResourceQuota"' '.spec.hard | keys | sort | join(",")')" = \
     "limits.ephemeral-storage,limits.memory,pods,requests.cpu,requests.ephemeral-storage,requests.memory,secrets" ] || return 1
@@ -277,6 +297,17 @@ EOF
 helm template ard-root "$ROOT_CHART" -f "$work/pin.yaml" -f "$work/site.yaml" -f "$work/root-k8s.yaml" >"$work/root-k8s-out.yaml" 2>&1
 check "ard-root passes executor and agentImage to the child" test \
   "$(yq 'select(.kind == "Application") | .spec.source.helm.valuesObject | .executor.kind + " " + .agentImage.digest + " " + (.instance.dryRun | tostring)' "$work/root-k8s-out.yaml")" = "k8s $AGENT false"
+cat >"$work/root-cred.yaml" <<EOF
+agentImage: {digest: "$AGENT"}
+site: {modelCredential: {secretName: shared-cred}}
+instances:
+  - {name: albertcbrown-ard, repo: albertcbrown/ard, dryRun: false, executor: {kind: k8s}}
+  - {name: other-repo, repo: albertcbrown/other, dryRun: false, executor: {kind: k8s}, modelCredential: {secretName: other-cred, env: CLAUDE_CODE_OAUTH_TOKEN}}
+EOF
+helm template ard-root "$ROOT_CHART" -f "$work/pin.yaml" -f "$work/site.yaml" -f "$work/root-cred.yaml" >"$work/root-cred-out.yaml" 2>&1
+check "ard-root passes modelCredential: site default, per-instance override" test \
+  "$(yq 'select(.kind == "Application") | .metadata.name + "=" + .spec.source.helm.valuesObject.modelCredential.secretName + "/" + (.spec.source.helm.valuesObject.modelCredential.env // "-")' "$work/root-cred-out.yaml" | grep -v '^---$' | sort | paste -sd' ' -)" = \
+  "ard-albertcbrown-ard=shared-cred/- ard-other-repo=other-cred/CLAUDE_CODE_OAUTH_TOKEN"
 check "ard-root refuses a malformed agent digest" bash -c "! helm template r '$ROOT_CHART' -f '$work/pin.yaml' --set agentImage.digest=sha256:abc >/dev/null 2>&1"
 
 # ---- executor guards --------------------------------------------------------------------------------------------------
@@ -298,6 +329,10 @@ refused "a githubCIDRs entry that is not an IPv4 CIDR" --set 'jobs.githubCIDRs={
 refused "an apiServer cidr that is not an IPv4 CIDR" --set 'apiServer[0].cidr=kubernetes.default'
 refused "jobs namespace equal to the release namespace" --namespace ard --set executor.jobsNamespace=ard
 refused "an instance name that is not a DNS label" --set instance.name=Bad_Name
+refused "live k8s without a model credential" --set modelCredential.secretName=
+refused "a model credential env ard serve does not forward" --set modelCredential.env=OPENAI_API_KEY
+refused "a model credential Secret name that is not a name" --set modelCredential.secretName=Bad_Name
+refused "a model credential External Secret without a property" --set modelCredential.externalSecret.enabled=true --set modelCredential.externalSecret.storeName=s --set modelCredential.externalSecret.itemId=i
 
 
 # ---- the agent image pin with executor local (#320) ----------------------------------------------------------------
