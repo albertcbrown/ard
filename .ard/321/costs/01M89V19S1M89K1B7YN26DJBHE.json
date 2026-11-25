@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "job": "01M89V19S1M89K1B7YN26DJBHE",
+  "issue": 321,
+  "pr": 433,
+  "stage": "review",
+  "role": "eng-review",
+  "attempt": 1,
+  "outcome": "done",
+  "models": [
+    "claude-sonnet-5-5"
+  ],
+  "tokens": {
+    "input": 10,
+    "output": 2380,
+    "cache_write": 27349,
+    "cache_read": 131363
+  },
+  "cost_usd": 0.14635230000000002,
+  "steps": 1,
+  "started_at": "2026-11-25T17:11:13Z",
+  "ended_at": "2026-11-25T17:12:08Z"
+}

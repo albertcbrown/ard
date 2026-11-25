@@ -2,49 +2,30 @@
 role: eng-review
 status: done
 attempt: 1
-verdict: changes
+verdict: approve
 findings:
   - file: "internal/executor/kube/e2e/kind_integration_test.go"
-    line: 105
-    severity: high
-    blocking: true
-    message: |
-      The wrong-key and controller-restart scenarios that issue #321 asks for are still not written; the worker pushed no code change this round.
-      plan.md step 6 also names TokenRevokedAfterPre, PostRefusesEarly, MissingResultIsGone, OversizeFails, NetworkFalseEgress and Ingress. TestKind runs only NetworkPolicyEnforced, Admission, HappyPath and ReadWriteOncePod. Add WrongKey and ControllerRestart (a second harness run adopts and reaps the sleeping job) and the egress and ingress scenarios, or have the owner narrow the issue.
-  - file: "internal/executor/kube/e2e/inner_integration_test.go"
-    line: 100
-    severity: high
-    blocking: true
-    message: |
-      HappyPath still does not check that close-out commits to the remote, which the issue requires.
-      It asserts only the pulled result. The fixture git server refuses receive-pack, so a push cannot be observed. Allow pushes for a valid token, or check the commit another way, and assert the commit content.
-  - file: "internal/executor/kube/e2e/inner_integration_test.go"
-    line: 100
-    severity: medium
-    blocking: false
-    message: |
-      plan.md step 5's testdata/stub-agent.sh (modes hello, sleep, fifo, big, probe, marker) still does not exist; the stub is inline. Add it together with the missing scenarios.
-  - file: "internal/executor/kube/e2e/kind_integration_test.go"
-    line: 142
-    severity: medium
-    blocking: false
-    message: |
-      Images and versions are still unpinned (registry:2, kind's default node image), against plan.md step 2, and kindnet's enforcement of ipBlock.except is not tested. Pin the digests and test it.
-  - file: "internal/executor/kube/e2e/kind_integration_test.go"
-    line: 154
+    line: 475
     severity: low
     blocking: false
     message: |
-      containerd's certs.d is written without checking that config_path is enabled in the node's containerd, so pulls from localhost:5001 may fail on first run. Needs a human run to confirm.
+      plan.md step 4 asks for a preflight that pulls a digest-pinned image through localhost:5001 and fails with a message naming config_path. The code only greps the node's containerd config for config_path. A registry or hosts.toml misconfiguration would still show up as an ImagePullBackOff timeout. Consider a `crictl pull` preflight on the node.
+  - file: "internal/executor/kube/e2e/inner_integration_test.go"
+    line: 251
+    severity: low
+    blocking: false
+    message: |
+      `out[strings.Index(out, "== secrets"):]` and the `== mountinfo` / `== proc` slice at line 257 panic when a marker is missing (Index returns -1). The "== done" check above makes this unlikely, but a truncated log would give a panic instead of a clear failure. Check the index before slicing.
 ---
-Still changes: the head commit adds no code over the previous round (the worker's report says it changed nothing and is waiting for a human), so both blocking findings remain.
+The change now matches the owner-narrowed plan: NetworkPolicyEnforced, Admission, HappyPath with the no-key checks, and ReadWriteOncePod. stub-agent.sh exists and images are pinned by digest. Only low-severity gaps remain. The scenarios themselves need a human `make kind-e2e` run, which I could not do here.
 
 ## Checks
-- Lint and diff coverage were not re-run: the code is identical to the previous round, and the tests need Docker, kind and a cluster. Last round `go vet -tags integration` and `gofmt -l` on the package were clean.
+- Lint: `make lint` runs `go vet ./...` and `gofmt -l .`. I ran `gofmt -l` on the e2e directory (clean) and `go vet -tags integration ./internal/executor/kube/e2e/` (clean). `go build ./...` showed no errors.
+- Diff coverage: skipped. The tests need Docker, kind and a cluster, so they cannot run here.
 
 ## Previous findings
-- internal/executor/kube/e2e/kind_integration_test.go (missing wrong-key, restart, network scenarios): still present
-- internal/executor/kube/e2e/inner_integration_test.go (no close-out commit assertion): still present
-- internal/executor/kube/e2e/inner_integration_test.go (stub-agent.sh missing): still present
-- internal/executor/kube/e2e/kind_integration_test.go (unpinned images): still present
-- internal/executor/kube/e2e/kind_integration_test.go (containerd config_path): still present
+- internal/executor/kube/e2e/kind_integration_test.go (missing wrong-key, restart, network scenarios): no longer applicable; plan.md moved them to #437.
+- internal/executor/kube/e2e/inner_integration_test.go (no close-out commit assertion): no longer applicable; plan.md moved it to #437.
+- internal/executor/kube/e2e/inner_integration_test.go (stub-agent.sh missing): resolved; testdata/stub-agent.sh is embedded.
+- internal/executor/kube/e2e/kind_integration_test.go (unpinned images): resolved; node and registry images are pinned by digest. The kindnet ipBlock.except test belongs to the egress scenarios moved to #437.
+- internal/executor/kube/e2e/kind_integration_test.go (containerd config_path): resolved in part; a config_path check was added, but not a pull preflight (see the low finding).
