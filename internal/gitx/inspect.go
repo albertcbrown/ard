@@ -118,3 +118,39 @@ func (g *Git) PatchID(ctx context.Context, repoDir, from, to, path string) (stri
 	}
 	return f[0], nil
 }
+
+// MergeTreeEqual reports whether the tree of the two-parent merge commit equals
+// the tree of a clean mechanical merge of its parents (git merge-tree
+// --write-tree, with attributes read from the empty tree, no rerere and no
+// renormalize). A merge with conflicts is false. Anything else that goes wrong,
+// including a git without merge-tree --write-tree, is an error, so callers
+// fail closed. It writes tree objects into the repository and changes no ref.
+func (g *Git) MergeTreeEqual(ctx context.Context, repoDir, merge string) (bool, error) {
+	ps, err := g.Parents(ctx, repoDir, merge)
+	if err != nil {
+		return false, err
+	}
+	if len(ps) != 2 {
+		return false, fmt.Errorf("gitx: merge-tree %.12s: %d parents, want 2", merge, len(ps))
+	}
+	gd := "--git-dir=" + gitDirOf(repoDir)
+	env := []string{"GIT_ATTR_SOURCE=" + emptyTree, "GIT_OPTIONAL_LOCKS=0"}
+	out, _, err := g.run(ctx, repoDir, env, "", nil, gd, "-c", "rerere.enabled=false", "-c", "merge.renormalize=false",
+		"merge-tree", "--write-tree", ps[0], ps[1])
+	if err != nil {
+		if isExit(err, 1) {
+			return false, nil
+		}
+		return false, fmt.Errorf("gitx: merge-tree %.12s: %w", merge, err)
+	}
+	want, _, _ := strings.Cut(out, "\n")
+	want = strings.TrimSpace(want)
+	if want == "" || strings.ContainsAny(want, " \t") {
+		return false, fmt.Errorf("gitx: merge-tree %.12s: unexpected output", merge)
+	}
+	tree, _, err := g.run(ctx, repoDir, nil, "", nil, gd, "rev-parse", "--verify", merge+"^{tree}")
+	if err != nil {
+		return false, fmt.Errorf("gitx: tree of %.12s: %w", merge, err)
+	}
+	return strings.TrimSpace(tree) == want, nil
+}
