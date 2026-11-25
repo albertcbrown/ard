@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/config"
@@ -33,6 +34,14 @@ func Command(ctx context.Context, e *cli.Env, o cli.SetupOpts) error {
 	repo, err := labelsync.ResolveRepo(ctx, e, root)
 	if err != nil {
 		return err
+	}
+	if o.CreateGHApp {
+		if err := CreateApp(ctx, e, repo, CreateAppOpts{Name: o.AppName, KeyPath: o.KeyFile, Force: o.Force}); err != nil {
+			return err
+		}
+		if e.DryRun {
+			return nil
+		}
 	}
 	auth, err := github.AuthFromEnv(os.Getenv, os.ReadFile)
 	if err != nil {
@@ -101,7 +110,7 @@ func LocalVsMain(ctx context.Context, root string) (string, error) {
 // repository is readable with the configured credentials.
 func CheckPermissions(ctx context.Context, r labelsync.Reader, repo github.Repo) Row {
 	if _, err := r.ListLabels(ctx); err != nil {
-		return Row{Status: StatusManual, Detail: "check ARD_GITHUB_* credentials and that the App is installed on " + repo.String()}
+		return Row{Status: StatusManual, Detail: "check ARD_GITHUB_* credentials and that the App is installed on " + repo.String() + " with the permissions in AppPermissions (never " + strings.Join(ForbiddenPermissions, ", ") + ")"}
 	}
 	return Row{Status: StatusOK, Detail: "repository reachable"}
 }
