@@ -199,3 +199,30 @@ func TestIntervalAndClaims(t *testing.T) {
 }
 
 func controllerEnv() controller.Env { return controller.Env{} }
+
+func TestWaitingForInputsCounter(t *testing.T) {
+	gate := func(issue int, reason string) state.Event {
+		return state.Event{Kind: state.EventGate, Issue: issue, At: noon.Add(-time.Hour), Data: []byte(`{"verdict":"x","reason":"` + reason + `"}`)}
+	}
+	now := noon
+	l, st, fx, rd := setup(&now)
+	rd.issues = []github.Issue{{Number: 2}, {Number: 3}, {Number: 4}, {Number: 9, IsPR: true}}
+	st.events = []state.Event{
+		gate(2, "waiting-for-inputs"),
+		gate(3, "waiting-for-inputs"), gate(3, "inputs-ready"), // landed: not counted
+		gate(4, "waiting-for-inputs"),
+		gate(5, "waiting-for-inputs"), // closed issue: not listed
+		gate(9, "waiting-for-inputs"), // a PR is not an issue
+	}
+	_ = l.Tick(context.Background(), controllerEnv())
+	if b := fx.bodies[0]; !strings.Contains(b, "**Waiting for inputs:** 2") {
+		t.Errorf("body = %s", b)
+	}
+	// None waiting: the line is absent.
+	now2 := noon.Add(24 * time.Hour)
+	l2, _, fx2, _ := setup(&now2)
+	_ = l2.Tick(context.Background(), controllerEnv())
+	if strings.Contains(fx2.bodies[0], "Waiting for inputs") {
+		t.Errorf("counter shown with nothing waiting: %s", fx2.bodies[0])
+	}
+}

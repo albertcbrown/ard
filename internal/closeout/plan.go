@@ -73,6 +73,15 @@ type Plan struct {
 	// Bounced is set when a needs-network worker is sent to the triage
 	// engineer instead of ending needs-human.
 	Bounced bool `json:",omitempty"`
+	// Rearmed is set on a triage engineer's done that consumed an open network
+	// round and re-armed the lead; Rerun are the roles the lead re-opens.
+	Rearmed bool     `json:",omitempty"`
+	Rerun   []string `json:",omitempty"`
+	// Clear are labels removed in the request phase, before Requests are added
+	// (404 counts as success).
+	Clear []Label `json:",omitempty"`
+	// Inputs are the engineer's declared inputs, from the redacted role file.
+	Inputs []Input `json:",omitempty"`
 	// Review is set for a review that reached a verdict: close-out posts one
 	// PR review instead of a plain comment.
 	Review   *ReviewPlan
@@ -146,6 +155,24 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 			p.Remove = append(p.Remove, Label{n, labels.Pending})
 		}
 		p.Remove = append(p.Remove, run)
+		if j.Stage == StageTriage && j.Role == "engineer" {
+			p.Inputs = rf.Inputs
+			if j.Network != nil && j.Network.Round {
+				p.Rearmed = true
+				p.Rerun = j.Network.Done
+				p.Requests = append(p.Requests, Label{n, labels.Pending})
+				p.Clear = append(p.Clear, Label{n, labels.Done(labels.StageTriage, "lead")})
+			}
+		}
+		if j.Stage == StageTriage && j.Role == "lead" && j.Network != nil {
+			for _, r := range j.Network.Rerun {
+				if r == "lead" || !hasRole(rs, StageTriage, r) {
+					continue
+				}
+				p.Requests = append(p.Requests, Label{n, labels.Request(labels.StageTriage, r)})
+				p.Clear = append(p.Clear, Label{n, labels.Done(labels.StageTriage, r)})
+			}
+		}
 		now, deferred, skipped := resolveNext(j, rf.Next, rs)
 		p.Deferred, p.Skipped = deferred, skipped
 		for _, r := range now {

@@ -78,8 +78,10 @@ func TestNetworkRoundsAndRequest(t *testing.T) {
 		netRecord(t, "a", PhaseCommented, OutcomeNeedsNetwork, true),
 		netRecord(t, "b", PhaseClosed, OutcomeDone, false),
 	}}
-	if n, err := NetworkRounds(ctx, none, 7); err != nil || n != 0 {
-		t.Errorf("rounds = %d, %v; want 0", n, err)
+	// A record that is not closed yet still counts: the plan never changes
+	// after Prepare, and a crash must not make a round read as not open.
+	if n, err := NetworkRounds(ctx, none, 7); err != nil || n != 1 {
+		t.Errorf("rounds = %d, %v; want 1", n, err)
 	}
 	if _, ok, err := NetworkRequest(ctx, none, 7); err != nil || ok {
 		t.Errorf("request ok = %v, %v; want false", ok, err)
@@ -243,5 +245,144 @@ func TestRunNetworkRemoveNotFound(t *testing.T) {
 				t.Errorf("closed = %v, want %v", got, tc.closed)
 			}
 		})
+	}
+}
+
+func triageRec(t *testing.T, id, role string, out Outcome, p Plan) state.Job {
+	t.Helper()
+	p.Outcome = out
+	b, err := json.Marshal(Record{Version: recordVersion, Phase: PhaseClosed, Job: Job{ID: id, Role: role, Stage: StageTriage}, Plan: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state.Job{ID: id, CloseoutPlan: b}
+}
+
+// stageStore answers CloseoutsOf by stage.
+type stageStore map[string][]state.Job
+
+func (s stageStore) CloseoutsOf(_ context.Context, _ int, stage string) ([]state.Job, error) {
+	return s[stage], nil
+}
+
+func TestNetworkRoundOpenAndLeadRerun(t *testing.T) {
+	ctx := context.Background()
+	worker := netRecord(t, "03", PhaseCommented, OutcomeNeedsNetwork, true) // unclosed: still a round
+	s := stageStore{
+		StageWorker: {worker},
+		StageTriage: {
+			triageRec(t, "01", "lead", OutcomeDone, Plan{}),
+			triageRec(t, "02", "security", OutcomeDone, Plan{}),
+			triageRec(t, "02b", "engineer", OutcomeDone, Plan{}), // before the worker: not consuming
+		},
+	}
+	open, done, err := NetworkRoundOpen(ctx, s, 7)
+	if err != nil || !open || !reflect.DeepEqual(done, []string{"security"}) {
+		t.Fatalf("open = %v %v %v", open, done, err)
+	}
+	if got, err := LeadRerun(ctx, s, 7); err != nil || got != nil {
+		t.Errorf("LeadRerun before re-arm = %v, %v", got, err)
+	}
+	s[StageTriage] = append(s[StageTriage], triageRec(t, "04", "engineer", OutcomeDone, Plan{Rearmed: true, Rerun: []string{"security"}}))
+	if open, _, err := NetworkRoundOpen(ctx, s, 7); err != nil || open {
+		t.Errorf("round still open after engineer done: %v %v", open, err)
+	}
+	if got, err := LeadRerun(ctx, s, 7); err != nil || !reflect.DeepEqual(got, []string{"security"}) {
+		t.Errorf("LeadRerun = %v, %v", got, err)
+	}
+	s[StageTriage] = append(s[StageTriage], triageRec(t, "05", "lead", OutcomeDone, Plan{}))
+	if got, err := LeadRerun(ctx, s, 7); err != nil || got != nil {
+		t.Errorf("LeadRerun after lead done = %v, %v", got, err)
+	}
+}
+
+func TestBuildRearmAndRerun(t *testing.T) {
+	rf := RoleFile{Status: StatusDone, Inputs: []Input{{Path: "a/b.txt", Provider: "human"}}}
+	eng := Job{Stage: StageTriage, Role: "engineer", Issue: 7, Network: &NetworkState{Round: true, Done: []string{"security"}}}
+	p := Build(eng, rf, testRoles)
+	if !p.Rearmed || !reflect.DeepEqual(p.Rerun, []string{"security"}) || !reflect.DeepEqual(lbls(p.Clear), []string{"7:ard:triage:lead:done"}) ||
+		!reflect.DeepEqual(lbls(p.Requests), []string{"7:ard:pending"}) || !reflect.DeepEqual(p.Inputs, rf.Inputs) {
+		t.Errorf("rearm plan = %+v", p)
+	}
+	for _, ns := range []*NetworkState{nil, {Round: false}} {
+		eng.Network = ns
+		if p := Build(eng, rf, testRoles); p.Rearmed || len(p.Clear) > 0 || len(p.Requests) > 0 {
+			t.Errorf("no round must not re-arm: %+v", p)
+		}
+	}
+	lead := Job{Stage: StageTriage, Role: "lead", Issue: 7, Network: &NetworkState{Rerun: []string{"engineer", "gone"}}}
+	p = Build(lead, RoleFile{Status: StatusDone}, testRoles)
+	if !reflect.DeepEqual(lbls(p.Clear), []string{"7:ard:triage:engineer:done"}) || !reflect.DeepEqual(lbls(p.Requests), []string{"7:ard:triage:engineer"}) {
+		t.Errorf("lead plan clear %v requests %v", lbls(p.Clear), lbls(p.Requests))
+	}
+}
+
+// orderRecorder records label calls in order.
+type orderRecorder struct {
+	Effects
+	calls    *[]string
+	notFound string
+}
+
+func (o orderRecorder) AddLabels(ctx context.Context, n int, ls ...string) error {
+	*o.calls = append(*o.calls, "add "+strings.Join(ls, ","))
+	return o.Effects.AddLabels(ctx, n, ls...)
+}
+
+func (o orderRecorder) RemoveLabel(ctx context.Context, n int, l string) error {
+	*o.calls = append(*o.calls, "remove "+l)
+	if l == o.notFound {
+		return github.ErrNotFound
+	}
+	return o.Effects.RemoveLabel(ctx, n, l)
+}
+
+func TestClearRemovedBeforeRequestsAndTerminal(t *testing.T) {
+	e := newEnv(t)
+	e.write(".ard/7/triage-engineer.md", roleFile("engineer", "done"))
+	j := e.claim(StageTriage, "engineer")
+	j.Network = &NetworkState{Round: true}
+	var calls []string
+	e.d.Effects = orderRecorder{Effects: e.d.Effects, calls: &calls, notFound: "ard:triage:lead:done"}
+	cl := New(e.d)
+	rec := Record{Version: recordVersion, Job: j, Plan: Plan{Outcome: OutcomeDone,
+		Clear:    []Label{{7, "ard:triage:lead:done"}},
+		Requests: []Label{{7, "ard:pending"}},
+		Terminal: []Label{{7, "ard:triage:engineer:done"}},
+		Remove:   []Label{{7, "ard:triage:engineer:running"}}}}
+	if err := cl.request(context.Background(), rec); err != nil {
+		t.Fatalf("request (404 on clear must count as success): %v", err)
+	}
+	want := []string{"remove ard:triage:lead:done", "add ard:pending"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("request calls = %v, want %v", calls, want)
+	}
+}
+
+func TestRolefileInputs(t *testing.T) {
+	front := func(in string) string { return "---\nrole: engineer\nstatus: done\nattempt: 1\n" + in + "\n---\nS.\n" }
+	ok, err := Parse([]byte(front("inputs:\n  - path: data/a.txt\n    provider: human\n  - path: b.txt\n    provider: worker\n    url: https://example.com/x")))
+	if err != nil || len(ok.Inputs) != 2 || ok.Inputs[1].URL != "https://example.com/x" {
+		t.Fatalf("valid: %+v %v", ok, err)
+	}
+	var many strings.Builder
+	many.WriteString("inputs:\n")
+	for i := 0; i < 11; i++ {
+		many.WriteString("  - path: a.txt\n    provider: human\n")
+	}
+	for name, in := range map[string]string{
+		"provider": "inputs:\n  - path: a\n    provider: bot",
+		"http":     "inputs:\n  - path: a\n    provider: human\n    url: http://example.com",
+		"key":      "inputs:\n  - path: a\n    provider: human\n    extra: 1",
+		"nopath":   "inputs:\n  - provider: human",
+		"eleven":   many.String(),
+	} {
+		if _, err := Parse([]byte(front(in))); !errors.Is(err, ErrMalformed) {
+			t.Errorf("%s: err = %v, want ErrMalformed", name, err)
+		}
+	}
+	rf := RoleFile{Role: "lead", Inputs: []Input{{Path: "a", Provider: "human"}}}
+	if err := rf.check(Job{Stage: StageTriage, Role: "lead"}); !errors.Is(err, ErrMalformed) {
+		t.Errorf("inputs on lead: %v", err)
 	}
 }

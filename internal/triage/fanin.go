@@ -259,7 +259,17 @@ func (t *tick) gateIssue(ctx context.Context, n int, busy bool) error {
 	if res.Verdict == fHuman {
 		return t.gateHuman(ctx, n, jobID, res)
 	}
-	return t.gateReady(ctx, is, jobID, res.Worker)
+	rounds, err := closeout.NetworkRoundCount(ctx, l.d.Store, n)
+	if err != nil {
+		return fmt.Errorf("triage gate issue %d: network rounds: %w", n, err)
+	}
+	if rounds > 0 {
+		ok, err := t.gateInputs(ctx, n, jobID, res.Worker, rounds)
+		if err != nil || !ok {
+			return err
+		}
+	}
+	return t.gateReady(ctx, is, jobID, res.Worker, rounds)
 }
 
 const needsHumanHead = "**ard · triage · needs a human**\n\n"
@@ -280,6 +290,13 @@ func (t *tick) gateHuman(ctx context.Context, n int, jobID string, res fanInResu
 	case rWorkerGone:
 		marker = fmt.Sprintf("<!-- %striage gate=worker-gone worker=%s -->", labels.Prefix, res.Worker)
 		text = fmt.Sprintf("The lead chose the `%s` worker, but no such worker role exists now. %s", res.Worker, options)
+	case rBadInputPath, rInputTooBig, rWorkerNoNet:
+		marker = fmt.Sprintf("<!-- %striage gate=inputs-%s job=%s -->", labels.Prefix, res.Reason, jobID)
+		text = map[string]string{
+			rBadInputPath: "The engineer's `inputs:` list has a path or provider ard cannot accept, so it will not start a worker.",
+			rInputTooBig:  "An input file on `main` is over the size cap, so ard will not start a worker.",
+			rWorkerNoNet:  "The plan has an input the worker must fetch, but the chosen worker role has `network: false`, so ard will not start it.",
+		}[res.Reason] + " " + options
 	default: // rUnknownRole
 		marker = fmt.Sprintf("<!-- %striage gate=unknown-role role=%s -->", labels.Prefix, res.Role)
 		text = fmt.Sprintf("`ard:triage:%s` is requested but there is no `.ard/triage/%s/` role, so triage can never finish. A maintainer can remove the label and `%s`.",
@@ -298,7 +315,7 @@ func (t *tick) gateHuman(ctx context.Context, n int, jobID string, res fanInResu
 
 // gateReady runs the checks that need a read of the issue's history, then
 // starts the worker.
-func (t *tick) gateReady(ctx context.Context, is github.Issue, jobID, worker string) error {
+func (t *tick) gateReady(ctx context.Context, is github.Issue, jobID, worker string, rounds int) error {
 	l := t.l
 	n := is.Number
 	if !strings.EqualFold(is.Author, t.self) {
@@ -314,8 +331,10 @@ func (t *tick) gateReady(ctx context.Context, is github.Issue, jobID, worker str
 			return t.regateAfterTriage(ctx, is, hash, worker)
 		}
 	}
-	if t.cfg.RequireApproval {
-		ok, err := t.approved(ctx, is, jobID, worker)
+	// A network round always needs a fresh approval, whatever require_approval
+	// says and even when the engineer removed every network need.
+	if t.cfg.RequireApproval || rounds > 0 {
+		ok, err := t.approved(ctx, is, jobID, worker, rounds)
 		if err != nil || !ok {
 			return err
 		}
@@ -355,11 +374,11 @@ func (t *tick) regateAfterTriage(ctx context.Context, is github.Issue, hash, wor
 // triage permission or higher (not the App) and comes after the last triage
 // :done. A stale approval is left in place and waited on; an approval from
 // anyone else sends the issue to a human.
-func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker string) (bool, error) {
+func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker string, rounds int) (bool, error) {
 	l := t.l
 	n := is.Number
 	if !hasLabel(is.Labels, labels.Approved) {
-		return false, t.askApproval(ctx, n, jobID, worker)
+		return false, t.askApproval(ctx, n, jobID, worker, rounds)
 	}
 	tl, err := l.d.Reader.ListTimeline(ctx, n)
 	if err != nil {
@@ -412,7 +431,7 @@ func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker stri
 	}
 	if !ev.CreatedAt.After(doneAt) {
 		t.log.Info("triage.approval_stale", "issue", n)
-		return false, t.askApproval(ctx, n, jobID, worker)
+		return false, t.askApproval(ctx, n, jobID, worker, rounds)
 	}
 	return true, nil
 }
@@ -429,8 +448,11 @@ func (t *tick) gateEvent(ctx context.Context, issue int, verdict, reason, worker
 
 // askApproval posts the one-per-lead-job "ready for approval" comment. It
 // changes no label and records no event.
-func (t *tick) askApproval(ctx context.Context, n int, jobID, worker string) error {
+func (t *tick) askApproval(ctx context.Context, n int, jobID, worker string, rounds int) error {
 	marker := fmt.Sprintf("<!-- %striage gate=approval job=%s -->", labels.Prefix, jobID)
+	if rounds > 0 {
+		marker = fmt.Sprintf("<!-- %striage gate=approval job=%s round=%d -->", labels.Prefix, jobID, rounds)
+	}
 	text := fmt.Sprintf("**ard · triage · ready for approval**\n\nTriage is complete; the plan is in `.ard/%d/plan.md`. A maintainer adds `%s` to start the `%s` worker. "+
 		"An approval given before triage finished does not count: remove and re-add the label.", n, labels.Approved, worker)
 	return t.postOnce(ctx, n, marker, text)

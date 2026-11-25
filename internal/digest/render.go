@@ -13,9 +13,11 @@ import (
 type Data struct {
 	Day   string
 	Queue map[string]int
-	Jobs  map[state.RoleKey]state.JobCounts
-	Spend map[state.RoleKey]state.Spend
-	Total state.Spend
+	// WaitingInputs counts open issues held for human-provided inputs.
+	WaitingInputs int
+	Jobs          map[state.RoleKey]state.JobCounts
+	Spend         map[state.RoleKey]state.Spend
+	Total         state.Spend
 }
 
 func (d Data) counts() (jobs, failed int) {
@@ -55,6 +57,10 @@ func Render(d Data) string {
 		for _, n := range names {
 			fmt.Fprintf(&b, "| `%s` | %d |\n", safe(n), d.Queue[n])
 		}
+	}
+
+	if d.WaitingInputs > 0 {
+		fmt.Fprintf(&b, "\n**Waiting for inputs:** %d\n", d.WaitingInputs)
 	}
 
 	jobs, failed := d.counts()

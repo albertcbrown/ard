@@ -607,3 +607,41 @@ func (g *Git) CheckoutTree(ctx context.Context, gitDir, workTree, sha string) er
 	}
 	return nil
 }
+
+// TreeEntry is one ls-tree record of a path at a revision.
+type TreeEntry struct {
+	Mode, Type string
+	Size       int64 // blob size, 0 for other types
+}
+
+// EntryAt reports the tree entry of path at rev in dir without reading any
+// content. ok is false when the path does not exist there. dir must be the
+// controller's own repository.
+func (g *Git) EntryAt(ctx context.Context, dir, rev, path string) (TreeEntry, bool, error) {
+	if path == "" || strings.HasPrefix(path, "/") || slices.Contains(strings.Split(path, "/"), "..") {
+		return TreeEntry{}, false, fmt.Errorf("gitx: entry %q at %.12s: bad path", path, rev)
+	}
+	out, _, err := g.run(ctx, dir, nil, "", nil, "--git-dir="+gitDirOf(dir), "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", rev, "--", path)
+	if err != nil {
+		return TreeEntry{}, false, fmt.Errorf("gitx: entry %s at %.12s: %w", path, rev, err)
+	}
+	recs := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	if len(recs) == 1 && recs[0] == "" {
+		return TreeEntry{}, false, nil
+	}
+	if len(recs) != 1 {
+		return TreeEntry{}, false, fmt.Errorf("gitx: entry %s at %.12s: %d ls-tree records", path, rev, len(recs))
+	}
+	meta, got, ok := strings.Cut(recs[0], "\t")
+	f := strings.Fields(meta)
+	if !ok || len(f) != 4 || got != path {
+		return TreeEntry{}, false, fmt.Errorf("gitx: entry %s at %.12s: bad ls-tree record %q", path, rev, recs[0])
+	}
+	e := TreeEntry{Mode: f[0], Type: f[1]}
+	if f[3] != "-" {
+		if e.Size, err = strconv.ParseInt(f[3], 10, 64); err != nil {
+			return TreeEntry{}, false, fmt.Errorf("gitx: entry %s at %.12s: bad size in %q", path, rev, recs[0])
+		}
+	}
+	return e, true, nil
+}
