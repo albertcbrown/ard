@@ -240,7 +240,8 @@ func codeSnapshot(req CodeRequest, issue int) (snap, error) {
 }
 
 // create cuts the branch at s.base, commits s on top and pushes it with a
-// lease that expects the ref to be absent. There is no retry.
+// lease that expects the ref to be absent. A rejection is never retried; a
+// transient failure is (pushNew).
 func (l *lane) create(ctx context.Context, s snap) (Result, error) {
 	if err := os.MkdirAll(l.cfg.WorkDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("mkdir workdir: %w", err)

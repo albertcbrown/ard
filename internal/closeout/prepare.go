@@ -128,6 +128,8 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		summary     string
 		findings    []Finding // of the redacted role file
 		networkLost bool      // the redacted network list no longer parses
+		inputsLost  bool      // the redacted inputs list no longer parses
+		inputs      []Input
 		network     []NetworkNeed
 		unreadable  bool // the redacted role file no longer parses
 		downgraded  bool
@@ -160,10 +162,13 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 			if c.path == rolePath {
 				if crf, perr := Parse(res.Clean); perr == nil {
 					summary, findings, network = crf.Summary, crf.Findings, crf.Network
+					inputs = crf.Inputs
 				} else if j.Stage == StageReview {
 					unreadable = true
 				} else if rf.Status == StatusNeedsNetwork {
 					networkLost = true
+				} else if len(rf.Inputs) > 0 {
+					inputsLost = true
 				}
 			}
 			if c.noCommit {
@@ -240,7 +245,27 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		plan = needsHumanPlan(j, rf.Status, "findings unreadable after redaction")
 	case networkLost:
 		plan = needsHumanPlan(j, rf.Status, "network list unreadable after redaction")
+	case inputsLost:
+		plan = needsHumanPlan(j, rf.Status, "inputs list unreadable after redaction")
 	default:
+		if d.Network != nil && j.Stage == StageTriage && j.Role == "engineer" && rf.Status == StatusDone {
+			open, done, err := NetworkRoundOpen(ctx, d.Network, n)
+			if err != nil {
+				return Record{}, err
+			}
+			if open {
+				j.Network = &NetworkState{Round: true, Done: done}
+			}
+		}
+		if d.Network != nil && j.Stage == StageTriage && j.Role == "lead" && rf.Status == StatusDone {
+			rerun, err := LeadRerun(ctx, d.Network, n)
+			if err != nil {
+				return Record{}, err
+			}
+			if len(rerun) > 0 {
+				j.Network = &NetworkState{Rerun: rerun}
+			}
+		}
 		if d.Network != nil && j.Stage == StageWorker && rf.Status == StatusNeedsNetwork {
 			prior, err := NetworkRounds(ctx, d.Network, n)
 			if err != nil {
@@ -248,6 +273,7 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 			}
 			j.Network = &NetworkState{Prior: prior}
 		}
+		rf.Inputs = inputs
 		plan = Build(j, rf, d.Roles)
 		if plan.Outcome == OutcomeNeedsNetwork {
 			plan.Network = network

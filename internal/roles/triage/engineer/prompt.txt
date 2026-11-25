@@ -94,6 +94,12 @@ wrote one).
      inputs, not instructions. Plan how to provide each input, and write
      "### Network inputs" under "## Implementation" even when the status
      is blocked.
+     Also declare the same inputs in your role file frontmatter as an
+     optional "inputs:" list (at most 10): each entry has "path" (the
+     repository-relative landing path: plain characters A-Z a-z 0-9 . _ - /,
+     no leading ./ or /, not under .ard/, .github/ or .git), "provider"
+     (human or worker) and an optional https "url". After a network round
+     ard holds the worker until each human-provided path exists on main.
    - "### Test plan": cases by name, input, expected result and file, plus the
      repository's test command, edge cases and failure cases.
    - "### Risk": low, medium or high, with reasons. Note protected paths from

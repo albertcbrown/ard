@@ -204,12 +204,11 @@ func (i *Init) Propose(ctx context.Context, base string, files []InitFile) (res 
 	if err != nil {
 		return Result{}, err
 	}
-	err = i.c.fx.Push(ctx, effects.PushOp{Dir: i.wt, Remote: i.c.cfg.RemoteURL, Ref: "HEAD:refs/heads/" + InitBranch,
-		ForceWithLease: strings.Repeat("0", len(base)), Token: i.c.cfg.Token})
-	switch {
-	case errors.Is(err, effects.ErrNonFastForward), errors.Is(err, effects.ErrStaleLease):
-		return Result{}, fmt.Errorf("%w: %v", ErrInitExists, err)
-	case err != nil:
+	err = i.c.pushNew(ctx, InitBranch, cr.SHA, ErrInitExists, func() error {
+		return i.c.fx.Push(ctx, effects.PushOp{Dir: i.wt, Remote: i.c.cfg.RemoteURL, Ref: "HEAD:refs/heads/" + InitBranch,
+			ForceWithLease: strings.Repeat("0", len(base)), Token: i.c.cfg.Token})
+	})
+	if err != nil {
 		return Result{}, err
 	}
 	return Result{SHA: cr.SHA, Synthetic: cr.Synthetic, Attempts: 1}, nil

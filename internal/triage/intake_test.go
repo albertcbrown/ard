@@ -354,3 +354,86 @@ func TestRelabelBeforeEditStaysRegated(t *testing.T) {
 		t.Errorf("admission = %+v, %v", a, err)
 	}
 }
+
+// rearm simulates the engineer's re-arm of a finished lead: ard:pending added
+// by the App, no :done.
+func rearm(t *testing.T, h *harness, n int, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	for _, l := range []string{lead, labels.Running(labels.StageTriage, "lead")} {
+		_ = h.gh.RemoveLabel(ctx, n, l)
+	}
+	if err := h.gh.AddLabels(ctx, n, lead); err != nil {
+		t.Fatal(err)
+	}
+	h.gh.SeedTimeline(n, github.TimelineEvent{Event: "labeled", Label: lead, Actor: self, CreatedAt: at})
+}
+
+func TestRearmedLeadReclaimed(t *testing.T) {
+	const intakeLabel = "ard:intake"
+	t.Run("an App-added ard:pending re-admits the lead while the body is unchanged", func(t *testing.T) {
+		h := newHarness(t)
+		n := h.human("t", "original", lead)
+		h.labelledBy(n, lead, "maint", "maintain", t0.Add(time.Hour))
+		h.mustTick()
+		if err := h.store.Complete(context.Background(), h.jobs()[0].ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		rearm(t, h, n, t0.Add(3*time.Hour))
+		h.mustTick()
+		if len(h.ex.prepared) != 2 || h.ex.prepared[1].Role != "lead" {
+			t.Fatalf("re-armed lead not claimed: %+v", h.ex.prepared)
+		}
+	})
+	t.Run("a body edited before the re-run is not admitted", func(t *testing.T) {
+		h := newHarness(t)
+		n := h.human("t", "original", lead)
+		h.labelledBy(n, lead, "maint", "maintain", t0.Add(time.Hour))
+		h.mustTick()
+		if err := h.store.Complete(context.Background(), h.jobs()[0].ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		body := "edited"
+		if err := h.gh.UpdateIssue(context.Background(), n, github.IssueUpdate{Body: &body}); err != nil {
+			t.Fatal(err)
+		}
+		rearm(t, h, n, t0.Add(3*time.Hour))
+		h.mustTick()
+		if len(h.ex.prepared) != 1 {
+			t.Fatalf("lead claimed after a body edit: %+v", h.ex.prepared)
+		}
+	})
+	t.Run("custom intake label mode", func(t *testing.T) {
+		h := newHarness(t, withLabel(intakeLabel))
+		n := h.human("t", "original", intakeLabel)
+		h.labelledBy(n, intakeLabel, "maint", "maintain", t0.Add(time.Hour))
+		h.mustTick()
+		if len(h.ex.prepared) != 1 {
+			t.Fatalf("prepared = %+v", h.ex.prepared)
+		}
+		if err := h.store.Complete(context.Background(), h.jobs()[0].ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		// The intake label stays on the issue; the re-arm adds ard:pending.
+		rearm(t, h, n, t0.Add(3*time.Hour))
+		h.mustTick()
+		if len(h.ex.prepared) != 2 {
+			t.Fatalf("re-armed lead not claimed with the intake label present: %+v", h.ex.prepared)
+		}
+	})
+	t.Run("custom intake label mode without the intake label", func(t *testing.T) {
+		h := newHarness(t, withLabel(intakeLabel))
+		n := h.human("t", "original", intakeLabel)
+		h.labelledBy(n, intakeLabel, "maint", "maintain", t0.Add(time.Hour))
+		h.mustTick()
+		if err := h.store.Complete(context.Background(), h.jobs()[0].ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		_ = h.gh.RemoveLabel(context.Background(), n, intakeLabel)
+		rearm(t, h, n, t0.Add(3*time.Hour))
+		h.mustTick()
+		if len(h.ex.prepared) != 1 {
+			t.Fatalf("lead claimed without the intake label: %+v", h.ex.prepared)
+		}
+	})
+}

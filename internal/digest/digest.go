@@ -111,9 +111,17 @@ func (l *Loop) Tick(ctx context.Context, _ controller.Env) error {
 		return fmt.Errorf("digest: list issues: %w", err)
 	}
 	queue := map[string]int{}
+	waiting, err := l.waitingInputs(ctx)
+	if err != nil {
+		return err
+	}
+	nWaiting := 0
 	for _, is := range issues {
 		if is.IsPR {
 			continue
+		}
+		if waiting[is.Number] {
+			nWaiting++
 		}
 		for _, lb := range is.Labels {
 			if strings.HasPrefix(lb, labels.Prefix) {
@@ -129,7 +137,7 @@ func (l *Loop) Tick(ctx context.Context, _ controller.Env) error {
 	if err != nil {
 		return fmt.Errorf("digest: read spend: %w", err)
 	}
-	data := Data{Day: day, Queue: queue, Jobs: jobs, Spend: perSpend, Total: spend}
+	data := Data{Day: day, Queue: queue, WaitingInputs: nWaiting, Jobs: jobs, Spend: perSpend, Total: spend}
 	if l.d.Effects.DryRun() {
 		l.d.Log.Info("digest.notice", "day", day)
 		return nil
@@ -146,4 +154,22 @@ func (l *Loop) Tick(ctx context.Context, _ controller.Env) error {
 		l.d.Log.Error("digest.unrecorded", "day", day, "error", err)
 	}
 	return nil
+}
+
+// waitingInputs returns the issues whose newest gate event says the triage gate
+// is waiting for human-provided inputs.
+func (l *Loop) waitingInputs(ctx context.Context) (map[int]bool, error) {
+	es, err := l.d.Store.Events(ctx, state.EventFilter{Kind: state.EventGate})
+	if err != nil {
+		return nil, fmt.Errorf("digest: read gate events: %w", err)
+	}
+	waiting := map[int]bool{}
+	for _, e := range es {
+		var d struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(e.Data, &d)
+		waiting[e.Issue] = d.Reason == "waiting-for-inputs"
+	}
+	return waiting, nil
 }

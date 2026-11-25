@@ -21,7 +21,7 @@ import (
 
 // recordVersion stays 1 across the Reaper's additions (Job.Cause, Plan.Tail,
 // Plan.TailWithheld, Plan.KeepUntil) and the usage-limit ones (Cause.Family,
-// Cause.ResetsAt, OutcomeLimited) and the network one (Plan.Network,
+// Cause.ResetsAt, OutcomeLimited) and the network one (Plan.Network, Plan.Rearmed, Plan.Rerun, Plan.Clear, Plan.Inputs, NetworkState.Round,
 // OutcomeNeedsNetwork, Plan.Bounced, Job.Network, WorkerResult.Pushed) and Job.Home: older records decode them as zero, and
 // zero means the earlier behaviour.
 const recordVersion = 1
@@ -107,7 +107,10 @@ const (
 	CauseNoProcess CauseKind = "no_process"         // never started, or its process vanished in this run
 	CauseRateLimit CauseKind = "rate_limit"         // the agent reported a transient API error
 	CauseCloneFail CauseKind = "clone_failed"       // a loop's Prepare failed at git or clone
-	CauseEvicted   CauseKind = "evicted"            // the Kubernetes pod was evicted, deleted or never scheduled
+	// CausePushTransient: a push or fetch hit a GitHub 5xx or a network error
+	// that outlasted the committer's retries.
+	CausePushTransient CauseKind = "push_transient"
+	CauseEvicted       CauseKind = "evicted" // the Kubernetes pod was evicted, deleted or never scheduled
 	// CauseInputsTooLarge: the job's untrusted inputs exceed what a pod
 	// manifest carries. Never retried.
 	CauseInputsTooLarge CauseKind = "inputs_too_large"
@@ -342,7 +345,8 @@ type Deps struct {
 	Wake func(reason string, loops ...string)
 	// Network enables the network bounce (#385): a first-job needs-network
 	// worker is sent to the triage engineer. nil leaves it off and the worker
-	// ends needs-human. Prepare reads it for the one-round loop guard.
+	// ends needs-human. Prepare reads it for the one-round loop guard, the
+	// round state and the lead re-run list.
 	Network interface {
 		CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
 	}
@@ -633,6 +637,15 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 		c.prGone(rec, "branch gone", "branch_gone")
 		return nil
 	}
+	if errors.Is(err, committer.ErrTransient) {
+		// The remote was unavailable past the committer's retries: not a
+		// failure that needs a human. The job hands off to the automatic
+		// retry like any named transient cause.
+		rec.Job.Cause = Cause{Kind: CausePushTransient, Detail: "remote unavailable after retries", Transient: true, Retry: true}
+		*p = retryPlan(rec.Job, "push_transient: remote unavailable after retries")
+		p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
+		return nil
+	}
 	if errors.Is(err, committer.ErrMerge) {
 		return c.commitConflict(ctx, rec, err, tail, tailWithheld, keep)
 	}
@@ -697,6 +710,11 @@ func commitSummary(p Plan) string {
 
 // request applies the next labels, grouped by target number.
 func (c *Closer) request(ctx context.Context, rec Record) error {
+	for _, l := range rec.Plan.Clear {
+		if err := c.d.Effects.RemoveLabel(ctx, l.Number, l.Name); err != nil && !errors.Is(err, github.ErrNotFound) {
+			return fmt.Errorf("remove %s on #%d: %w", l.Name, l.Number, err)
+		}
+	}
 	return c.addGrouped(ctx, rec.Plan.Requests)
 }
 
