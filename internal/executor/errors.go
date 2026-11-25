@@ -17,3 +17,7 @@ var (
 	ErrInputsTooLarge = errors.New("job inputs too large")
 	ErrClone          = errors.New("clone or worktree failed")
 )
+
+// InputsTooLargeDetail is the close-out detail for ErrInputsTooLarge (the
+// jobpod manifest cap, 768 KiB).
+const InputsTooLargeDetail = "untrusted inputs exceed 768 KiB"

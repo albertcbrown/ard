@@ -783,6 +783,11 @@ func TestLoadErrors(t *testing.T) {
 			want: []wantErr{{".ard/config.yaml", "roles_repo.ref", "invalid ref"}},
 		},
 		{
+			name: "roles_repo with executor k8s",
+			yaml: "executor: k8s\nroles_repo: {repo: a/b}\n",
+			want: []wantErr{{".ard/config.yaml", "roles_repo", "not supported with executor k8s"}},
+		},
+		{
 			name: "roles_repo wrong type",
 			yaml: "roles_repo: nope\n",
 			want: []wantErr{{".ard/config.yaml", "roles_repo", "must be a mapping"}},

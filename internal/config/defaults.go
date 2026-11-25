@@ -250,6 +250,9 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 			errs = append(errs, &Error{File: cfgPath, Key: "roles_repo.ref", Msg: fmt.Sprintf("invalid ref %q: %v", entry.Ref, err)})
 		}
 		res.RolesRepo = &entry
+		if res.Executor == "k8s" {
+			errs = append(errs, &Error{File: cfgPath, Key: "roles_repo", Msg: "not supported with executor k8s yet"})
+		}
 	}
 
 	return errs

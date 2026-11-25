@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/albertcbrown/ard/internal/executor"
@@ -108,4 +109,59 @@ func failStaleScannerJobs(ctx context.Context, jobs scannerJobStore, ex workspac
 		log.Info("scanner.stale_job_failed", "job", j.ID, "scanner", j.Role)
 	}
 	return errors.Join(errs...)
+}
+
+// sweeper is the executor part that removes pods no job record owns.
+type sweeper interface {
+	Sweep(ctx context.Context, keep func(id string) bool) error
+}
+
+// sweepOrphans deletes this repo's job pods and Secrets that no running job
+// owns, when the executor has Sweep (Kubernetes). A pod of a running job is
+// left to the Reaper's normal Orphaned path.
+func sweepOrphans(ctx context.Context, ex any, store jobLister, log *slog.Logger) error {
+	sw, ok := ex.(sweeper)
+	if !ok {
+		return nil
+	}
+	jobs, err := store.RunningJobs(ctx)
+	if err != nil {
+		return fmt.Errorf("sweep orphans: %w", err)
+	}
+	ids := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		ids = append(ids, j.ID)
+		if len(j.Handle) > 0 {
+			var h executor.Handle
+			if json.Unmarshal(j.Handle, &h) == nil && h.JobID != "" {
+				ids = append(ids, h.JobID)
+			}
+		}
+	}
+	keep := func(id string) bool {
+		for _, j := range ids {
+			if id == j || agentStepID(j, id) {
+				return true
+			}
+		}
+		return false
+	}
+	if err := sw.Sweep(ctx, keep); err != nil {
+		log.Warn("serve.sweep_failed", "error", err)
+	}
+	return nil
+}
+
+// agentStepID reports whether step is a fix step id of job (job + "f" + digits).
+func agentStepID(job, step string) bool {
+	rest := strings.TrimPrefix(step, job+"f")
+	if rest == "" || rest == step {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

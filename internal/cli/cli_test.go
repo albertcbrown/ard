@@ -313,3 +313,37 @@ func TestJobCommands(t *testing.T) {
 		t.Errorf("job commands are not hidden:\n%s", so)
 	}
 }
+
+func TestServeK8sFlags(t *testing.T) {
+	const dig = "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	run := func(args ...string) (ServeOpts, int, string) {
+		var got ServeOpts
+		h := Handlers{Serve: func(_ context.Context, _ *Env, o ServeOpts) error { got = o; return nil }}
+		var stdout, stderr strings.Builder
+		code := Run(append([]string{"serve"}, args...), &stdout, &stderr, h, "dev")
+		return got, code, stderr.String()
+	}
+	t.Run("flags", func(t *testing.T) {
+		got, code, errs := run("--k8s-namespace", "jobs", "--k8s-instance", "ard", "--k8s-agent-image", "a"+dig,
+			"--k8s-pod-image", "p"+dig, "--k8s-resources", "cpu=2", "--k8s-pre-budget", "1m")
+		if code != 0 || got.K8s.Namespace != "jobs" || got.K8s.Instance != "ard" || got.K8s.AgentImage != "a"+dig ||
+			got.K8s.Resources != "cpu=2" || got.K8s.PreBudget != time.Minute || got.K8s.GitBase != "https://github.com" ||
+			got.K8s.ResultGrace != 2*time.Minute {
+			t.Fatalf("code %d opts %+v err %q", code, got.K8s, errs)
+		}
+	})
+	t.Run("env fallback", func(t *testing.T) {
+		t.Setenv("ARD_K8S_NAMESPACE", "envns")
+		t.Setenv("ARD_K8S_POD_IMAGE", "p"+dig)
+		got, code, _ := run()
+		if code != 0 || got.K8s.Namespace != "envns" || got.K8s.PodImage != "p"+dig {
+			t.Fatalf("code %d opts %+v", code, got.K8s)
+		}
+	})
+	t.Run("tag-only image refused", func(t *testing.T) {
+		_, code, errs := run("--k8s-agent-image", "agent:latest")
+		if code == 0 || !strings.Contains(errs, "digest") {
+			t.Fatalf("code %d err %q", code, errs)
+		}
+	})
+}
