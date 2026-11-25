@@ -3,22 +3,22 @@ role: engineer
 status: done
 attempt: 1
 ---
-Conflict rounds, part B: when a PR conflicts with main, the worker resolves the merge with main and the committer pushes it as a merge commit whose second parent is main's tip. This round adds the tests the reviewer found missing for the worker flow and the reviewfix landing check.
+Conflict rounds, part B: when a PR conflicts with main, the worker resolves the merge and the committer pushes a merge commit with main's tip as second parent, under a tree invariant and lease push. This round adds the missing test for the conflict-round diff guard.
 
 ## Changes
-- Earlier rounds (already in the branch): `gitx` merge helpers and multi-parent commits, committer merge-parent lane and tree invariant, worker `conflict.go` and its wiring in `run.go`, reviewfix landing check, servecmd wiring, docs.
-- `internal/worker/conflict_round_test.go` (new): tests for the conflict input (header, escaped names, path cap, mainTip from the remote), a clean merge (no input), a non-conflict round, `preMerge` count and path mismatch errors, a resolved round (agent sees markers, `conflict.md` replaces `review-feedback.md`, `MergeParent` is the fetched main tip), and the leftover-marker hold with nothing committed.
-- `internal/reviewfix/harness_test.go`, `loop_test.go`: stub can answer "not on main" and fetch errors; `TestMergeIncludesSecondParentOnMain` covers second parent on main (true), not on main (false), fetch error, and head equal to base.
+- Committer and gitx: merge-parent commit, tree invariant, lease push (unchanged this round).
+- Worker conflict flow: `conflict.md` input, trial merge, marker check, diff facts measured against main's tip (unchanged this round).
+- `internal/worker/conflict_round_test.go`: new `TestConflictRoundDiffGuardOwnChanges`.
 
 ## Testing
-`go test ./worker ./reviewfix` and `go vet` on both pass. No production code changed this round.
+Ran `go test ./internal/worker -run TestConflict`: passes. The new test sets diff_max_lines to 20 and has main add 100 lines. Case 1: the resolution passes and main's file is not declared. Case 2: the PR adds 100 lines of its own and is held with a line-limit hold and no commit request.
 
 ## Review findings
-- conflict.go:42 (blocking): fixed: added the worker conflict tests listed above.
-- reviewfix/loop.go:389 (blocking): fixed for the tests. not changed: the hard-coded `main`. The committer's `cfg.Branch` is documented as for the main-branch committer only, so for worker code the committer's default is also `main`, and the worker opens PRs against `main`; the names agree.
-- servecmd/serve.go:738 (non-blocking): not changed: no wiring test, end-to-end fake test or prgate whitespace case was added, to keep within budget.
-- committer/merge.go:31 (non-blocking): not changed, see the branch name note above.
+- internal/worker/run.go:626 (blocking, diff guard untested): fixed, both cases added.
+- internal/worker/run.go:720 (workflow rejection, other untested items): not changed: non-blocking, left for a follow-up.
+- internal/committer/merge.go:25 (runMerge coverage): not changed: non-blocking, left for a follow-up.
+- internal/servecmd/serve.go:739 (Rounds wiring, end-to-end test): not changed: non-blocking, left for a follow-up.
+- internal/reviewfix/loop.go:403 (hard-coded main, weaker second-parent check): not changed: non-blocking, low severity.
 
 ## Open issues
-- Not covered: the conflict.md backtick fence, redaction and UTF-8 truncation (conflict.md currently lists paths only, no hunks), diff-guard own-changes test, no-git-in-agent-tree test, workflow-rejection test, servecmd `Rounds` wiring test and the end-to-end case.
-- The reviewer's lint note is a parse error in an untouched testdata file.
+- The non-blocking test gaps above remain: workflow-rejection hold, MaxFiles hold, overlap needs-human, committer stale-lease and undeclared-diff cases, Rounds wiring, end-to-end.
