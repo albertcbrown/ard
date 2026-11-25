@@ -47,6 +47,7 @@ import (
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/repopath"
 	"github.com/albertcbrown/ard/internal/scanner/stale"
+	"github.com/albertcbrown/ard/internal/snapshot"
 	"github.com/albertcbrown/ard/internal/state"
 	"github.com/albertcbrown/ard/internal/state/scannerdb"
 )
@@ -184,7 +185,10 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 		defer d.Close()
 	}
 
-	log := e.Log
+	// The ring keeps the newest log records for the command center; the tee
+	// passes every record to the existing handler unchanged.
+	events := snapshot.NewRing(snapshotEvents)
+	log := slog.New(snapshot.NewTee(e.Log.Handler(), events, nil))
 	// The controller's own bare clone: every config fetch, committer lane and
 	// executor worktree uses it, never the operator's checkout (#113).
 	clone, err := openClone(ctx, gitx.New(""), home, repo, d.RemoteURL, d.Token, log)
@@ -355,6 +359,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	if err != nil {
 		return fmt.Errorf("ard serve: %w", err)
 	}
+	w.snap = w.newSnapshotTaker(cc, events)
 	w.ctl.Store(cc)
 	startSHA := ""
 	if cfg != nil {
@@ -425,6 +430,8 @@ type wiring struct {
 	rp               *reaper.Reaper
 	lim              *limits.Book
 	bgt              *budget.Gate
+	// snap takes snapshots for the command center (#413); nothing renders it yet.
+	snap *snapshot.Taker
 	// budgetNow is the budget gate's clock; nil means time.Now (tests set it).
 	budgetNow func() time.Time
 
