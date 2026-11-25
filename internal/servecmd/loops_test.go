@@ -82,7 +82,7 @@ func TestServeUnknownLoopFailsFirst(t *testing.T) {
 
 // The loop names registerLoops' constructors report are the known names.
 func TestKnownLoopsMatchLoopNames(t *testing.T) {
-	want := []string{"scanners", "stale", "triage", "workers", "reviewers", "reviewfix", "merger", "prwatch", "janitor", "reaper", "budget", "digest"}
+	want := []string{"scanners", "stale", "triage", "workers", "reviewers", "reviewfix", "merger", "prwatch", "janitor", "reaper", "budget", "digest", "approvals"}
 	if !reflect.DeepEqual(knownLoops, want) {
 		t.Errorf("knownLoops = %v, want %v", knownLoops, want)
 	}
