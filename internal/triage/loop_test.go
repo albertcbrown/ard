@@ -498,21 +498,30 @@ func TestRunningWorkerJobBlocksTriage(t *testing.T) {
 }
 
 func (h *harness) seedWorkerCloseout(n int, bounced bool) {
+	h.seedWorkerPhase(n, bounced, closeout.PhaseClosed)
+}
+
+// seedWorkerPhase is seedWorkerCloseout with the record in the given phase;
+// only a closed record completes its job.
+func (h *harness) seedWorkerPhase(n int, bounced bool, phase closeout.Phase) {
 	h.t.Helper()
 	ctx := context.Background()
 	sj, err := h.store.CreateJob(ctx, state.NewJob{Stage: "worker", Role: "engineer", Issue: n})
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	b, err := json.Marshal(closeout.Record{Version: closeout.RecordVersion, Phase: closeout.PhaseClosed,
+	b, err := json.Marshal(closeout.Record{Version: closeout.RecordVersion, Phase: phase,
 		Job: closeout.Job{ID: sj.ID, Stage: "worker", Role: "engineer", Issue: n},
 		Plan: closeout.Plan{Outcome: closeout.OutcomeNeedsNetwork, Bounced: bounced,
 			Network: []closeout.NetworkNeed{{What: "the spec", URL: "https://example.com/spec", Why: "to read it"}}}})
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	if err := h.store.SetCloseout(ctx, sj.ID, string(closeout.PhaseClosed), b); err != nil {
+	if err := h.store.SetCloseout(ctx, sj.ID, string(phase), b); err != nil {
 		h.t.Fatal(err)
+	}
+	if phase != closeout.PhaseClosed {
+		return
 	}
 	if err := h.store.Complete(ctx, sj.ID, nil); err != nil {
 		h.t.Fatal(err)

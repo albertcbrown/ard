@@ -1,8 +1,13 @@
 package triage
 
 import (
+	"errors"
+	"time"
+
 	"context"
 	"encoding/json"
+	"github.com/albertcbrown/ard/internal/github"
+	"github.com/albertcbrown/ard/internal/labels"
 	"strings"
 	"testing"
 
@@ -130,5 +135,175 @@ func TestGateBadInputPathAndNoNetworkWorker(t *testing.T) {
 	h.mustTick()
 	if !h.has(n, "ard:needs-human") || h.entryCalls != 0 {
 		t.Errorf("bad path: labels %v, entry reads %d", h.issue(n).Labels, h.entryCalls)
+	}
+}
+
+var specInput = []closeout.Input{{Path: "data/spec.txt", Provider: "human"}}
+
+func landSpec(h *harness) {
+	h.mainFiles = map[string]TreeEntry{"data/spec.txt": {Mode: "100644", Type: "blob", Size: 5}}
+}
+
+// engineerDoneAt puts the engineer's :done label in the timeline.
+func (h *harness) engineerDoneAt(n int, at time.Time) {
+	h.gh.SeedTimeline(n, github.TimelineEvent{Event: "labeled", Label: "ard:triage:engineer:done", Actor: self, CreatedAt: at})
+}
+
+func TestApprovalMarkerPerRound(t *testing.T) {
+	after := tDone.Add(time.Minute)
+	t.Run("round zero keeps the old marker", func(t *testing.T) {
+		h := gateHarness(t, true)
+		n := h.ready()
+		h.mustTick()
+		if commentsWith(h, n, "gate=approval job=") != 1 || commentsWith(h, n, "round=") != 0 {
+			t.Errorf("comments = %+v", h.comments(n))
+		}
+	})
+	t.Run("a network round puts the round in the marker", func(t *testing.T) {
+		h := gateHarness(t, false)
+		n := h.ready("ard:triage:engineer:done")
+		h.seedWorkerCloseout(n, true)
+		h.seedEngineerDone(n, nil)
+		h.mustTick()
+		if commentsWith(h, n, "round=1 -->") != 1 || commentsWith(h, n, "ready for approval") != 1 {
+			t.Errorf("comments = %+v", h.comments(n))
+		}
+	})
+	t.Run("an approval older than the engineer done is ignored", func(t *testing.T) {
+		h := gateHarness(t, false)
+		n := h.ready(labels.Approved, "ard:triage:engineer:done")
+		h.labelledBy(n, labels.Approved, "maint", "triage", tDone.Add(-time.Minute))
+		h.engineerDoneAt(n, tDone)
+		h.seedWorkerCloseout(n, true)
+		h.seedEngineerDone(n, nil)
+		h.mustTick()
+		if h.has(n, "ard:worker:engineer") || commentsWith(h, n, "ready for approval") != 1 {
+			t.Errorf("labels %v, comments %+v", h.issue(n).Labels, h.comments(n))
+		}
+	})
+	t.Run("an approval given while inputs are missing counts once they land", func(t *testing.T) {
+		h := gateHarness(t, false)
+		n := h.ready(labels.Approved, "ard:triage:engineer:done")
+		h.labelledBy(n, labels.Approved, "maint", "triage", after)
+		h.engineerDoneAt(n, tDone)
+		h.seedWorkerCloseout(n, true)
+		h.seedEngineerDone(n, specInput)
+		h.mustTick()
+		if h.has(n, "ard:worker:engineer") {
+			t.Fatal("started with a missing input")
+		}
+		landSpec(h)
+		h.mainSHAval = "sha2"
+		h.mustTick()
+		if !h.has(n, "ard:worker:engineer") {
+			t.Errorf("not started: labels %v", h.issue(n).Labels)
+		}
+	})
+	t.Run("an unclosed bounced worker record still forces approval", func(t *testing.T) {
+		h := gateHarness(t, false)
+		n := h.ready("ard:triage:engineer:done")
+		h.seedWorkerPhase(n, true, closeout.PhasePrepared)
+		h.seedEngineerDone(n, nil)
+		h.mustTick()
+		if h.has(n, "ard:worker:engineer") || commentsWith(h, n, "ready for approval") != 1 {
+			t.Errorf("labels %v", h.issue(n).Labels)
+		}
+	})
+	t.Run("a non-network issue still starts without approval", func(t *testing.T) {
+		h := gateHarness(t, false)
+		n := h.ready()
+		h.mustTick()
+		if !h.has(n, "ard:worker:engineer") {
+			t.Errorf("labels %v", h.issue(n).Labels)
+		}
+	})
+}
+
+func TestRerunBeforeGate(t *testing.T) {
+	h := gateHarness(t, false)
+	// The re-armed lead is pending and its :done is gone: the gate waits.
+	n := h.gh.SeedIssue(github.Issue{Title: "t", Body: "b", Author: self, Labels: []string{"ard:pending", "ard:triage:engineer:done"}, CreatedAt: t0, UpdatedAt: t0})
+	h.seedWorkerCloseout(n, true)
+	h.seedEngineerDone(n, nil)
+	h.mustTick()
+	if h.has(n, "ard:worker:engineer") || commentsWith(h, n, "ready for approval") != 0 {
+		t.Errorf("gate acted before the lead finished: %v", h.issue(n).Labels)
+	}
+}
+
+func TestGateMainReadErrorWaits(t *testing.T) {
+	h := gateHarness(t, false)
+	n := h.ready("ard:triage:engineer:done")
+	h.seedWorkerCloseout(n, true)
+	h.seedEngineerDone(n, specInput)
+	h.mainErr = errors.New("fetch failed")
+	h.mustTick()
+	if h.has(n, labels.NeedsHuman) || h.has(n, "ard:worker:engineer") {
+		t.Errorf("labels %v", h.issue(n).Labels)
+	}
+	if len(h.events(state.EventGate)) != 0 {
+		t.Error("a read error recorded a gate event")
+	}
+	h.mainErr = nil
+	landSpec(h)
+	h.mustTick()
+	if commentsWith(h, n, "ready for approval") != 1 {
+		t.Errorf("comments = %+v", h.comments(n))
+	}
+}
+
+func TestGateInputSymlinkSubmodule(t *testing.T) {
+	for _, e := range []TreeEntry{{Mode: "120000", Type: "blob", Size: 5}, {Mode: "160000", Type: "commit"}} {
+		h := gateHarness(t, false)
+		n := h.ready("ard:triage:engineer:done")
+		h.seedWorkerCloseout(n, true)
+		h.seedEngineerDone(n, specInput)
+		h.mainFiles = map[string]TreeEntry{"data/spec.txt": e}
+		h.mustTick()
+		if commentsWith(h, n, "waiting for inputs") != 1 || h.has(n, "ard:worker:engineer") || commentsWith(h, n, "ready for approval") != 0 {
+			t.Errorf("mode %s: comments %+v", e.Mode, h.comments(n))
+		}
+	}
+}
+
+func TestMainReadOncePerTickAndCacheDropsOnNewSHA(t *testing.T) {
+	h := gateHarness(t, false)
+	for i := 0; i < 3; i++ {
+		n := h.ready("ard:triage:engineer:done")
+		h.seedWorkerCloseout(n, true)
+		h.seedEngineerDone(n, specInput)
+	}
+	landSpec(h)
+	h.mustTick()
+	if h.shaCalls != 1 || h.entryCalls != 1 {
+		t.Errorf("one tick: sha reads %d, entry reads %d; want 1, 1", h.shaCalls, h.entryCalls)
+	}
+	h.mustTick()
+	if h.shaCalls != 2 || h.entryCalls != 1 {
+		t.Errorf("same SHA: sha reads %d, entry reads %d; want 2, 1", h.shaCalls, h.entryCalls)
+	}
+	h.mainSHAval = "sha2"
+	h.mustTick()
+	if h.entryCalls != 2 {
+		t.Errorf("new SHA: entry reads %d, want 2", h.entryCalls)
+	}
+}
+
+func TestStatusEventsWaitingForInputs(t *testing.T) {
+	h := gateHarness(t, false)
+	n := h.ready("ard:triage:engineer:done")
+	h.seedWorkerCloseout(n, true)
+	h.seedEngineerDone(n, specInput)
+	h.mustTick()
+	h.mustTick()
+	if es := h.events(state.EventGate); len(es) != 1 || !strings.Contains(string(es[0].Data), "waiting-for-inputs") {
+		t.Fatalf("events = %+v", es)
+	}
+	landSpec(h)
+	h.mainSHAval = "sha2"
+	h.mustTick()
+	es := h.events(state.EventGate)
+	if len(es) != 2 || !strings.Contains(string(es[1].Data), "inputs-ready") {
+		t.Errorf("events = %+v", es)
 	}
 }

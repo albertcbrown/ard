@@ -60,6 +60,7 @@ type Store interface {
 	Admission(ctx context.Context, issue int) (state.Admission, error)
 	SetAdmission(ctx context.Context, a state.Admission) error
 	AppendEvent(ctx context.Context, e state.Event) error
+	Events(ctx context.Context, f state.EventFilter) ([]state.Event, error)
 	Meta(ctx context.Context, key string) (string, error)
 	SetMeta(ctx context.Context, key, value string) error
 }

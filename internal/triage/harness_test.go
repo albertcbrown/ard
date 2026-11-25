@@ -185,6 +185,8 @@ type harness struct {
 	mainSHAval string
 	shaCalls   int
 	entryCalls int
+	// mainErr fails both reads of main.
+	mainErr error
 }
 
 type option func(*harness)
@@ -250,6 +252,9 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		PlanExists: func(_ context.Context, n int) (bool, error) { return !h.noPlan[n], h.planErr },
 		MainSHA: func(context.Context) (string, error) {
 			h.shaCalls++
+			if h.mainErr != nil {
+				return "", h.mainErr
+			}
 			if h.mainSHAval == "" {
 				return "sha1", nil
 			}
@@ -257,6 +262,9 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		},
 		MainEntry: func(_ context.Context, _, p string) (TreeEntry, bool, error) {
 			h.entryCalls++
+			if h.mainErr != nil {
+				return TreeEntry{}, false, h.mainErr
+			}
 			e, ok := h.mainFiles[p]
 			return e, ok, nil
 		},

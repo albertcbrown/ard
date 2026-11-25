@@ -2,6 +2,7 @@ package triage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -10,6 +11,7 @@ import (
 	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/labels"
+	"github.com/albertcbrown/ard/internal/state"
 )
 
 // maxInputBytes caps the size of a human-provided input blob on main.
@@ -24,6 +26,7 @@ const (
 	rInputTooBig    = "input-too-big"
 	rWorkerNoNet    = "worker-no-network"
 	rWaitingInputs  = "waiting-for-inputs"
+	rInputsReady    = "inputs-ready"
 	captureNoteHint = "Commit each file to `main` with a capture note beside it: a short `<path>.capture.md` with a table of `url`, `date` (YYYY-MM-DD), `status`, `sha256` and `verified_by`."
 )
 
@@ -166,6 +169,7 @@ func (t *tick) gateInputs(ctx context.Context, n int, jobID, worker string, roun
 	res := decideInputs(inputs, wr, have, lookup)
 	switch res.Verdict {
 	case fReady:
+		t.inputsLanded(ctx, n, worker)
 		return true, nil
 	case fHuman:
 		return false, t.gateHuman(ctx, n, jobID, fanInResult{Verdict: fHuman, Reason: res.Reason, Worker: worker})
@@ -180,7 +184,39 @@ func (t *tick) gateInputs(ctx context.Context, n int, jobID, worker string, roun
 		fmt.Fprintf(&b, "- `%s`\n", p)
 	}
 	b.WriteString("\n" + captureNoteHint + " ard continues by itself once they are there.")
-	return false, t.postOnce(ctx, n, marker, b.String())
+	if err := t.postOnce(ctx, n, marker, b.String()); err != nil {
+		return false, err
+	}
+	t.markWaiting(ctx, n, worker)
+	return false, nil
+}
+
+// lastGateReason is the reason of the newest gate event of issue, "" if none.
+func (t *tick) lastGateReason(ctx context.Context, n int) string {
+	es, err := t.l.d.Store.Events(ctx, state.EventFilter{Kind: state.EventGate, Issue: n})
+	if err != nil || len(es) == 0 {
+		return ""
+	}
+	var d struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(es[len(es)-1].Data, &d)
+	return d.Reason
+}
+
+// markWaiting records, once per wait, that the issue waits for inputs. The
+// status issue digest counts issues whose newest gate event is this one.
+func (t *tick) markWaiting(ctx context.Context, n int, worker string) {
+	if t.lastGateReason(ctx, n) != rWaitingInputs {
+		t.gateEvent(ctx, n, "wait", rWaitingInputs, worker)
+	}
+}
+
+// inputsLanded records that a wait for inputs ended, so the count drops.
+func (t *tick) inputsLanded(ctx context.Context, n int, worker string) {
+	if t.lastGateReason(ctx, n) == rWaitingInputs {
+		t.gateEvent(ctx, n, "inputs-ready", rInputsReady, worker)
+	}
 }
 
 func workerRole(cfg *config.Resolved, name string) (config.Role, bool) {
