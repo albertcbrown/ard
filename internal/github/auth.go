@@ -49,6 +49,7 @@ type AppAuth struct {
 	baseURL string
 	repo    Repo
 	inst    *ghinstallation.Transport
+	instID  int64 // configured or discovered installation id
 }
 
 // configure is called by New with the repo and API base URL.
@@ -113,6 +114,7 @@ func (a *AppAuth) installation(ctx context.Context) (*ghinstallation.Transport, 
 			return nil, err
 		}
 	}
+	a.instID = id
 	t, err := ghinstallation.New(base, a.AppID, id, a.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("github: app transport: %w", err)
@@ -124,6 +126,22 @@ func (a *AppAuth) installation(ctx context.Context) (*ghinstallation.Transport, 
 	t.Client = newAPIClient(base)
 	a.inst = t
 	return t, nil
+}
+
+// installationID returns the installation id, discovering it when unknown.
+func (a *AppAuth) installationID(ctx context.Context) (int64, error) {
+	a.mu.Lock()
+	id := a.instID
+	a.mu.Unlock()
+	if id != 0 {
+		return id, nil
+	}
+	if _, err := a.installation(ctx); err != nil {
+		return 0, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.instID, nil
 }
 
 func (a *AppAuth) discover(ctx context.Context, base http.RoundTripper) (int64, error) {
