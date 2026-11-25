@@ -4,14 +4,25 @@ status: done
 attempt: 1
 verdict: approve
 findings:
-  - file: "internal/ui/keys.go"
-    line: 26
-    severity: info
+  - file: "internal/servecmd/uilog.go"
+    line: 61
+    severity: low
+    blocking: false
     message: |
-      OpenBrowser starts the opener without redirecting its stdout/stderr, so an opener that prints (xdg-open) could write onto the drawn screen. Consider setting cmd.Stdout and cmd.Stderr to nil explicitly or io.Discard. No action required for this slice.
+      When the rotation rename fails, Write has already closed c.f but leaves it set, so every later write goes to a closed file and returns an error, and logging stops for good.
+      Reopen the file (or set c.f = nil) on the rename-failure path so the writer recovers or fails cleanly. The rotation failure path has no test.
+  - file: "internal/servecmd/serve.go"
+    line: 294
+    severity: low
+    blocking: false
+    message: |
+      The UI wiring in serveLoops (serve.log redirect, the `logs:` line on exit, the call to runWithUI) is exercised by no test. Only uiWanted, openServeLog and runWithUI are tested on their own. Consider one test with a stubbed uiWanted that checks log output goes to the file.
 ---
-The change matches the slice: TTY detection, --ui/--no-ui, serve.log with 0600 and rotation, a sanitised read-only Bubble Tea UI, and graceful shutdown through the same path as before. I found no blocking problems. Approved.
+The change follows the plan: TTY detection, `--ui`/`--no-ui`, a capped 0600 serve.log, a sanitised read-only UI and a graceful shutdown path. I found no blocking problems, so this is approved.
 
 ## Checks
-- Lint: `make lint` ran; its only output was a parse error in `internal/roles/testdata/docs/skips/src/_x.go`, a testdata file the change did not touch. Nothing was reported on the changed files.
-- Tests and coverage: `go test -cover ./internal/servecmd ./internal/ui ./internal/cli` passes (78.7%, 85.3% and 95.8%). Tests cover uiWanted, the serve log, runWithUI, Clean, golden frames, keys, resize and inert escape sequences.
+- Lint: `make lint` printed only a parse error in `internal/roles/testdata/docs/skips/src/_x.go`, a file the change did not touch. It reported nothing on the changed files.
+- Coverage: `go test -cover ./internal/servecmd ./internal/ui ./internal/cli` passes (78.4%, 85.3% and 95.8%). The uncovered added code is `OpenBrowser`, `View`, and the rotation and error branches of `uilog.go`.
+
+## Previous findings
+- internal/ui/keys.go (OpenBrowser output): no longer applicable. `exec.Command` with nil Stdout and Stderr connects them to the null device, so the opener cannot write onto the screen.
