@@ -1,14 +1,18 @@
 ---
 role: lead
-status: blocked
+status: done
 attempt: 1
+next: [triage:engineer]
+worker: engineer
 ---
-This issue wires the Kubernetes executor into the serve command, but the executor it wires in has not landed yet, so it is blocked. Only the kube REST client and its fake (part 6A) are on main. The kube executor itself is still missing: there is no kube.New, no Sweep, no End states such as evicted, no inputs-too-large error and no RoleSource field.
+The kube executor this issue was waiting on has now landed on main (part 6B, PR 408). It provides kube.New, Sweep, the End states including evicted, ErrInputsTooLarge and the RoleSource field, so the serve wiring can go ahead. This goes to the triage engineer for planning and to the engineer worker for the change.
 
 ## Routing
-None until the dependency lands. Once it does, route to triage:engineer and triage:documentation-planner if it exists. This change adds serve flags and changes documented executor and Reaper behaviour. Today only triage:engineer exists. The worker will be engineer.
+- triage:engineer: plan the serve wiring from design revision 3. That covers executor selection, the k8s flags with env fallbacks, the PAT refusal, config drift, RoleSource in the job builders, the new close-out causes, the orphan sweep, token redaction, the config check line and the docs updates. Also check the plan against the kube package as it landed.
+- worker engineer: Go change across cli, servecmd, reaper, closeout and the job builders, plus tests using the fake kube client and the docs edits.
 
 ## Open issues
-- Waits for issue 317, the second half of part 6 (the kube executor package under internal/executor/kube). The serve wiring builds on its constructor, its sweep method, its end states and its errors.
-- The comments include two implementation plans, and the later one (design revision 3) replaces the first. The triage engineer should work from revision 3 only.
-- A maintainer should check that the size is still right. The issue says S-M, but the revised plan estimates L at the lower end.
+- The comments hold two implementation plans. The later one (design revision 3, no listener) replaces the first, so planning should use revision 3 only.
+- The issue says size S-M, but the revised plan estimates the lower end of L. A maintainer may want to split it.
+- This repository has no product-manager, architect or documentation-planner triage role. The new serve flags and the documented executor and Reaper behaviour changes fall to the triage engineer's plan.
+- An operator previously parked this issue until the kube executor merged. That has now happened, but a maintainer should confirm the needs-human hold has been cleared on purpose.
