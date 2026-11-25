@@ -9,7 +9,7 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	help := []string{"Usage:", "serve", "config", "labels", "rebuild-state", "init", "version"}
+	help := []string{"Usage:", "serve", "config", "labels", "rebuild-state", "init", "setup", "version"}
 	tests := []struct {
 		name string
 		args []string
@@ -38,6 +38,7 @@ func TestRun(t *testing.T) {
 		{"labels sync stub", []string{"labels", "sync"}, 1, nil, []string{"ard labels sync: not implemented yet (tracked in #22)"}},
 		{"rebuild-state stub", []string{"rebuild-state", "cve"}, 1, nil, []string{"ard rebuild-state: not implemented yet (tracked in #23)"}},
 		{"init stub", []string{"init"}, 1, nil, []string{"ard init: not implemented yet (tracked in #27)"}},
+		{"setup stub", []string{"setup"}, 1, nil, []string{"ard setup: not implemented yet (tracked in #346)"}},
 		{"global flags accepted before subcommand", []string{"--repo", "o/r", "--dry-run", "serve"}, 1, nil, []string{"not implemented yet"}},
 		{"global flags accepted after subcommand", []string{"serve", "--repo", "o/r", "--dry-run"}, 1, nil, []string{"not implemented yet"}},
 	}
@@ -138,6 +139,28 @@ func TestRunHandlers(t *testing.T) {
 		}
 		if opts.Version != "dev" {
 			t.Errorf("InitOpts.Version = %q, want dev", opts.Version)
+		}
+	})
+
+	t.Run("setup --check and labels sync reach their handlers", func(t *testing.T) {
+		var setup []SetupOpts
+		synced := false
+		h := Handlers{
+			Setup:      func(_ context.Context, _ *Env, o SetupOpts) error { setup = append(setup, o); return nil },
+			LabelsSync: func(context.Context, *Env) error { synced = true; return nil },
+		}
+		var stdout, stderr strings.Builder
+		if code := Run([]string{"setup", "--check"}, &stdout, &stderr, h, "dev"); code != 0 {
+			t.Fatalf("setup --check exit = %d (stderr %q)", code, stderr.String())
+		}
+		if code := Run([]string{"setup"}, &stdout, &stderr, h, "dev"); code != 0 {
+			t.Fatalf("setup exit = %d", code)
+		}
+		if len(setup) != 2 || !setup[0].Check || setup[1].Check {
+			t.Errorf("SetupOpts = %+v", setup)
+		}
+		if code := Run([]string{"labels", "sync"}, &stdout, &stderr, h, "dev"); code != 0 || !synced {
+			t.Errorf("labels sync: exit %d, synced %v", code, synced)
 		}
 	})
 

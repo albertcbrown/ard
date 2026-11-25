@@ -46,6 +46,7 @@ lands it once every review passes.`,
 		newLabels(app),
 		newRebuildState(app),
 		newInit(app),
+		newSetup(app),
 		newVersion(app),
 	)
 	return root

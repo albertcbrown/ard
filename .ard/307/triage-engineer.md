@@ -1,15 +1,11 @@
 ---
 role: engineer
-status: needs-human
+status: done
 attempt: 1
 ---
-No plan was written. The docs would have to describe a release workflow that runs the GoReleaser config, and no such workflow is on the default branch. Agents cannot add one because workflow files live under .github/, which is protected.
+The release workflow and GoReleaser config are now on main, so the earlier blocker is gone. The plan adds a README Install section, updates the site install page, extends the release runbook with the merge-to-cask flow, failure recovery and the one-release-at-a-time rule, and adds the Gatekeeper accepted risk to the proposal's Guardrails. Size S to M, risk low.
 
 ## Open issues
-- `.goreleaser.yaml` and `make release-check` are merged, but `.github/workflows/` holds only `bot-commits.yml`, `ci.yml` and `version.yml`. None of them runs GoReleaser. The config's own header comment refers to a release workflow, and the cask needs a `TAP_GITHUB_TOKEN` in that workflow's environment. Without the workflow, nothing attaches archives or checksums to a release or bumps the cask.
-- A maintainer should add that workflow by hand, or confirm it is tracked elsewhere. They should also confirm that the `albertcbrown/homebrew-tap` repository and the token secret exist.
-- After that, the docs work is small (size S to M, risk low, no protected paths):
-  - README: add an Install section covering the cask command, `brew upgrade`, an uninstall that leaves `~/.ard/` alone, and building from source.
-  - `docs/runbooks/release.md`: extend it, since #247 shares it, with the tag-to-release-to-cask flow, failure recovery and the one-release-at-a-time rule.
-  - `docs/proposal.md`: update the Delivery, Phase 5 (already one sentence after the Rollout diagram) and Guardrails sections, recording the Gatekeeper quarantine clearing in `postflight` as an accepted risk, with notarization as the follow-up.
-- The config uses a cask `hooks.post.install` stanza that clears quarantine, not a `postflight` block. The docs should use wording that matches the config.
+- The proposal's Delivery section, Phase 5 text and the runbook's Homebrew section already exist, so the plan covers only the gaps.
+- The docs must say the cask clears quarantine in `hooks.post.install`, not `postflight`, to match the config.
+- A maintainer should confirm the Gatekeeper accepted-risk wording in the pull request.
