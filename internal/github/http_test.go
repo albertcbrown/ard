@@ -992,3 +992,60 @@ func TestAppID(t *testing.T) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestListRulesetsReadsActiveBranchWithBypass(t *testing.T) {
+	s := newStubAPI(t, map[string]http.HandlerFunc{
+		"GET /repos/o/r/rulesets": respond(200, `[{"id":1,"name":"main","target":"branch","enforcement":"active"},
+			{"id":2,"name":"off","target":"branch","enforcement":"disabled"},
+			{"id":3,"name":"tags","target":"tag","enforcement":"active"}]`),
+		"GET /repos/o/r/rulesets/1": respond(200, `{"id":1,"name":"main","target":"branch","enforcement":"active",
+			"bypass_actors":[{"actor_id":42,"actor_type":"Integration","bypass_mode":"always"}],
+			"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},
+			"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":false,"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":false}},{"type":"deletion"}]}`),
+	})
+	got, err := newTestHTTP(t, s, nil).ListRulesets(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("rulesets = %+v, %v", got, err)
+	}
+	r := got[0]
+	if r.ID != 1 || len(r.Branches) != 1 || r.Branches[0] != "~DEFAULT_BRANCH" || len(r.Rules) != 2 ||
+		len(r.Bypass) != 1 || r.Bypass[0] != (BypassActor{"Integration", 42, "always"}) {
+		t.Errorf("ruleset = %+v", r)
+	}
+}
+
+func TestListRulesetsForbidden(t *testing.T) {
+	s := newStubAPI(t, map[string]http.HandlerFunc{
+		"GET /repos/o/r/rulesets": respond(403, `{"message":"Resource not accessible by integration"}`),
+	})
+	if _, err := newTestHTTP(t, s, nil).ListRulesets(context.Background()); !errors.Is(err, ErrForbidden) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestMergeSettingsAppAndVariable(t *testing.T) {
+	s := newStubAPI(t, map[string]http.HandlerFunc{
+		"GET /repos/o/r":                           respond(200, `{"allow_rebase_merge":false,"allow_squash_merge":true,"allow_merge_commit":false}`),
+		"GET /apps/ard":                            respond(200, `{"id":42,"slug":"ard","permissions":{"contents":"write","workflows":"write"}}`),
+		"GET /repos/o/r/actions/variables/ON":      respond(200, `{"name":"ON","value":"true"}`),
+		"GET /repos/o/r/actions/variables/MISSING": respond(404, `{"message":"Not Found"}`),
+		"GET /repos/o/r/actions/variables/DENIED":  respond(403, `{"message":"Forbidden"}`),
+	})
+	h := newTestHTTP(t, s, nil)
+	ctx := context.Background()
+	if m, err := h.GetMergeSettings(ctx); err != nil || m != (MergeSettings{AllowSquashMerge: true}) {
+		t.Errorf("merge = %+v, %v", m, err)
+	}
+	if a, err := h.GetApp(ctx, "ard"); err != nil || a.ID != 42 || a.Permissions["workflows"] != "write" || a.Permissions["contents"] != "write" {
+		t.Errorf("app = %+v, %v", a, err)
+	}
+	if v, ok, err := h.GetVariable(ctx, "ON"); err != nil || !ok || v != "true" {
+		t.Errorf("ON = %q %v %v", v, ok, err)
+	}
+	if _, ok, err := h.GetVariable(ctx, "MISSING"); err != nil || ok {
+		t.Errorf("MISSING = %v %v", ok, err)
+	}
+	if _, _, err := h.GetVariable(ctx, "DENIED"); !errors.Is(err, ErrForbidden) {
+		t.Errorf("DENIED err = %v", err)
+	}
+}

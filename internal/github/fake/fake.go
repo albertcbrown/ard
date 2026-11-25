@@ -68,6 +68,10 @@ type state struct {
 	runs     map[string][]github.CheckRun
 	statuses map[string][]github.CommitStatus
 	apps     map[string]int64
+	appInfo  map[string]github.AppInfo
+	rulesets []github.Ruleset
+	merge    github.MergeSettings
+	vars     map[string]string
 }
 
 // Fake implements github.Client. Methods on the value returned by As attribute
@@ -96,6 +100,9 @@ func New(opts ...Option) *Fake {
 		runs:     map[string][]github.CheckRun{},
 		statuses: map[string][]github.CommitStatus{},
 		apps:     map[string]int64{"github-actions": 15368},
+		appInfo:  map[string]github.AppInfo{},
+		merge:    github.MergeSettings{AllowRebaseMerge: true, AllowSquashMerge: true, AllowMergeCommit: true},
+		vars:     map[string]string{},
 	}
 	for _, o := range opts {
 		o(s)
@@ -251,6 +258,36 @@ func (f *Fake) SetAppID(slug string, id int64) {
 	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
 	f.s.apps[slug] = id
+}
+
+// SetRulesets sets the active branch rulesets ListRulesets reports.
+func (f *Fake) SetRulesets(rs ...github.Ruleset) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.rulesets = append([]github.Ruleset(nil), rs...)
+}
+
+// SetMergeSettings sets what GetMergeSettings reports.
+func (f *Fake) SetMergeSettings(m github.MergeSettings) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.merge = m
+}
+
+// SetApp sets the data GetApp reports for slug (and the id AppID reports).
+func (f *Fake) SetApp(slug string, a github.AppInfo) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	a.Slug = slug
+	f.s.appInfo[slug] = a
+	f.s.apps[slug] = a.ID
+}
+
+// SetVariable sets an Actions repository variable.
+func (f *Fake) SetVariable(name, value string) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	f.s.vars[name] = value
 }
 
 // SetMergeableState sets PR n's mergeable_state.
@@ -732,6 +769,49 @@ func (f *Fake) AppID(ctx context.Context, slug string) (int64, error) {
 		return 0, fmt.Errorf("github: app %s: %w", slug, github.ErrNotFound)
 	}
 	return id, nil
+}
+
+func (f *Fake) GetApp(ctx context.Context, slug string) (github.AppInfo, error) {
+	unlock, err := f.beginRead("GetApp")
+	defer unlock()
+	if err != nil {
+		return github.AppInfo{}, err
+	}
+	if a, ok := f.s.appInfo[slug]; ok {
+		return a, nil
+	}
+	if id, ok := f.s.apps[slug]; ok {
+		return github.AppInfo{ID: id, Slug: slug}, nil
+	}
+	return github.AppInfo{}, fmt.Errorf("github: app %s: %w", slug, github.ErrNotFound)
+}
+
+func (f *Fake) ListRulesets(ctx context.Context) ([]github.Ruleset, error) {
+	unlock, err := f.beginRead("ListRulesets")
+	defer unlock()
+	if err != nil {
+		return nil, err
+	}
+	return append([]github.Ruleset(nil), f.s.rulesets...), nil
+}
+
+func (f *Fake) GetMergeSettings(ctx context.Context) (github.MergeSettings, error) {
+	unlock, err := f.beginRead("GetMergeSettings")
+	defer unlock()
+	if err != nil {
+		return github.MergeSettings{}, err
+	}
+	return f.s.merge, nil
+}
+
+func (f *Fake) GetVariable(ctx context.Context, name string) (string, bool, error) {
+	unlock, err := f.beginRead("GetVariable")
+	defer unlock()
+	if err != nil {
+		return "", false, err
+	}
+	v, ok := f.s.vars[name]
+	return v, ok, nil
 }
 
 // ---- Writer ----

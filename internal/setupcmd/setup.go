@@ -8,12 +8,24 @@ import (
 	"sort"
 	"strings"
 
+	"errors"
+
+	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/labels/labelsync"
 )
 
 // Opts are the flags of `ard setup`.
 type Opts struct{ Check bool }
+
+// PolicyReader is the read-only GitHub surface of the policy checks.
+type PolicyReader interface {
+	Identity(ctx context.Context) (github.Identity, error)
+	ListRulesets(ctx context.Context) ([]github.Ruleset, error)
+	GetMergeSettings(ctx context.Context) (github.MergeSettings, error)
+	GetApp(ctx context.Context, slug string) (github.AppInfo, error)
+	GetVariable(ctx context.Context, name string) (string, bool, error)
+}
 
 // Deps is what Run needs from the outside world.
 type Deps struct {
@@ -22,13 +34,21 @@ type Deps struct {
 	Desired     []labels.Label
 	Permissions func(ctx context.Context) Row
 	LocalVsMain func(ctx context.Context) (warning string, err error)
-	DryRun      bool
-	Log         *slog.Logger
+	// Policy, when set, enables the ruleset, App permission and merge
+	// setting checks for Repo. They only read.
+	Policy PolicyReader
+	Repo   github.Repo
+	DryRun bool
+	Log    *slog.Logger
 }
 
 const (
 	permName  = "permissions"
 	labelName = "labels"
+
+	rulesetName = "ruleset"
+	appPermName = "app-permissions"
+	mergeName   = "merge-settings"
 )
 
 // Run executes the checks, then applies when the permission row is ok and
@@ -53,6 +73,15 @@ func Run(ctx context.Context, d Deps, o Opts, out io.Writer) (Report, error) {
 		// Nothing else can be read reliably without access.
 		return rep, nil
 	}
+	if d.Policy != nil {
+		rows, err := policyRows(ctx, d)
+		if err != nil {
+			return rep, err
+		}
+		rep.Rows = append(rep.Rows, rows...)
+	}
+	// Apply only when every check is green; label drift alone is fixable.
+	blocked := !rep.Green()
 	have, err := d.Reader.ListLabels(ctx)
 	if err != nil {
 		return rep, fmt.Errorf("setup: list labels: %w", err)
@@ -71,7 +100,7 @@ func Run(ctx context.Context, d Deps, o Opts, out io.Writer) (Report, error) {
 		row.Detail += sep + "stale (not deleted): " + strings.Join(plan.Stale, ", ")
 	}
 	rep.Rows = append(rep.Rows, row)
-	if o.Check || row.Status != StatusDrift {
+	if o.Check || blocked || row.Status != StatusDrift {
 		return rep, nil
 	}
 
@@ -95,4 +124,57 @@ func Run(ctx context.Context, d Deps, o Opts, out io.Writer) (Report, error) {
 	}
 	rep.Rows[len(rep.Rows)-1] = row
 	return rep, err
+}
+
+// policyRows runs the read-only policy checks. A forbidden or unknown-App
+// read gives a manual row with the exact command to look it up by hand.
+func policyRows(ctx context.Context, d Deps) ([]Row, error) {
+	repo := d.Repo
+	manual := func(name, detail string) Row { return Row{Name: name, Status: StatusManual, Detail: detail} }
+	soft := func(err error) bool { return errors.Is(err, github.ErrForbidden) || errors.Is(err, github.ErrNotFound) }
+
+	id, err := d.Policy.Identity(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("setup: identity: %w", err)
+	}
+	slug := strings.TrimSuffix(id.Login, "[bot]")
+	var rows []Row
+
+	app, appErr := d.Policy.GetApp(ctx, slug)
+	if appErr != nil && !soft(appErr) {
+		return nil, fmt.Errorf("setup: get app: %w", appErr)
+	}
+	appCmd := "gh api apps/" + slug
+	rs, rsErr := d.Policy.ListRulesets(ctx)
+	switch {
+	case rsErr != nil && !soft(rsErr):
+		return nil, fmt.Errorf("setup: list rulesets: %w", rsErr)
+	case rsErr != nil:
+		rows = append(rows, manual(rulesetName, "admin read is needed; check "+rulesURL(repo)+" or run: gh api repos/"+repo.String()+"/rulesets"))
+	case appErr != nil:
+		rows = append(rows, manual(rulesetName, "cannot resolve the App; run: "+appCmd))
+	default:
+		rows = append(rows, checkRuleset(repo, rs, app))
+	}
+	if appErr != nil {
+		rows = append(rows, manual(appPermName, "cannot read the App; run: "+appCmd+" and check the permissions at "+installURL(repo)))
+	} else {
+		rows = append(rows, checkAppPerms(repo, app))
+	}
+
+	ms, err := d.Policy.GetMergeSettings(ctx)
+	if err != nil {
+		if !soft(err) {
+			return nil, fmt.Errorf("setup: merge settings: %w", err)
+		}
+		return append(rows, manual(mergeName, "cannot read merge settings; run: gh api repos/"+repo.String())), nil
+	}
+	v, found, err := d.Policy.GetVariable(ctx, policyVersioning)
+	if err != nil {
+		if !soft(err) {
+			return nil, fmt.Errorf("setup: read %s: %w", policyVersioning, err)
+		}
+		return append(rows, manual(mergeName, fmt.Sprintf("cannot read the %s variable; run: gh variable get %s -R %s", policyVersioning, policyVersioning, repo))), nil
+	}
+	return append(rows, checkMerge(repo, ms, found && versioningOn(v))), nil
 }
