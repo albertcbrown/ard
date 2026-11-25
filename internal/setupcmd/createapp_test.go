@@ -363,3 +363,32 @@ func TestCreateAppRefusesExistingKeyBeforeBrowser(t *testing.T) {
 		t.Errorf("err %v opened %v", err, opened)
 	}
 }
+
+func TestWriteKeyFallbackAndSymlink(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.pem")
+	if err := os.WriteFile(p, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	used, err := WriteKeyWithFallback(p, []byte("new"), false)
+	if err != nil || used == p || filepath.Dir(used) != dir {
+		t.Fatalf("used %q err %v", used, err)
+	}
+	if b, _ := os.ReadFile(used); string(b) != "new" {
+		t.Errorf("fallback contents %q", b)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "old" {
+		t.Errorf("original changed: %q", b)
+	}
+	target := filepath.Join(dir, "target")
+	link := filepath.Join(dir, "link.pem")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	if err := WriteKey(link, []byte("x"), true); err == nil {
+		t.Error("wrote through symlink")
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Error("symlink target created")
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // DefaultKeyPath is ~/.ard/keys/<slug>.pem.
@@ -30,6 +32,9 @@ func WriteKey(path string, pem []byte, force bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("setup: create key directory: %w", err)
 	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("setup: %s is a symlink; refusing to write the key through it", path)
+	}
 	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
 	if force {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
@@ -53,4 +58,29 @@ func WriteKey(path string, pem []byte, force bool) error {
 		return fmt.Errorf("setup: write key file: %w", err)
 	}
 	return nil
+}
+
+// WriteKeyWithFallback writes the key to path. GitHub returns the private key
+// only once, so when that write fails (for example the default file exists or
+// the directory is unwritable) it falls back to a fresh <name>-<timestamp>.pem
+// created with O_EXCL, first beside path, then under ~/.ard/keys, then in the
+// temp directory. It returns the path actually used.
+func WriteKeyWithFallback(path string, pem []byte, force bool) (string, error) {
+	firstErr := WriteKey(path, pem, force)
+	if firstErr == nil {
+		return path, nil
+	}
+	base := strings.TrimSuffix(filepath.Base(path), ".pem") + "-" + time.Now().UTC().Format("20060102T150405.000000000") + ".pem"
+	dirs := []string{filepath.Dir(path)}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		dirs = append(dirs, filepath.Join(home, ".ard", "keys"))
+	}
+	dirs = append(dirs, os.TempDir())
+	for _, d := range dirs {
+		alt := filepath.Join(d, base)
+		if WriteKey(alt, pem, false) == nil {
+			return alt, nil
+		}
+	}
+	return "", firstErr
 }

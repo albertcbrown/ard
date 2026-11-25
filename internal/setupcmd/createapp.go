@@ -135,8 +135,13 @@ func createApp(ctx context.Context, e *cli.Env, repo github.Repo, o CreateAppOpt
 			return err
 		}
 	}
-	if err := WriteKey(path, []byte(conv.PEM), o.Force); err != nil {
-		return err
+	used, err := WriteKeyWithFallback(path, []byte(conv.PEM), o.Force)
+	if err != nil {
+		return fmt.Errorf("%w (the App %q was already created; its key could not be saved anywhere)", err, conv.Slug)
+	}
+	if used != path {
+		fmt.Fprintf(e.Stdout, "could not write %s; the key was saved to %s instead.\n", path, used)
+		path = used
 	}
 	fmt.Fprintf(e.Stdout, "App %q created; private key written to %s (mode 0600).\n", conv.Slug, path)
 	installURL := "https://github.com/apps/" + conv.Slug + "/installations/new"
