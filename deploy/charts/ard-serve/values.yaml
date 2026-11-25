@@ -26,6 +26,24 @@ githubApp:
     itemTitle: ""          # written as a comment beside the key
     refreshInterval: 4h
 
+# The model credential ard serve passes to agent jobs (executor k8s only). ard serve forwards only
+# ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN from its own environment into each job's Secret, so the controller
+# container gets exactly one of them from this Secret. Required for a live k8s install (instance.dryRun: false);
+# never rendered with executor local. Either create the Secret yourself, or let External Secrets create it
+# (externalSecret.enabled) from one field of one store item.
+modelCredential:
+  secretName: ""           # e.g. ard-model-credential
+  key: ""                  # the key in that Secret; empty means the same as env
+  env: ANTHROPIC_API_KEY   # ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+  externalSecret:
+    enabled: false
+    storeKind: ClusterSecretStore
+    storeName: ""          # required when enabled
+    itemId: ""             # required when enabled: the store's key for the item
+    itemTitle: ""          # written as a comment beside the key
+    property: ""           # the item's field holding the credential; required when enabled
+    refreshInterval: 4h
+
 storage:
   size: 20Gi
   storageClassName: ""     # empty: the cluster's default StorageClass

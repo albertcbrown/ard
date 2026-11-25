@@ -74,6 +74,11 @@ spec:
             {{- with .Values.jobs.resources }}
             - {name: ARD_K8S_RESOURCES, value: {{ . | quote }}}
             {{- end }}
+            {{- with .Values.modelCredential }}{{ if .secretName }}
+            # The model credential ard serve forwards into each agent job's Secret (#434).
+            - name: {{ .env }}
+              valueFrom: {secretKeyRef: {name: {{ .secretName }}, key: {{ .key | default .env }}}}
+            {{- end }}{{ end }}
             {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
