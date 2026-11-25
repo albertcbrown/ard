@@ -171,6 +171,7 @@ func (f *Fake) CreateSecret(_ context.Context, ns string, s *api.Secret) error {
 		return api.ErrConflict
 	}
 	c := *s
+	c.Data = cloneData(s.Data)
 	c.Meta.Namespace = ns
 	c.Meta.UID = f.uid()
 	f.secrets[k] = &c
@@ -196,6 +197,7 @@ func (f *Fake) Secret(ns, name string) (*api.Secret, bool) {
 		return nil, false
 	}
 	c := *s
+	c.Data = cloneData(s.Data)
 	return &c, true
 }
 
@@ -306,4 +308,15 @@ func (f *Fake) PodLogs(_ context.Context, ns, name, container string, sinceTime 
 		n++
 	}
 	return io.NopCloser(strings.NewReader(b.String())), nil
+}
+
+func cloneData(m map[string][]byte) map[string][]byte {
+	if m == nil {
+		return nil
+	}
+	c := make(map[string][]byte, len(m))
+	for k, v := range m {
+		c[k] = append([]byte(nil), v...)
+	}
+	return c
 }

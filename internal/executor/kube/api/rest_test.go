@@ -136,11 +136,12 @@ func TestCreatePodBody(t *testing.T) {
 	})
 	dl := int64(60)
 	mode := int32(0o400)
+	always := "Always"
 	in := &Pod{
 		Meta: ObjectMeta{Name: "p"},
 		Spec: PodSpec{
 			ActiveDeadlineSeconds: &dl,
-			InitContainers:        []Container{{Name: "pre", Image: "i"}},
+			InitContainers:        []Container{{Name: "pre", Image: "i", RestartPolicy: &always}},
 			Containers: []Container{{Name: "agent", Env: []EnvVar{{Name: "K",
 				ValueFrom: &EnvVarSource{SecretKeyRef: &SecretKeySelector{Name: "s", Key: "k"}}}}}},
 			Volumes: []Volume{{Name: "v", Secret: &SecretVolumeSource{SecretName: "s",
@@ -161,7 +162,7 @@ func TestCreatePodBody(t *testing.T) {
 		t.Error("missing metadata")
 	}
 	raw, _ := json.Marshal(got)
-	for _, k := range []string{"secretKeyRef", `"items"`} {
+	for _, k := range []string{"secretKeyRef", `"items"`, `"restartPolicy":"Always"`} {
 		if !strings.Contains(string(raw), k) {
 			t.Errorf("missing %s", k)
 		}

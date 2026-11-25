@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -161,7 +162,11 @@ func (r *rest) do(ctx context.Context, c *http.Client, method, path string, q ur
 		st = Status{Message: string(raw)}
 	}
 	if len(st.Message) > maxMessage {
-		st.Message = st.Message[:maxMessage]
+		n := maxMessage
+		for n > 0 && !utf8.RuneStart(st.Message[n]) {
+			n--
+		}
+		st.Message = st.Message[:n]
 	}
 	return nil, &StatusError{Code: resp.StatusCode, Reason: st.Reason, Message: st.Message}
 }

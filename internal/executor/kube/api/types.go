@@ -60,6 +60,8 @@ type Container struct {
 	Resources                ResourceRequirements `json:"resources,omitzero"`
 	SecurityContext          *SecurityContext     `json:"securityContext,omitempty"`
 	WorkingDir               string               `json:"workingDir,omitempty"`
+	// RestartPolicy "Always" on an init container makes it a native sidecar.
+	RestartPolicy *string `json:"restartPolicy,omitempty"`
 }
 
 // ContainerPort declares a container port.
