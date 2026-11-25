@@ -102,3 +102,12 @@ func (g execGit) WorktreeRemove(ctx context.Context, repo, dir string, force boo
 func (g execGit) WorktreePrune(ctx context.Context, repo string) error {
 	return g.admin(ctx, repo, "worktree", "prune")
 }
+
+// ExecGit returns the git runner local executors use for worktrees, for
+// executors that share the workspace (the Kubernetes executor). bin "" is "git".
+func ExecGit(bin string) workspace.Git {
+	if bin == "" {
+		bin = "git"
+	}
+	return execGit{bin: bin}
+}

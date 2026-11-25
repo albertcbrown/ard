@@ -3,9 +3,9 @@ role: engineer
 status: done
 attempt: 1
 ---
-Plans the network inputs back-route part 3 in ten steps: persisted round state in the close-out record, the lead re-arm and re-run list, the `inputs:` frontmatter and its gate reading from main, a per-round approval marker, and switching the bounce on in serve. Size L, risk high because it changes the label state machine and stored job state.
+Replans the network inputs back-route part 3 with the operator's architect-review changes: a request-phase label clear, plan-based round detection that fails closed, redacted inputs, hardened path and main reads, and the bounce switch in the same change. Size L, risk high because it changes the label state machine, stored job state and approval logic.
 
 ## Open issues
-- A maintainer must do the requested architect review of the persisted round state and lead re-arm by hand, since no architect role exists here.
-- The live engineer prompt under .ard/triage/ is a protected path, so a human must update it to match the starter copy that the plan edits.
-- The plan leaves the status issue's "waiting for inputs" rendering to be located by the worker, as the exact renderer was not pinned down.
+- The live engineer prompt under .ard/triage/ is protected, so a human must update it to match the starter copy.
+- If the change grows past the estimate, the plan names a two-part split.
+- The exact status-issue renderer for "waiting for inputs" is left for the worker to locate.

@@ -1,8 +1,6 @@
 package servecmd
 
 import (
-	"os"
-
 	"github.com/albertcbrown/ard/internal/agent"
 	"github.com/albertcbrown/ard/internal/agent/claude"
 	"github.com/albertcbrown/ard/internal/controller"
@@ -35,7 +33,7 @@ func reviewerLoop(w *wiring) controller.Loop {
 		Executor: ex, Finisher: fin, Git: gitx.New(""),
 		Pool:   func() reviewer.Offerer { return w.Pool() },
 		Agents: reg, Parse: w.parseFunc(), Model: w.Model,
-		Secrets: func() *redact.Secrets { return redact.FromEnviron(os.Environ()) },
+		Secrets: func() *redact.Secrets { return redact.FromEnviron(w.environ()) },
 		Repo:    w.Repo, RepoDir: w.Root, RemoteURL: w.RemoteURL, Token: w.Token, Log: w.Log,
 	})
 }

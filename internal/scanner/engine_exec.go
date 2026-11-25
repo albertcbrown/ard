@@ -120,7 +120,8 @@ func (x *ExecEngine) Scan(ctx context.Context, cfg *config.Resolved, role config
 	ej := executor.Job{
 		ID: job.ID, Repo: d.Repo, Stage: "scanner", Role: role.Name,
 		RepoDir: d.RepoDir, Ref: sha, ReadOnly: true, Timeout: role.Timeout,
-		RoleDir: filepath.Join(cfg.Repo, filepath.FromSlash(role.Dir)),
+		RoleDir:    filepath.Join(cfg.Repo, filepath.FromSlash(role.Dir)),
+		RoleSource: executor.RoleSource{SHA: cfg.SHA, Path: role.Dir},
 	}
 	ej.TrustedInput = !role.ReadsUntrusted()
 	ej.History = role.ReadsHistory()
