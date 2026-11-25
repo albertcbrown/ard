@@ -24,6 +24,12 @@ type Capper interface {
 	Capped(ctx context.Context) ([]Cap, time.Time, error)
 }
 
+// TokenCapper lists the token caps that block their role today; *Gate
+// satisfies it.
+type TokenCapper interface {
+	TokenCapped(ctx context.Context) ([]TokenCap, time.Time, error)
+}
+
 // EventStore is the part of *state.Store the loop uses.
 type EventStore interface {
 	AppendEvent(ctx context.Context, e state.Event) error
@@ -40,6 +46,7 @@ type Effects interface {
 // issue is known. Now nil means time.Now; Log nil means slog.Default.
 type Deps struct {
 	Gate        Capper
+	Tokens      TokenCapper // nil: no token notices
 	Store       EventStore
 	Effects     Effects
 	StatusIssue func() int
@@ -91,7 +98,17 @@ func (l *Loop) Tick(ctx context.Context, _ controller.Env) error {
 	if err != nil {
 		return fmt.Errorf("budget: read spend: %w", err)
 	}
-	if len(caps) == 0 {
+	var tcaps []TokenCap
+	if l.d.Tokens != nil {
+		var tday time.Time
+		if tcaps, tday, err = l.d.Tokens.TokenCapped(ctx); err != nil {
+			return fmt.Errorf("budget: read tokens: %w", err)
+		}
+		if !tday.Equal(dayStart) {
+			tcaps = nil
+		}
+	}
+	if len(caps) == 0 && len(tcaps) == 0 {
 		return nil
 	}
 	day := dayStart.Format("2006-01-02")
@@ -124,6 +141,23 @@ func (l *Loop) Tick(ctx context.Context, _ controller.Env) error {
 		ev := state.Event{At: l.d.Now(), Kind: state.EventBudgetCapped, Stage: c.Stage, Role: c.Role, Data: data}
 		if err := l.d.Store.AppendEvent(ctx, ev); err != nil {
 			l.d.Log.Error("budget.notice_unrecorded", "scope", c.Scope, "stage", c.Stage, "role", c.Role, "error", err)
+		}
+	}
+	for _, c := range tcaps {
+		if done[noticeKey{"tokens", c.Stage, c.Role, day}] {
+			continue
+		}
+		if _, err := l.d.Effects.CreateComment(ctx, issue, RenderTokens(c, day)); err != nil {
+			l.d.Log.Error("budget.notice_failed", "scope", "tokens", "stage", c.Stage, "role", c.Role, "error", err)
+			continue
+		}
+		data, _ := json.Marshal(map[string]any{
+			"scope": "tokens", "stage": c.Stage, "role": c.Role, "day": day,
+			"used": c.Used, "cap": c.Cap, "worst": c.Worst,
+		})
+		ev := state.Event{At: l.d.Now(), Kind: state.EventBudgetCapped, Stage: c.Stage, Role: c.Role, Data: data}
+		if err := l.d.Store.AppendEvent(ctx, ev); err != nil {
+			l.d.Log.Error("budget.notice_unrecorded", "scope", "tokens", "stage", c.Stage, "role", c.Role, "error", err)
 		}
 	}
 	return nil
@@ -159,5 +193,18 @@ func Render(c Cap, day string) string {
 	}
 	b.WriteString("\n\nNo new jobs start under this cap; running jobs finish. On a subscription the dollar figure is an estimate.\n\n")
 	fmt.Fprintf(&b, "To raise the cap, change %s in `.ard/config.yaml` through a reviewed pull request. The cap clears at 00:00 UTC.\n", where)
+	return b.String()
+}
+
+// RenderTokens is the comment for a blocked token cap on the UTC day. It holds
+// only numbers, the day and config names; no agent text and no "@".
+func RenderTokens(c TokenCap, day string) string {
+	stage, role := safe(c.Stage), safe(c.Role)
+	var b strings.Builder
+	fmt.Fprintf(&b, "<!-- ard:budget cap=tokens role=%s/%s day=%s -->\n", stage, role, day)
+	b.WriteString("**ard · daily token budget reached**\n\n")
+	fmt.Fprintf(&b, "The daily token budget of %s role `%s` blocks new jobs for %s (UTC): %d of %d tokens used, largest recorded job %d tokens.", stage, role, day, c.Used, c.Cap, c.Worst)
+	b.WriteString("\n\nNo new jobs of this role start under this cap; running jobs finish.\n\n")
+	fmt.Fprintf(&b, "To raise the cap, change `tokens_per_day` of role `%s` (or the repo-wide value) in `.ard/config.yaml` through a reviewed pull request. The cap clears at 00:00 UTC.\n", role)
 	return b.String()
 }

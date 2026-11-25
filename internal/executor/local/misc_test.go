@@ -8,46 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/albertcbrown/ard/internal/executor"
 )
-
-func TestLayout(t *testing.T) {
-	l, _ := New(Options{Root: "/r"})
-	if got, err := l.WorktreePath("o/r", "J1"); err != nil || got != "/r/work/o/r/J1" {
-		t.Error(got, err)
-	}
-	if got, err := l.homePath("o/r", "J1"); err != nil || got != "/r/work/o/r/J1.home" {
-		t.Error(got, err)
-	}
-	if got, err := l.logDir("o/r", 0); err != nil || got != "/r/logs/o/r/noissue" {
-		t.Error(got, err)
-	}
-	for name, f := range map[string]func(string) (string, error){
-		"worktree": func(r string) (string, error) { return l.WorktreePath(r, "J1") },
-		"home":     func(r string) (string, error) { return l.homePath(r, "J1") },
-		"logs":     func(r string) (string, error) { return l.logDir(r, 7) },
-	} {
-		a, _ := f("a-b/c")
-		b, _ := f("a/b-c")
-		if a == b {
-			t.Errorf("%s: a-b/c and a/b-c collide at %s", name, a)
-		}
-		x, _ := f("O/R")
-		y, _ := f("o/r")
-		if x != y {
-			t.Errorf("%s: case differs: %s vs %s", name, x, y)
-		}
-		if _, err := f("../r"); err == nil {
-			t.Errorf("%s: invalid repo accepted", name)
-		}
-	}
-	ts := time.Date(2026, 11, 21, 10, 15, 0, 0, time.UTC)
-	if got := LogBase("worker", "dev", ts); got != "worker-dev-20261121T101500.000Z" {
-		t.Error(got)
-	}
-}
 
 func TestTail(t *testing.T) {
 	big := strings.Repeat("x", 100) + "\n"
@@ -122,6 +85,9 @@ func TestRunArgv(t *testing.T) {
 		{"readonly", func(h *executor.Handle) { h.ReadOnly = true }, false,
 			[]string{"/root-secret/work/o-r/J1:/work:ro"}, nil},
 		{"stdin", func(*executor.Handle) {}, true, []string{"-i"}, nil},
+		{"network none", func(h *executor.Handle) { h.Network = executor.NetworkNone }, false, []string{"--network none"}, nil},
+		{"network advisory", func(h *executor.Handle) { h.Network = executor.NetworkAdvisory }, false, nil, []string{"--network"}},
+		{"network on", func(h *executor.Handle) { h.Network = executor.NetworkOn }, false, nil, []string{"--network"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -58,6 +58,7 @@ type rawOverride struct {
 	after, reviewers             *[]string
 	when                         *rawWhen
 	maxBudgetUSD, budgetPerDay   *float64
+	tokensPerDay                 *int64
 }
 
 type rawWhen struct {
@@ -69,7 +70,7 @@ type rawWhen struct {
 // on one kind.
 var commonOverrideKeys = map[string]bool{
 	"agent": true, "model": true, "timeout": true, "sidecar": true,
-	"max_budget_usd": true, "budget_usd_per_day": true, "network": true,
+	"max_budget_usd": true, "budget_usd_per_day": true, "tokens_per_day": true, "network": true,
 }
 
 var kindOverrideKeys = map[Kind]map[string]bool{
@@ -318,6 +319,15 @@ func parseOverride(ref rawOverrideRef, kind Kind, cfgPath string) (rawOverride, 
 			if value.Tag != "!!null" {
 				ov.when = &w
 			}
+		case "tokens_per_day":
+			var tc TokenCount
+			before := len(errs)
+			errs = append(errs, decodeValue(value, cfgPath, fkey, &tc)...)
+			if value.Tag == "!!null" || len(errs) > before {
+				continue
+			}
+			v := int64(tc)
+			ov.tokensPerDay = &v
 		case "max_budget_usd", "budget_usd_per_day":
 			var f float64
 			errs = append(errs, decodeValue(value, cfgPath, fkey, &f)...)
@@ -402,6 +412,9 @@ func applyOverride(res *Resolved, role *Role, ov rawOverride, keyRef, cfgPath st
 	}
 	if ov.budgetPerDay != nil {
 		role.BudgetUSDPerDay = *ov.budgetPerDay
+	}
+	if ov.tokensPerDay != nil {
+		role.TokensPerDay = *ov.tokensPerDay
 	}
 	if ov.every != nil {
 		if *ov.every < minLoopInterval {

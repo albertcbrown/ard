@@ -53,7 +53,14 @@ type fakeEx struct {
 	startErr   error
 	running    chan struct{} // when non-nil, Status is Running until it is closed
 	exit       int
+	// The aid job is the one whose ID ends in "a".
+	aidOut   string
+	aidExit  int
+	aidState executor.State
+	aidErr   error // Prepare error for the aid job only
 }
+
+func isAid(h executor.Handle) bool { return strings.HasSuffix(h.JobID, "a") }
 
 func (f *fakeEx) Prune(context.Context, time.Duration) error { return nil }
 
@@ -67,6 +74,9 @@ func (f *fakeEx) Prepare(_ context.Context, j executor.Job) (executor.Handle, er
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepared = append(f.prepared, j)
+	if strings.HasSuffix(j.ID, "a") && f.aidErr != nil {
+		return executor.Handle{}, f.aidErr
+	}
 	if f.prepareErr != nil {
 		return executor.Handle{}, f.prepareErr
 	}
@@ -84,7 +94,14 @@ func (f *fakeEx) Start(_ context.Context, h executor.Handle, c executor.Command)
 	return h, nil
 }
 
-func (f *fakeEx) Status(context.Context, executor.Handle) (executor.Status, error) {
+func (f *fakeEx) Status(_ context.Context, h executor.Handle) (executor.Status, error) {
+	if isAid(h) {
+		st := executor.Status{State: executor.Exited, ExitCode: f.aidExit}
+		if f.aidState != "" {
+			st.State = f.aidState
+		}
+		return st, nil
+	}
 	f.mu.Lock()
 	ch := f.running
 	f.mu.Unlock()
@@ -98,7 +115,10 @@ func (f *fakeEx) Status(context.Context, executor.Handle) (executor.Status, erro
 	return executor.Status{State: executor.Exited, ExitCode: f.exit}, nil
 }
 
-func (f *fakeEx) Logs(context.Context, executor.Handle, executor.LogsOptions) (io.ReadCloser, error) {
+func (f *fakeEx) Logs(_ context.Context, h executor.Handle, _ executor.LogsOptions) (io.ReadCloser, error) {
+	if isAid(h) {
+		return io.NopCloser(strings.NewReader(f.aidOut)), nil
+	}
 	return io.NopCloser(strings.NewReader("")), nil
 }
 

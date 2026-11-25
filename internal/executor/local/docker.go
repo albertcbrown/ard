@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/executor/workspace"
 )
 
 // imageTag is a content-addressed tag: it changes when any file or mode in
@@ -61,6 +62,9 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 		"--label", "ard.stage=" + h.Stage,
 		"--label", "ard.role=" + h.Role,
 	}
+	if h.Network == executor.NetworkNone {
+		a = append(a, "--network", "none")
+	}
 	work := h.Worktree + ":/work"
 	if h.ReadOnly {
 		work += ":ro"
@@ -75,10 +79,10 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 			"-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=/history")
 	}
 	if h.View.ConfigDir != "" {
-		a = append(a, "-v", filepath.Join(h.Home, configDirName)+":/ard-config")
+		a = append(a, "-v", filepath.Join(h.Home, workspace.ConfigDirName)+":/ard-config")
 	}
 	a = append(a, "-w", "/work", "-e", "HOME=/tmp", "-e", "GOFLAGS=-buildvcs=false", "-e", "LANG=C.UTF-8", "-e", "GIT_TERMINAL_PROMPT=0")
-	for _, kv := range ardEnv(h) {
+	for _, kv := range executor.ArdEnv(h) {
 		a = append(a, "-e", kv)
 	}
 	for _, kv := range cmd.Fixed {

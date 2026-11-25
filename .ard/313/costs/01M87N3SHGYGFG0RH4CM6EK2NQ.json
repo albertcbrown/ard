@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "job": "01M87N3SHGYGFG0RH4CM6EK2NQ",
+  "issue": 313,
+  "pr": 365,
+  "stage": "review",
+  "role": "eng-review",
+  "attempt": 1,
+  "outcome": "retry",
+  "cause": "controller_restart",
+  "models": [
+    "claude-sonnet-5-5"
+  ],
+  "tokens": null,
+  "cost_usd": null,
+  "steps": 1,
+  "started_at": "2026-11-24T20:49:15Z",
+  "ended_at": "2026-11-24T21:18:07Z"
+}

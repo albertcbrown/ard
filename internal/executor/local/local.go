@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,14 +14,15 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/executor/workspace"
 	"github.com/albertcbrown/ard/internal/gitx"
 )
 
 // Options configures Local.
 type Options struct {
-	Root      string    // default $HOME/.ard
-	Git       gitRunner // default: the git binary on PATH
-	DockerBin string    // default "docker"
+	Root      string        // default $HOME/.ard
+	Git       workspace.Git // default: the git binary on PATH
+	DockerBin string        // default "docker"
 	// AgentImage, if set, is the digest-pinned ref or local image ID that
 	// runs every job that reads untrusted input and has no Dockerfile. A
 	// role's own Dockerfile wins. "" = such jobs run on the host as before.
@@ -43,7 +43,7 @@ type Options struct {
 	OnHostUntrusted func(ctx context.Context, h executor.Handle) error
 
 	// Sidecar clone (see sidecar.go).
-	SidecarGit     sidecarGit               // default gitx.New("")
+	SidecarGit     workspace.SidecarGit     // default gitx.New("")
 	SidecarURL     func(repo string) string // default https://github.com/<repo>.git
 	SidecarToken   gitx.TokenFunc           // nil = no auth header (local remotes in tests)
 	SidecarTimeout time.Duration            // init + fetch + export bound; default 2m
@@ -60,7 +60,7 @@ type Options struct {
 type Local struct {
 	root, dockerBin, pathEnv string
 	agentImage               string
-	git                      gitRunner
+	ws                       *workspace.Workspace
 	allowEnv, allowFixed     map[string]bool
 	configDirEnv             string
 	grace, buildTimeout      time.Duration
@@ -68,15 +68,8 @@ type Local struct {
 	log                      *slog.Logger
 	onHostUntrusted          func(ctx context.Context, h executor.Handle) error
 
-	sgit           sidecarGit
-	sidecarURL     func(repo string) string
-	sidecarToken   gitx.TokenFunc
-	sidecarTimeout time.Duration
-	cloneDir       string
-
-	mu           sync.Mutex
-	tracks       map[string]*track
-	sidecarLocks map[string]chan struct{} // per cache dir, 1-buffer slot; guarded by mu
+	mu     sync.Mutex
+	tracks map[string]*track
 }
 
 var _ executor.Executor = (*Local)(nil)
@@ -135,14 +128,11 @@ func New(o Options) (*Local, error) {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
-	if o.SidecarGit == nil {
-		o.SidecarGit = gitx.New("")
-	}
-	if o.SidecarURL == nil {
-		o.SidecarURL = defaultSidecarURL
-	}
-	if o.SidecarTimeout <= 0 {
-		o.SidecarTimeout = defaultSidecarTimeout
+	ws, err := workspace.New(workspace.Options{Root: o.Root, Git: o.Git, SidecarGit: o.SidecarGit,
+		SidecarURL: o.SidecarURL, SidecarToken: o.SidecarToken, SidecarTimeout: o.SidecarTimeout,
+		CloneDir: o.CloneDir, Now: o.Now, Log: o.Log})
+	if err != nil {
+		return nil, err
 	}
 	allow := map[string]bool{}
 	for _, n := range o.AllowEnv {
@@ -152,152 +142,26 @@ func New(o Options) (*Local, error) {
 	for _, n := range o.AllowFixed {
 		fixed[n] = true
 	}
-	return &Local{configDirEnv: o.ConfigDirEnv, allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, agentImage: o.AgentImage, pathEnv: o.PathEnv, git: o.Git,
+	return &Local{configDirEnv: o.ConfigDirEnv, allowFixed: fixed, root: o.Root, dockerBin: o.DockerBin, agentImage: o.AgentImage, pathEnv: o.PathEnv, ws: ws,
 		allowEnv: allow, grace: o.KillGrace, buildTimeout: o.BuildTimeout, now: o.Now, log: o.Log, onHostUntrusted: o.OnHostUntrusted,
-		tracks: map[string]*track{}, sgit: o.SidecarGit, sidecarURL: o.SidecarURL, sidecarToken: o.SidecarToken,
-		sidecarTimeout: o.SidecarTimeout, cloneDir: cleanDir(o.CloneDir)}, nil
+		tracks: map[string]*track{}}, nil
 }
 
-// configDirName is the per-job agent config dir inside the job home. Under
-// HOME, the CLI's default ~/.claude resolves to the same fresh dir even if
-// the config-dir variable were dropped.
-const configDirName = ".claude"
-
-// Prepare creates the worktree, writes inputs, creates log files and, for a
+// Prepare builds the job's directories through the workspace and, for a
 // Dockerfile role, ensures the image. It starts no process.
 func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle, err error) {
-	if err := j.Validate(); err != nil {
+	h, err = l.ws.Prepare(ctx, j)
+	if err != nil {
 		return h, err
 	}
-	wt, err := l.WorktreePath(j.Repo, j.ID)
-	if err != nil {
-		return h, fmt.Errorf("prepare %s: %w", j.ID, err)
-	}
-	if _, err := os.Lstat(wt); err == nil {
-		return h, fmt.Errorf("prepare %s: %w", j.ID, executor.ErrExists)
-	}
-	sha, err := l.git.RevParse(ctx, j.RepoDir, j.Ref)
-	if err != nil {
-		return h, fmt.Errorf("resolve ref %q: %w: %w", j.Ref, executor.ErrClone, err)
-	}
-	now := l.now().UTC()
-	base := LogBase(j.Stage, j.Role, now)
-	logDir, err := l.logDir(j.Repo, j.Issue)
-	if err != nil {
-		return h, fmt.Errorf("prepare %s: %w", j.ID, err)
-	}
-	home, err := l.homePath(j.Repo, j.ID)
-	if err != nil {
-		return h, fmt.Errorf("prepare %s: %w", j.ID, err)
-	}
-	h = executor.Handle{
-		JobID: j.ID, Kind: "host", Issue: j.Issue, Stage: j.Stage, Role: j.Role,
-		Worktree: wt, Home: home, RepoDir: j.RepoDir, BaseSHA: sha,
-		LogPath: filepath.Join(logDir, base+".log"), StdoutPath: filepath.Join(logDir, base+".stdout"),
-		View:    executor.Paths{Work: wt, Role: j.RoleDir},
-		RoleDir: j.RoleDir, ReadOnly: j.ReadOnly, Network: j.Network,
-		TrustedInput: j.TrustedInput, PreparedAt: now, Timeout: j.Timeout,
-	}
-	var created []string // paths to remove on failure
-	worktreeAdded := false
 	defer func() {
-		if err == nil {
-			return
-		}
-		if worktreeAdded {
-			chmodWritable(wt)
-			if rerr := l.git.WorktreeRemove(context.WithoutCancel(ctx), j.RepoDir, wt, true); rerr != nil {
-				err = errors.Join(err, rerr)
+		if err != nil {
+			if derr := l.ws.Discard(context.WithoutCancel(ctx), h); derr != nil {
+				err = errors.Join(err, derr)
 			}
-			removeAllWritable(wt)
-			l.git.WorktreePrune(context.WithoutCancel(ctx), j.RepoDir)
+			h = executor.Handle{}
 		}
-		for _, p := range created {
-			removeAllWritable(p) // a sidecar tree under home is a-w
-		}
-		h = executor.Handle{}
 	}()
-
-	if err = os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
-		return h, fmt.Errorf("create work dir: %w", err)
-	}
-	if err = l.git.WorktreeAdd(ctx, j.RepoDir, wt, sha); err != nil {
-		return h, fmt.Errorf("add worktree: %w: %w", executor.ErrClone, err)
-	}
-	worktreeAdded = true
-	if err = scrub(wt, j.Scrub); err != nil {
-		return h, err
-	}
-	h.Scrubbed = append([]string(nil), j.Scrub...)
-	if len(j.Inputs) > 0 {
-		// os.Root refuses to follow symlinks out of the worktree, so a
-		// committed symlink at an input path cannot redirect the write.
-		var r *os.Root
-		if r, err = os.OpenRoot(wt); err != nil {
-			return h, fmt.Errorf("open worktree: %w", err)
-		}
-		defer r.Close()
-		for _, f := range j.Inputs {
-			rel := filepath.FromSlash(f.Path)
-			if err = r.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-				return h, fmt.Errorf("write input %s: %w", f.Path, err)
-			}
-			if err = rejectSymlink(r, rel); err != nil {
-				return h, fmt.Errorf("write input %s: %w", f.Path, err)
-			}
-			if err = r.WriteFile(rel, f.Data, 0o644); err != nil {
-				return h, fmt.Errorf("write input %s: %w", f.Path, err)
-			}
-		}
-	}
-	if err = os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
-		return h, fmt.Errorf("create home: %w", err)
-	}
-	created = append(created, home)
-	// The config dir lives inside home, so Cleanup and this function's
-	// failure path remove it with home. 0700 is forced past the umask.
-	cfg := filepath.Join(home, configDirName)
-	if err = os.Mkdir(cfg, 0o700); err != nil {
-		return h, fmt.Errorf("create config dir: %w", err)
-	}
-	if err = os.Chmod(cfg, 0o700); err != nil {
-		return h, fmt.Errorf("create config dir: %w", err)
-	}
-	h.View.ConfigDir = cfg
-	if j.History {
-		// Host mode hands over the live clone: read-only is enforced only by the
-		// Docker mount (:ro), not on the host.
-		h.HistoryDir, h.View.History = j.RepoDir, j.RepoDir
-	}
-	// --- sidecar (#28): the executor clones, pins and mounts it read-only ---
-	if j.Sidecar != (executor.Sidecar{}) {
-		dest := filepath.Join(home, sidecarDirName)
-		var scSHA string
-		var fetched bool
-		if scSHA, fetched, err = l.materialise(ctx, j.Repo, j.Sidecar, dest); err != nil {
-			return h, err
-		}
-		h.SidecarDir, h.Sidecar, h.SidecarSHA = dest, j.Sidecar, scSHA
-		h.View.Sidecar = dest
-		l.log.Info("executor.sidecar_ready", "job", j.ID, "repo", j.Sidecar.Repo, "ref", j.Sidecar.Ref, "sha", scSHA, "fetched", fetched)
-	}
-	// --- end sidecar ---
-	if err = os.MkdirAll(logDir, 0o700); err != nil {
-		return h, fmt.Errorf("create log dir: %w", err)
-	}
-	for _, p := range []string{h.LogPath, h.StdoutPath} {
-		var f *os.File
-		if f, err = os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600); err != nil {
-			return h, fmt.Errorf("create log %s: %w", p, err)
-		}
-		f.Close()
-		created = append(created, p)
-	}
-	if h.SidecarDir != "" { // #28: read-only in both modes; Docker also mounts :ro
-		if err = chmodReadOnly(h.SidecarDir); err != nil {
-			return h, fmt.Errorf("make sidecar read-only: %w", err)
-		}
-	}
 	useDocker := j.Dockerfile != ""
 	if !useDocker && l.agentImage != "" && !j.TrustedInput {
 		useDocker = true
@@ -325,57 +189,20 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		}
 	} else if j.ReadOnly {
 		// Last: nothing else may need to write into the worktree.
-		if err = chmodReadOnly(wt); err != nil {
+		if err = workspace.ChmodReadOnly(h.Worktree); err != nil {
 			return h, fmt.Errorf("make worktree read-only: %w", err)
 		}
 	}
 	return h, nil
 }
 
-// chmodReadOnly removes write permission recursively (host mode ReadOnly).
-func chmodReadOnly(root string) error {
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.Type()&fs.ModeSymlink != 0 {
-			return err
-		}
-		st, err := d.Info()
-		if err != nil {
-			return err
-		}
-		return os.Chmod(p, st.Mode().Perm()&^0o222)
-	})
+// WorktreePath is where a job's worktree lives.
+func (l *Local) WorktreePath(repo, jobID string) (string, error) {
+	return l.ws.WorktreePath(repo, jobID)
 }
 
-// chmodWritable restores owner write permission so the tree can be removed.
-// Directories are made writable and searchable before they are read, so a
-// 0000 or 0555 directory (the Go module cache) is handled. Symlinks are
-// never followed or chmodded.
-func chmodWritable(root string) {
-	st, err := os.Lstat(root)
-	if err != nil || st.Mode()&fs.ModeSymlink != 0 {
-		return
-	}
-	if !st.IsDir() {
-		if st.Mode().IsRegular() {
-			os.Chmod(root, st.Mode().Perm()|0o200)
-		}
-		return
-	}
-	os.Chmod(root, st.Mode().Perm()|0o700)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		chmodWritable(filepath.Join(root, e.Name()))
-	}
-}
-
-// removeAllWritable removes path even when it holds read-only trees.
-func removeAllWritable(path string) error {
-	chmodWritable(path)
-	return os.RemoveAll(path)
-}
+// LogBase is the log file basename (no extension); see workspace.LogBase.
+func LogBase(stage, role string, ts time.Time) string { return workspace.LogBase(stage, role, ts) }
 
 // Logs opens the selected log file.
 func (l *Local) Logs(ctx context.Context, h executor.Handle, o executor.LogsOptions) (io.ReadCloser, error) {
@@ -400,87 +227,5 @@ func (l *Local) Logs(ctx context.Context, h executor.Handle, o executor.LogsOpti
 
 // Prune deletes host log files older than olderThan, then empty dirs.
 func (l *Local) Prune(ctx context.Context, olderThan time.Duration) error {
-	cutoff := l.now().Add(-olderThan)
-	dir := filepath.Join(l.root, "logs")
-	var dirs []string
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		if d.IsDir() {
-			dirs = append(dirs, p)
-			return nil
-		}
-		if st, e := d.Info(); e == nil && st.ModTime().Before(cutoff) {
-			return os.Remove(p)
-		}
-		return nil
-	})
-	for i := len(dirs) - 1; i > 0; i-- { // deepest first, keep logs/ itself
-		os.Remove(dirs[i]) // fails harmlessly when not empty
-	}
-	if err != nil {
-		return fmt.Errorf("prune logs: %w", err)
-	}
-	return nil
-}
-
-// scrub removes each path from the worktree: a regular file or a symlink
-// (the link itself). A missing path is fine. It fails if the parent directory
-// is a symlink (os.Root would follow it inside the worktree) and never removes
-// a directory.
-func scrub(wt string, paths []string) error {
-	if len(paths) == 0 {
-		return nil
-	}
-	r, err := os.OpenRoot(wt)
-	if err != nil {
-		return fmt.Errorf("open worktree: %w", err)
-	}
-	defer r.Close()
-	for _, p := range paths {
-		rel := filepath.FromSlash(p)
-		parent, err := r.Lstat(filepath.Dir(rel))
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			continue
-		case err != nil:
-			return fmt.Errorf("scrub %s: %w", p, err)
-		case parent.Mode()&fs.ModeSymlink != 0 || !parent.IsDir():
-			return fmt.Errorf("scrub %s: parent %s is not a plain directory", p, filepath.Dir(p))
-		}
-		st, err := r.Lstat(rel)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			continue
-		case err != nil:
-			return fmt.Errorf("scrub %s: %w", p, err)
-		case !st.Mode().IsRegular() && st.Mode()&fs.ModeSymlink == 0:
-			return fmt.Errorf("scrub %s: not a file", p)
-		}
-		if err := r.Remove(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("scrub %s: %w", p, err)
-		}
-	}
-	return nil
-}
-
-// rejectSymlink fails when rel already exists as a symlink: even a link that
-// stays inside the worktree would let a branch swap what an input resolves to.
-func rejectSymlink(r *os.Root, rel string) error {
-	if st, err := r.Lstat(rel); err == nil && st.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink", rel)
-	}
-	return nil
-}
-
-// cleanDir is filepath.Clean, but keeps "" as "".
-func cleanDir(p string) string {
-	if p == "" {
-		return ""
-	}
-	return filepath.Clean(p)
+	return l.ws.Prune(ctx, olderThan)
 }

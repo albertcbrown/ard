@@ -40,9 +40,13 @@ func TestPrepareCreatesConfigDir(t *testing.T) {
 func TestPrepareFailureRemovesConfigDir(t *testing.T) {
 	f := newFixture(t)
 	now := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
-	f.l.now = func() time.Time { return now }
+	f.opts.Now = func() time.Time { return now }
+	var err error
+	if f.l, err = New(f.opts); err != nil {
+		t.Fatal(err)
+	}
 	j := f.job(time.Minute)
-	logDir, _ := f.l.logDir(j.Repo, j.Issue)
+	logDir, _ := f.l.ws.LogDir(j.Repo, j.Issue)
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +58,7 @@ func TestPrepareFailureRemovesConfigDir(t *testing.T) {
 	if _, err := f.l.Prepare(context.Background(), j); err == nil {
 		t.Fatal("Prepare succeeded")
 	}
-	home, _ := f.l.homePath(j.Repo, j.ID)
+	home, _ := f.l.ws.HomePath(j.Repo, j.ID)
 	for _, p := range []string{home, filepath.Join(home, ".claude")} {
 		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			t.Errorf("%s remains: %v", p, err)

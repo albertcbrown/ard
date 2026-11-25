@@ -26,6 +26,7 @@ type resolvedYAML struct {
 	Agent           string                 `yaml:"agent"`
 	RequireApproval bool                   `yaml:"require_approval"`
 	BudgetUSDPerDay float64                `yaml:"budget_usd_per_day"`
+	TokensPerDay    int64                  `yaml:"tokens_per_day,omitempty"`
 	MaxBudgetUSD    float64                `yaml:"max_budget_usd"`
 	GlobalMaxOpen   int                    `yaml:"global_max_open"`
 	Paused          bool                   `yaml:"paused"`
@@ -85,6 +86,7 @@ type roleYAML struct {
 	Dir        string   `yaml:"dir"`
 	Prompt     string   `yaml:"prompt,omitempty"`
 	Scan       string   `yaml:"scan,omitempty"`
+	Aid        string   `yaml:"aid,omitempty"`
 	Dockerfile string   `yaml:"dockerfile,omitempty"`
 	Extra      []string `yaml:"extra,omitempty"`
 
@@ -116,6 +118,7 @@ type roleYAML struct {
 
 	MaxBudgetUSD    float64 `yaml:"max_budget_usd,omitempty"`
 	BudgetUSDPerDay float64 `yaml:"budget_usd_per_day,omitempty"`
+	TokensPerDay    int64   `yaml:"tokens_per_day,omitempty"`
 }
 
 type whenYAML struct {
@@ -132,6 +135,7 @@ func (r *Resolved) render() resolvedYAML {
 		Agent:           r.Agent,
 		RequireApproval: r.RequireApproval,
 		BudgetUSDPerDay: r.BudgetUSDPerDay,
+		TokensPerDay:    r.TokensPerDay,
 		MaxBudgetUSD:    r.MaxBudgetUSD,
 		GlobalMaxOpen:   r.GlobalMaxOpen,
 		Paused:          r.Paused,
@@ -166,6 +170,7 @@ func (r *Resolved) render() resolvedYAML {
 			Dir:             role.Dir,
 			Prompt:          role.PromptPath,
 			Scan:            role.ScanPath,
+			Aid:             role.AidPath,
 			Dockerfile:      role.Dockerfile,
 			Extra:           role.Extra,
 			Agent:           role.Agent,
@@ -188,6 +193,7 @@ func (r *Resolved) render() resolvedYAML {
 			DiffMaxLines:    role.DiffMaxLines,
 			MaxBudgetUSD:    role.MaxBudgetUSD,
 			BudgetUSDPerDay: role.BudgetUSDPerDay,
+			TokensPerDay:    role.TokensPerDay,
 		}
 		if role.When != nil {
 			ry.When = &whenYAML{Paths: role.When.Paths, Triage: role.When.Triage}
