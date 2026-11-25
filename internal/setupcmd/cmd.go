@@ -49,6 +49,8 @@ func Command(ctx context.Context, e *cli.Env, o cli.SetupOpts) error {
 	}
 	d := Deps{
 		Reader:      rd,
+		Policy:      rd,
+		Repo:        repo,
 		Writer:      fx,
 		Desired:     want,
 		Permissions: func(ctx context.Context) Row { return CheckPermissions(ctx, rd, repo) },

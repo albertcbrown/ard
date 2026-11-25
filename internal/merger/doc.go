@@ -40,19 +40,25 @@
 //     pushes would keep every branch behind forever. GitHub's merge API guards
 //     the head SHA, not the base, so a push to main between the merger's fetch
 //     and the merge goes unseen.
-//  5. Checks, from check runs only (commit statuses are not read). The
+//  5. Checks, from check runs and commit statuses (prgate.EvalChecks). The
 //     required list comes from the branch rules API: when it is readable and
-//     names checks, each must be completed and green on the head (neutral and
-//     skipped count as green, as on GitHub); red goes to ard:needs-human with
-//     one comment naming them, missing or running ones wait. When the rules are
-//     unavailable (a free private repository) or none require checks, there is
-//     no list to go by: with no check runs on the head the merger merges on
-//     reviews alone, but only after a grace period since it first saw the head
-//     (at least one tick and Deps.NoCIGrace, default 2 minutes) so CI that has
-//     not queued yet is not missed; with check runs, every latest run per name
-//     must be green. A rules read that fails (5xx, network, permissions) merges
-//     nothing. Rule types the client cannot evaluate (workflows, code
-//     scanning, required deployments) are logged at warn.
+//     names checks, each required context must be green on the head. A
+//     context is matched by name, and when the rule pins an integration, only
+//     a check run from that App, or a commit status whose poster resolves to
+//     that App (prgate.ResolveApps), counts. The latest run and the latest
+//     status decide, the newer one winning and the worse one on a tie. A run
+//     is green on success, neutral or skipped (as on GitHub) and a status only
+//     on success; failure, error and unknown states are red. Red goes to
+//     ard:needs-human with one comment naming the contexts; missing or running
+//     ones wait. When the rules are unavailable (a free private repository) or
+//     none require checks, there is no list to go by: with no runs and no
+//     statuses on the head the merger merges on reviews alone, but only after
+//     a grace period since it first saw the head (at least one tick and
+//     Deps.NoCIGrace, default 2 minutes) so CI that has not queued yet is not
+//     missed; otherwise every latest run and status per name must be green. A
+//     rules read that fails (5xx, network, permissions) merges nothing. Rule
+//     types the client cannot evaluate (workflows, code scanning, required
+//     deployments) are logged at warn.
 //  6. Protected paths: when a changed path (both names of a rename; a
 //     malformed path counts as protected) matches merge.protected_paths, a
 //     GitHub review in state APPROVED, from a user who is not an App and has

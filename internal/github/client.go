@@ -32,6 +32,18 @@ type Reader interface {
 	// AppID resolves an App's numeric id from its slug (GET /apps/{slug}). A
 	// private App resolves only for its own installations' tokens.
 	AppID(ctx context.Context, slug string) (int64, error)
+	// ListRulesets returns the active branch rulesets of the repository with
+	// their bypass actors, all pages. Bypass actors need admin read: without
+	// it the error is ErrForbidden.
+	ListRulesets(ctx context.Context) ([]Ruleset, error)
+	// GetMergeSettings reads the repository's allowed merge methods.
+	GetMergeSettings(ctx context.Context) (MergeSettings, error)
+	// GetApp reads an App's public data (GET /apps/{slug}), including the
+	// permissions it requests.
+	GetApp(ctx context.Context, slug string) (AppInfo, error)
+	// GetVariable reads an Actions repository variable. found is false when it
+	// does not exist; a missing permission is ErrForbidden.
+	GetVariable(ctx context.Context, name string) (value string, found bool, err error)
 }
 
 // Writer is the write side. Only the effect layer (#13) may hold one.
