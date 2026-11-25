@@ -23,11 +23,12 @@ const (
 
 // Role file statuses and reviewer verdicts.
 const (
-	StatusDone       = "done"
-	StatusBlocked    = "blocked"
-	StatusNeedsHuman = "needs-human"
-	VerdictApprove   = "approve"
-	VerdictChanges   = "changes"
+	StatusDone         = "done"
+	StatusBlocked      = "blocked"
+	StatusNeedsHuman   = "needs-human"
+	StatusNeedsNetwork = "needs-network"
+	VerdictApprove     = "approve"
+	VerdictChanges     = "changes"
 )
 
 // Finding severities, most serious first.
@@ -53,6 +54,15 @@ const (
 	MaxFetchedURL = 2000
 )
 
+// MaxNetwork bounds the network needs of one worker role file;
+// MaxNetworkURL bounds a need's URL in bytes, MaxNetworkText its text fields
+// in runes.
+const (
+	MaxNetwork     = 10
+	MaxNetworkURL  = 300
+	MaxNetworkText = 200
+)
+
 // MaxRoleFileBytes bounds a role file.
 const MaxRoleFileBytes = 256 << 10
 
@@ -76,6 +86,15 @@ type RoleFile struct {
 	// Fetched are the network inputs a worker records, in file order. Only a
 	// worker may have them (check).
 	Fetched []Fetched
+	// Network are the inputs a needs-network worker asks for, in file order.
+	// Only a needs-network worker has them (Parse, check).
+	Network []NetworkNeed
+}
+
+// NetworkNeed is one network input a worker could not fetch itself.
+type NetworkNeed struct {
+	What, URL, Why string
+	Verify         string // optional
 }
 
 // Fetched is one input a worker fetched from the network.
@@ -135,6 +154,13 @@ type rawFetched struct {
 	Path       *string `yaml:"path"`
 }
 
+type rawNetwork struct {
+	What   *string `yaml:"what"`
+	URL    *string `yaml:"url"`
+	Why    *string `yaml:"why"`
+	Verify *string `yaml:"verify"`
+}
+
 type rawFront struct {
 	Role    *string   `yaml:"role"`
 	Status  *string   `yaml:"status"`
@@ -145,6 +171,7 @@ type rawFront struct {
 
 	Findings *[]rawFinding `yaml:"findings"`
 	Fetched  *[]rawFetched `yaml:"fetched"`
+	Network  *[]rawNetwork `yaml:"network"`
 }
 
 func malformed(format string, a ...any) error {
@@ -226,10 +253,21 @@ func Parse(b []byte) (RoleFile, error) {
 			return RoleFile{}, err
 		}
 	}
+	if raw.Network != nil {
+		if rf.Network, err = networkOf(*raw.Network); err != nil {
+			return RoleFile{}, err
+		}
+	}
 	switch rf.Status {
-	case StatusDone, StatusBlocked, StatusNeedsHuman:
+	case StatusDone, StatusBlocked, StatusNeedsHuman, StatusNeedsNetwork:
 	default:
-		return RoleFile{}, malformed("status %q is not done, blocked or needs-human", clip(rf.Status, 40))
+		return RoleFile{}, malformed("status %q is not done, blocked, needs-human or needs-network", clip(rf.Status, 40))
+	}
+	if rf.Status == StatusNeedsNetwork && len(rf.Network) == 0 {
+		return RoleFile{}, malformed("status needs-network needs a network list")
+	}
+	if raw.Network != nil && rf.Status != StatusNeedsNetwork {
+		return RoleFile{}, malformed("network is allowed only with status needs-network")
 	}
 	if rf.Attempt < 1 {
 		return RoleFile{}, malformed("attempt %d is below 1", rf.Attempt)
@@ -260,6 +298,9 @@ func (rf RoleFile) check(j Job) error {
 	}
 	if len(rf.Fetched) > 0 && j.Stage != StageWorker {
 		return malformed("fetched is allowed only on a worker")
+	}
+	if rf.Status == StatusNeedsNetwork && j.Stage != StageWorker {
+		return malformed("needs-network is allowed only on a worker")
 	}
 	if rf.Worker != "" && !(j.Stage == StageTriage && j.Role == "lead") {
 		return malformed("worker is allowed only for triage:lead")
@@ -355,6 +396,50 @@ func fetchedOf(raw []rawFetched) ([]Fetched, error) {
 			}
 		}
 		out = append(out, f)
+	}
+	return out, nil
+}
+
+// networkOf validates the network needs of a worker.
+func networkOf(raw []rawNetwork) ([]NetworkNeed, error) {
+	if len(raw) < 1 || len(raw) > MaxNetwork {
+		return nil, malformed("%d network entries, need 1 to %d", len(raw), MaxNetwork)
+	}
+	out := make([]NetworkNeed, 0, len(raw))
+	for i, r := range raw {
+		n := i + 1
+		switch {
+		case r.What == nil:
+			return nil, malformed("network %d: missing what", n)
+		case r.URL == nil:
+			return nil, malformed("network %d: missing url", n)
+		case r.Why == nil:
+			return nil, malformed("network %d: missing why", n)
+		}
+		v := NetworkNeed{What: strings.TrimSpace(*r.What), URL: *r.URL, Why: strings.TrimSpace(*r.Why)}
+		if r.Verify != nil {
+			v.Verify = strings.TrimSpace(*r.Verify)
+		}
+		if len(v.URL) > MaxNetworkURL {
+			return nil, malformed("network %d: url is %d bytes, max %d", n, len(v.URL), MaxNetworkURL)
+		}
+		if err := checkHTTPS(v.URL); err != nil {
+			return nil, malformed("network %d: url %v", n, err)
+		}
+		for _, f := range []struct{ name, val string }{{"what", v.What}, {"why", v.Why}, {"verify", v.Verify}} {
+			if f.val == "" && !(f.name == "verify" && r.Verify == nil) {
+				return nil, malformed("network %d: empty %s", n, f.name)
+			}
+			if utf8.RuneCountInString(f.val) > MaxNetworkText {
+				return nil, malformed("network %d: %s is over %d characters", n, f.name, MaxNetworkText)
+			}
+			for _, c := range f.val {
+				if c < ' ' || c == 0x7f || c == 0x85 || c == 0x2028 || c == 0x2029 {
+					return nil, malformed("network %d: %s is not one line of text", n, f.name)
+				}
+			}
+		}
+		out = append(out, v)
 	}
 	return out, nil
 }
@@ -518,6 +603,25 @@ func fetchedTypes(v *yaml.Node) bool {
 	return true
 }
 
+// networkTypes checks the scalar tags of a network sequence.
+func networkTypes(v *yaml.Node) bool {
+	if v.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, e := range v.Content {
+		if e.Kind != yaml.MappingNode {
+			return false
+		}
+		for i := 0; i+1 < len(e.Content); i += 2 {
+			val := e.Content[i+1]
+			if val.Kind != yaml.ScalarNode || val.Tag != "!!str" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // checkTypes rejects scalars yaml.v3 would coerce: role, status, verdict and
 // worker must be strings, attempt an integer, next a list of strings.
 func checkTypes(front string) error {
@@ -541,6 +645,8 @@ func checkTypes(front string) error {
 			ok = findingsTypes(v)
 		case "fetched":
 			ok = fetchedTypes(v)
+		case "network":
+			ok = networkTypes(v)
 		case "next":
 			ok = v.Kind == yaml.SequenceNode
 			for _, e := range v.Content {

@@ -15,6 +15,10 @@ const (
 	OutcomeChanges    Outcome = "changes"
 	OutcomeNeedsHuman Outcome = "needs-human"
 	OutcomeFailed     Outcome = "failed"
+	// OutcomeNeedsNetwork is a worker that asked for network inputs it could
+	// not fetch. Nothing is pushed and no PR is opened. For now it ends like
+	// needs-human, with the list in the comment.
+	OutcomeNeedsNetwork Outcome = "needs-network"
 	// OutcomeStale is a review whose verdict was approve but whose PR gained
 	// code after the reviewed commit. The review is posted, no pass label is
 	// set and the request label stays, so the review runs again. It is also a
@@ -64,6 +68,8 @@ type Plan struct {
 	// ExtraLogPaths are the committed paths of Job.ExtraLogs, in order.
 	ExtraLogPaths []string
 	Summary       string // redacted role file summary, for the comment
+	// Network is the redacted list of a needs-network worker.
+	Network []NetworkNeed
 	// Review is set for a review that reached a verdict: close-out posts one
 	// PR review instead of a plain comment.
 	Review   *ReviewPlan
@@ -94,6 +100,11 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 	n := j.target()
 	run := Label{n, labels.Running(labels.Stage(j.Stage), j.Role)}
 	switch {
+	case rf.Status == StatusNeedsNetwork && j.Stage == StageWorker:
+		p.Outcome = OutcomeNeedsNetwork
+		p.Network = rf.Network
+		p.Terminal = []Label{{n, labels.NeedsHuman}}
+		p.Remove = []Label{run}
 	case rf.Status != StatusDone:
 		p.Outcome = OutcomeNeedsHuman
 		p.Terminal = []Label{{n, labels.NeedsHuman}}

@@ -55,7 +55,7 @@ func (l *Loop) rows(ctx context.Context, n int, log *slog.Logger) ([]costblock.R
 // never uses Plan.Reason, which can quote agent text.
 func outcomeText(f closeout.CostFacts) string {
 	switch f.Outcome {
-	case closeout.OutcomeDone, closeout.OutcomeChanges, closeout.OutcomeStale, closeout.OutcomeNeedsHuman, closeout.OutcomeRetry:
+	case closeout.OutcomeDone, closeout.OutcomeChanges, closeout.OutcomeStale, closeout.OutcomeNeedsHuman, closeout.OutcomeNeedsNetwork, closeout.OutcomeRetry:
 		return string(f.Outcome)
 	case closeout.OutcomeLimited:
 		return "usage limit"

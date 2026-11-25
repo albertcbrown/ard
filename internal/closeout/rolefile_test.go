@@ -234,3 +234,71 @@ func TestCheckFetchedStage(t *testing.T) {
 		}
 	}
 }
+
+func TestParseNetwork(t *testing.T) {
+	doc := func(status, list string) []byte {
+		return []byte("---\nrole: engineer\nstatus: " + status + "\nattempt: 1\n" + list + "---\nx\n")
+	}
+	entry := func(what, url, why string) string {
+		return "  - what: " + what + "\n    url: " + url + "\n    why: " + why + "\n"
+	}
+	ok := entry("spec", "https://example.com/a", "need")
+	pad := func(n int) string { return strings.Repeat("a", n) }
+	tests := []struct {
+		name   string
+		status string
+		list   string
+		bad    string // "" = valid; else error substring
+	}{
+		{"one entry", "needs-network", "network:\n" + ok, ""},
+		{"verify", "needs-network", "network:\n" + ok + "    verify: check the hash\n", ""},
+		{"ten entries", "needs-network", "network:\n" + strings.Repeat(ok, 10), ""},
+		{"eleven entries", "needs-network", "network:\n" + strings.Repeat(ok, 11), "network entries"},
+		{"empty list", "needs-network", "network: []\n", "network entries"},
+		{"missing list", "needs-network", "", "needs a network list"},
+		{"with done", "done", "network:\n" + ok, "only with status"},
+		{"with blocked", "blocked", "network:\n" + ok, "only with status"},
+		{"with needs-human", "needs-human", "network:\n" + ok, "only with status"},
+		{"http", "needs-network", "network:\n" + entry("a", "http://example.com/a", "b"), "https"},
+		{"ftp", "needs-network", "network:\n" + entry("a", "ftp://example.com/a", "b"), "https"},
+		{"userinfo", "needs-network", "network:\n" + entry("a", "https://u:p@example.com/x", "b"), "userinfo"},
+		{"no host", "needs-network", "network:\n" + entry("a", "https:///x", "b"), "host"},
+		{"backtick", "needs-network", "network:\n" + entry("a", `"https://example.com/a`+"`"+`b"`, "b"), "forbidden"},
+		{"url 300", "needs-network", "network:\n" + entry("a", "https://example.com/"+pad(300-20), "b"), ""},
+		{"url 301", "needs-network", "network:\n" + entry("a", "https://example.com/"+pad(301-20), "b"), "max 300"},
+		{"what 200", "needs-network", "network:\n" + entry(pad(200), "https://example.com/a", "b"), ""},
+		{"what 201", "needs-network", "network:\n" + entry(pad(201), "https://example.com/a", "b"), "what is over"},
+		{"why 200 multibyte", "needs-network", "network:\n" + entry(strings.Repeat("é", 200), "https://example.com/a", "b"), ""},
+		{"verify 201", "needs-network", "network:\n" + ok + "    verify: " + pad(201) + "\n", "verify is over"},
+		{"multi-line", "needs-network", "network:\n  - what: |\n      a\n      b\n    url: https://example.com/a\n    why: c\n", "one line"},
+		{"missing what", "needs-network", "network:\n  - url: https://example.com/a\n    why: c\n", "missing what"},
+		{"empty why", "needs-network", "network:\n" + entry("a", "https://example.com/a", `""`), "empty why"},
+		{"unknown key", "needs-network", "network:\n" + ok + "    extra: 1\n", "frontmatter"},
+		{"non-string", "needs-network", "network:\n" + entry("5", "https://example.com/a", "b"), "wrong type"},
+		{"second entry bad", "needs-network", "network:\n" + ok + entry("a", "http://x.com", "b"), "network 2"},
+	}
+	for _, c := range tests {
+		t.Run(c.name, func(t *testing.T) {
+			rf, err := Parse(doc(c.status, c.list))
+			if c.bad == "" {
+				if err != nil || rf.Status != StatusNeedsNetwork || len(rf.Network) == 0 {
+					t.Fatalf("got %+v %v", rf, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrMalformed) || !strings.Contains(err.Error(), c.bad) {
+				t.Fatalf("want malformed %q, got %v", c.bad, err)
+			}
+		})
+	}
+}
+
+func TestCheckNeedsNetworkStage(t *testing.T) {
+	rf := RoleFile{Role: "engineer", Status: StatusNeedsNetwork}
+	for stage, wantErr := range map[string]bool{StageWorker: false, StageTriage: true, StageReview: true} {
+		err := rf.check(Job{Stage: stage, Role: "engineer"})
+		if (err != nil) != wantErr || (err != nil && !errors.Is(err, ErrMalformed)) {
+			t.Errorf("%s: %v", stage, err)
+		}
+	}
+}

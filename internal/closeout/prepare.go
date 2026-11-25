@@ -123,12 +123,14 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 
 	// 2. Redact and stage.
 	var (
-		files      []FileRef
-		hit        string // first non-log file that was flagged, with rule ids
-		summary    string
-		findings   []Finding // of the redacted role file
-		unreadable bool      // the redacted role file no longer parses
-		downgraded bool
+		files       []FileRef
+		hit         string // first non-log file that was flagged, with rule ids
+		summary     string
+		findings    []Finding // of the redacted role file
+		networkLost bool      // the redacted network list no longer parses
+		network     []NetworkNeed
+		unreadable  bool // the redacted role file no longer parses
+		downgraded  bool
 	)
 	if failed == "" && denied == "" && j.Stage == StageReview && rf.DowngradeVerdict() {
 		downgraded = true
@@ -157,9 +159,11 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 			}
 			if c.path == rolePath {
 				if crf, perr := Parse(res.Clean); perr == nil {
-					summary, findings = crf.Summary, crf.Findings
+					summary, findings, network = crf.Summary, crf.Findings, crf.Network
 				} else if j.Stage == StageReview {
 					unreadable = true
+				} else if rf.Status == StatusNeedsNetwork {
+					networkLost = true
 				}
 			}
 			if c.noCommit {
@@ -234,8 +238,13 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 		plan = needsHumanPlan(j, rf.Status, hit)
 	case unreadable:
 		plan = needsHumanPlan(j, rf.Status, "findings unreadable after redaction")
+	case networkLost:
+		plan = needsHumanPlan(j, rf.Status, "network list unreadable after redaction")
 	default:
 		plan = Build(j, rf, d.Roles)
+		if plan.Outcome == OutcomeNeedsNetwork {
+			plan.Network = network
+		}
 		if j.Stage == StageReview && (plan.Outcome == OutcomeDone || plan.Outcome == OutcomeChanges || plan.Outcome == OutcomeStale) {
 			findings, _, _ = aidAdjust(j.Review, rf.Verdict, findings)
 			plan.Review = reviewPlan(j, rf.Verdict, downgraded, findings)
