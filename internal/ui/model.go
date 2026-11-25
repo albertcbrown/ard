@@ -18,11 +18,43 @@ type Model struct {
 	take func(context.Context) snapshot.Snapshot
 	open func(url string) error
 
-	snap          snapshot.Snapshot
-	width, height int
-	selected      int
-	help          bool
-	confirmQuit   bool
+	snap           snapshot.Snapshot
+	width, height  int
+	selected       int
+	help           bool
+	confirmQuit    bool
+	confirmUnpause bool
+
+	ctl        Controls
+	now        func() time.Time
+	toast      string
+	toastUntil time.Time
+}
+
+// Controls are the local actions the keys p, + and - perform. They are local
+// controls (pause file, slot override), not GitHub effects.
+type Controls interface {
+	Pause() error
+	Unpause() error
+	SlotUp() (string, error)
+	SlotDown() (string, error)
+}
+
+// ToastFor is how long a toast stays on screen.
+const ToastFor = 4 * time.Second
+
+// WithControls returns m with the p, + and - keys wired to c; nil keeps them inert.
+func (m Model) WithControls(c Controls) Model { m.ctl = c; return m }
+
+func (m Model) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
+}
+
+func (m *Model) setToast(s string) {
+	m.toast, m.toastUntil = s, m.clock().Add(ToastFor)
 }
 
 type tickMsg struct{}
@@ -54,6 +86,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tickMsg:
+		if m.toast != "" && !m.clock().Before(m.toastUntil) {
+			m.toast = ""
+		}
 		return m, m.fetch()
 	case snapMsg:
 		m.snap = snapshot.Snapshot(msg)

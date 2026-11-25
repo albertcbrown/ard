@@ -26,14 +26,14 @@ var newProgram = func(m tea.Model, in io.Reader, out io.Writer) program {
 // ending (q, Ctrl-C) or ctx being canceled (SIGINT/SIGTERM) cancels the
 // controller; runWithUI returns once run has stopped, so shutdown is the same
 // graceful path as without a UI.
-func runWithUI(ctx context.Context, run func(context.Context) error, take func(context.Context) snapshot.Snapshot,
+func runWithUI(ctx context.Context, run func(context.Context) error, take func(context.Context) snapshot.Snapshot, ctl ui.Controls,
 	repo, logPath string, in io.Reader, out io.Writer) error {
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- run(rctx) }()
 
-	p := newProgram(ui.New(repo, logPath, take, ui.OpenBrowser), in, out)
+	p := newProgram(ui.New(repo, logPath, take, ui.OpenBrowser).WithControls(ctl), in, out)
 	stopped := make(chan struct{})
 	go func() {
 		select {

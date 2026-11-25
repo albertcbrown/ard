@@ -33,6 +33,13 @@ func (w *wiring) newSnapshotTaker(c *controller.Controller, events *snapshot.Rin
 		Control: c,
 		Caps:    w.budgetGate(),
 		Config:  func() *config.Resolved { return w.cfg.Load() },
-		Ring:    events,
+		Override: func() (int, bool) {
+			c := w.cfg.Load()
+			if c == nil {
+				return 0, false
+			}
+			return w.slots.Active(c.MaxPods)
+		},
+		Ring: events,
 	})
 }
