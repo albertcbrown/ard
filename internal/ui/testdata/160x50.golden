@@ -47,4 +47,4 @@ Next tick
 triage     ticks 7 last 12:00:00Z
 Recent events
 12:00:00 INFO serve.start repo=o/r
-? help  j/k select  o open  a approve  q quit
+? help  j/k select  o open  a approve  p pause  +/- slots  q quit

@@ -271,6 +271,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 		Repo: repo, Root: clone, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners, Model: d.Model,
 		StateDir: stateDir, Started: time.Now(), K8s: k8s, Auth: d.Auth,
 	}
+	w.initSlots()
 	defer w.closeAll()
 	paths, perr := newPathRedactor(w.hostPaths())
 	if perr != nil {
@@ -323,7 +324,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 			}
 			w.cfg.Store(c)
 			if p := w.pool.Load(); p != nil {
-				p.SetMax(c.MaxPods) // a reload may change max_pods
+				p.SetMax(w.reloadMax(c.MaxPods)) // a reload may change max_pods; a runtime override holds until it does (#415)
 			}
 			return c, nil
 		},
@@ -394,7 +395,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	}
 	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun, "pause_file", pausePath, "config_sha", startSHA)
 	if useUI {
-		return runWithUI(ctx, cc.Run, w.snap.Take, approveFn(w.Effects, w.wakeLoops, repo.String(), ui.OpenBrowser), repo.String(), logPath, os.Stdin, e.Stdout)
+		return runWithUI(ctx, cc.Run, w.snap.Take, &controls{w: w, pausePath: pausePath, loops: loopNames(selected)}, approveFn(w.Effects, w.wakeLoops, repo.String(), ui.OpenBrowser), repo.String(), logPath, os.Stdin, e.Stdout)
 	}
 	return cc.Run(ctx)
 }
@@ -464,6 +465,8 @@ type wiring struct {
 	bgt              *budget.Gate
 	// snap takes snapshots for the command center (#413); nothing renders it yet.
 	snap *snapshot.Taker
+	// slots is the runtime max_pods override (#415).
+	slots slotOverride
 	// budgetNow is the budget gate's clock; nil means time.Now (tests set it).
 	budgetNow func() time.Time
 
