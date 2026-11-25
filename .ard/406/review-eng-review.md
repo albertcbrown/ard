@@ -8,15 +8,19 @@ findings:
     severity: low
     message: |
       The issue asked for updates to the triage gate, worker and reviewer loop sections, but only the "One pool of job slots" paragraph and the intervals example changed.
-      The worker's report discloses this. Add a short pointer in those sections so readers of the loop descriptions see that hand-offs wake the next loop and that approvals are polled by the watch.
+      Add a short pointer in those sections that hand-offs wake the next loop and approvals are polled by the watch. Not blocking.
   - file: "internal/controller/approvals_test.go"
-    line: 726
+    line: 113
     severity: info
     message: |
-      The unblock test accepts two orderings because the wake list comes from ranging over a map. Sorting `wake` in `ApprovalWatch.Tick` (internal/controller/approvals.go:560) would make the order deterministic and the assertion exact. No action needed.
+      The unblock assertion accepts two orderings because the wake list comes from ranging over a map. Sorting `wake` in `ApprovalWatch.Tick` (internal/controller/approvals.go:114) would make it deterministic. No action needed.
 ---
-The change matches the plan and the issue. Close-out wakes the next loops only after every label effect and the Closed save succeed, and not in dry-run. The approval watch is read-only and skips the poll while paused. Wake coalescing and the pause, shutdown and dry-run paths have tests. Approved, with two non-blocking notes.
+The merge with main and the new wake of triage on a needs-network bounce are correct and covered by a `WakeTargets` test case. The wake logic, approval watch and config changes still match the plan, and the checks pass. Approved.
 
 ## Checks
 - Lint: `make lint` reported nothing on the changed files. The only output was the existing parse note for the intentionally broken `internal/roles/testdata` file.
-- Diff coverage: `go test -cover` on closeout (90.2%), controller (96.0%), config (89.7%) and servecmd (79.6%) all passed. I did not do a per-line coverage profile. The new functions `WakeTargets`, `Closer.wake`, `WakeLoops`, `flushWakes` and `ApprovalWatch.Tick` each have direct tests.
+- Tests: `go test` on closeout, controller, config and servecmd passed. I did not run a per-line coverage profile. The new functions `WakeTargets`, `Closer.wake`, `WakeLoops`, `flushWakes` and `ApprovalWatch.Tick` each have direct tests.
+
+## Previous findings
+- docs/proposal.md: still present (low, non-blocking).
+- internal/controller/approvals_test.go: still present (info, line now 113).
