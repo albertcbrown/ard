@@ -4,6 +4,10 @@ ard:hold	f9a03f	ard: controller ignores this issue or PR
 ard:keep	cfd3d7	ard: keep failed-job resources past 24 h
 ard:needs-approval	fbca04	ard: PR touches a protected path; merges after human approval
 ard:needs-human	d93f0b	ard: blocked; automation stops until a human acts
+ard:p0	b60205	ard priority 0 (highest); unlabelled counts as P2
+ard:p1	d93f0b	ard priority 1; unlabelled counts as P2
+ard:p2	fbca04	ard priority 2 (the default when unlabelled)
+ard:p3	c2e0c6	ard priority 3 (lowest)
 ard:pause	5c5c5c	ard: on the status issue, stops all new claims
 ard:pending	ededed	ard: ready for triage (the lead's request)
 ard:review:eng-review	0e8a16	ard: review eng-review requested

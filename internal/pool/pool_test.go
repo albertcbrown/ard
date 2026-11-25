@@ -702,3 +702,81 @@ func TestDemandLoops(t *testing.T) {
 		t.Fatalf("held candidate still wakes: %v", got)
 	}
 }
+
+func prio(c Candidate, p int) Candidate { c.Priority = p; return c }
+
+func TestLessPriority(t *testing.T) {
+	oldP3 := prio(cand(ClassWorker, "w", 1, 0), 3)
+	newP1 := prio(cand(ClassWorker, "w", 2, 10), 1)
+	oldP1 := prio(cand(ClassWorker, "w", 3, 5), 1)
+	p3Review := prio(cand(ClassReview, "r", 4, 50), 3)
+	p0Triage := prio(cand(ClassTriage, "t", 5, 0), 0)
+	if !less(newP1, oldP3) {
+		t.Error("a P1 must rank before an older P3 in the same class")
+	}
+	if !less(oldP1, newP1) {
+		t.Error("equal priority falls back to the oldest Since")
+	}
+	if !less(p3Review, p0Triage) {
+		t.Error("priority must never cross classes")
+	}
+	want := []string{oldP1.Key(), newP1.Key(), oldP3.Key()}
+	for _, in := range permutations([]Candidate{oldP3, newP1, oldP1}) {
+		p, _ := newPool(1)
+		ds := p.Offer("w", 0, in)
+		var got []string
+		for _, d := range ds {
+			if d.Verdict == Granted {
+				got = append(got, d.Candidate.Key())
+			}
+		}
+		if len(got) != 1 || got[0] != want[0] {
+			t.Fatalf("one slot went to %v, want %s", got, want[0])
+		}
+	}
+}
+
+func TestReservationFollowsPriority(t *testing.T) {
+	p, _ := newPool(1)
+	hold := p.Offer("w", 0, []Candidate{prio(cand(ClassWorker, "w", 9, 0), 2)})[0].Slot
+	oldP3 := prio(cand(ClassWorker, "w", 1, 0), 3)
+	newP0 := prio(cand(ClassWorker, "w", 2, 10), 0)
+	p.Offer("a", time.Hour, []Candidate{oldP3})
+	p.Offer("b", time.Hour, []Candidate{newP0})
+	hold.Release()
+	// The freed slot is reserved for the P0 waiter, so the P3 is outranked.
+	if d := p.Offer("a", time.Hour, []Candidate{oldP3})[0]; d.Verdict == Granted {
+		t.Fatalf("P3 took the slot reserved for a waiting P0: %v", d.Verdict)
+	}
+	if d := p.Offer("b", time.Hour, []Candidate{newP0})[0]; d.Verdict != Granted {
+		t.Fatalf("P0 verdict = %v, want granted", d.Verdict)
+	}
+}
+
+func TestStarvationWarnsOncePerEpisode(t *testing.T) {
+	var buf bytes.Buffer
+	ck := &clock{t: t0.Add(1000 * time.Hour)}
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	p := New(Options{Max: 1, Now: ck.now, Log: log})
+	hold := p.Offer("w", 0, []Candidate{cand(ClassWorker, "w", 1, 0)})[0].Slot
+	p3 := prio(cand(ClassWorker, "w", 2, 0), 3)
+	p.Offer("x", 72*time.Hour, []Candidate{p3})
+	ck.t = ck.t.Add(25 * time.Hour)
+	p.Offer("x", 72*time.Hour, []Candidate{p3})
+	if n := strings.Count(buf.String(), "pool.starved"); n != 1 {
+		t.Fatalf("want 1 warning, got %d", n)
+	}
+	if !strings.Contains(buf.String(), "priority=3") || !strings.Contains(buf.String(), "key="+p3.Key()) {
+		t.Fatalf("warning lacks key and priority: %s", buf.String())
+	}
+	// A grant to a younger P0 in the same class must not re-arm the warning.
+	hold.Release()
+	p0 := prio(cand(ClassWorker, "w", 3, 1500*60), 0)
+	p.Offer("y", time.Hour, []Candidate{p0, p3})
+	if d := p.Offer("x", 72*time.Hour, []Candidate{p3})[0]; d.Verdict == Granted {
+		t.Fatal("P3 should have waited behind the P0")
+	}
+	if n := strings.Count(buf.String(), "pool.starved"); n != 1 {
+		t.Fatalf("re-warned after a grant: %d warnings", n)
+	}
+}

@@ -88,8 +88,8 @@ func TestValidRoleName(t *testing.T) {
 }
 
 func TestStaticAreParsedStatic(t *testing.T) {
-	if len(Static()) != 9 {
-		t.Fatalf("Static() has %d labels, want 9", len(Static()))
+	if len(Static()) != 13 {
+		t.Fatalf("Static() has %d labels, want 13", len(Static()))
 	}
 	for _, s := range Static() {
 		if p, ok := Parse(s); !ok || p.Kind != KindStatic {
@@ -132,5 +132,43 @@ func TestCheckIntake(t *testing.T) {
 		if err != nil && (!strings.Contains(err.Error(), "uses itself") || !strings.Contains(err.Error(), tt.name)) {
 			t.Errorf("CheckIntake(%q) error = %q, want it to say 'uses itself' and name the label", tt.name, err)
 		}
+	}
+}
+
+func TestPriority(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want int
+	}{
+		{"none", nil, 2},
+		{"unrelated", []string{"bug", Pending}, 2},
+		{"p1", []string{P1}, 1},
+		{"p3", []string{P3}, 3},
+		{"highest wins", []string{P3, P0, P2}, 0},
+		{"mixed case", []string{"ARD:P1", "x"}, 1},
+		{"p2 explicit", []string{P2}, 2},
+	}
+	for _, tc := range tests {
+		if got := Priority(tc.in); got != tc.want {
+			t.Errorf("%s: Priority(%v) = %d, want %d", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestPriorityLabelsAreStaticAndNotIntake(t *testing.T) {
+	for _, l := range Priorities() {
+		if !IsPriority(strings.ToUpper(l)) {
+			t.Errorf("IsPriority(%q) = false", l)
+		}
+		if p, ok := Parse(l); !ok || p.Kind != KindStatic {
+			t.Errorf("Parse(%q) = %v, %v; want static", l, p, ok)
+		}
+		if CheckIntake(l) == nil {
+			t.Errorf("CheckIntake(%q) accepted a priority label", l)
+		}
+	}
+	if IsPriority(Pending) {
+		t.Error("ard:pending is not a priority label")
 	}
 }

@@ -242,7 +242,6 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 				triageGranted[c.Number] = true
 			}
 			delete(p.firstDenied, c.Key())
-			p.starved[c.Class] = false
 			d.Verdict, d.Slot = Granted, s
 			p.log.Debug("pool.grant", "loop", loop, "key", c.Key(), "class", c.Class.String(), "role", c.Role, "number", c.Number)
 		case capDenied < reserved:

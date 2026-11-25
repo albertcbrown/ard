@@ -885,3 +885,22 @@ func TestPatchEqualSharedFileKeepsReviewCovered(t *testing.T) {
 		}
 	})
 }
+
+func TestMergesByPriorityThenNumber(t *testing.T) {
+	h := newHarness(t)
+	plain := h.newPR()
+	p3 := h.newPR(func(s *spec) { s.issueLbl = []string{labels.P3} })
+	p0Issue := h.newPR(func(s *spec) { s.issueLbl = []string{labels.P0} })
+	p1PR := h.newPR(func(s *spec) {
+		s.labels = append(s.labels, labels.P1)
+		s.issueLbl = []string{labels.P3}
+	})
+	h.settle()
+	for i, want := range []pr{p0Issue, p1PR, plain, p3} {
+		h.mustTick()
+		ms := h.mergeCalls()
+		if len(ms) != i+1 || !h.merged(want.n) {
+			t.Fatalf("tick %d: merges = %d, PR %d merged = %v", i, len(ms), want.n, h.merged(want.n))
+		}
+	}
+}

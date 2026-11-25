@@ -56,14 +56,14 @@ func TestRunLive(t *testing.T) {
 	}
 	// 9 statics + lead running/done + cve scanner.
 	want := "create  ard:executor:failed\n"
-	if !strings.Contains(out.String(), want) || !strings.HasSuffix(out.String(), "created 12, updated 0, unchanged 0, stale 0\n") {
+	if !strings.Contains(out.String(), want) || !strings.HasSuffix(out.String(), "created 16, updated 0, unchanged 0, stale 0\n") {
 		t.Errorf("stdout:\n%s", out.String())
 	}
 	e, out = env(root, false)
 	if err := run(context.Background(), e, open); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "created 0, updated 0, unchanged 12, stale 0\n" {
+	if out.String() != "created 0, updated 0, unchanged 16, stale 0\n" {
 		t.Errorf("second run stdout:\n%s", out.String())
 	}
 }
@@ -83,7 +83,7 @@ func TestRunDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "would create ard:pending\n") ||
-		!strings.HasSuffix(out.String(), "dry-run: would create 12, would update 0, unchanged 0, stale 0\n") {
+		!strings.HasSuffix(out.String(), "dry-run: would create 16, would update 0, unchanged 0, stale 0\n") {
 		t.Errorf("stdout:\n%s", out.String())
 	}
 	if len(f.Writes()) != 0 {
@@ -125,14 +125,14 @@ func TestRunCustomIntake(t *testing.T) {
 	if err := run(context.Background(), e, open); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "create  ard:intake\n") || !strings.HasSuffix(out.String(), "created 13, updated 0, unchanged 0, stale 0\n") {
+	if !strings.Contains(out.String(), "create  ard:intake\n") || !strings.HasSuffix(out.String(), "created 17, updated 0, unchanged 0, stale 0\n") {
 		t.Errorf("stdout:\n%s", out.String())
 	}
 	e, out = env(root, false)
 	if err := run(context.Background(), e, open); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "created 0, updated 0, unchanged 13, stale 0\n" {
+	if out.String() != "created 0, updated 0, unchanged 17, stale 0\n" {
 		t.Errorf("second run stdout:\n%s", out.String())
 	}
 	// Switching back to the default leaves the custom label stale, not deleted.

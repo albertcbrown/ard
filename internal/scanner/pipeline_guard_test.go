@@ -322,6 +322,8 @@ func TestJoinableIssue(t *testing.T) {
 		{"needs-human exact", labels.NeedsHuman, []string{sc, labels.NeedsHuman}, "g", true},
 		{"mixed case", labels.Pending, []string{"ARD:Scanner:cve", "ard:Pending"}, "g", true},
 		{"unrelated label", "", []string{sc, "bug"}, "g", true},
+		{"priority label", "", []string{sc, labels.P0}, "g", true},
+		{"priority label with route", labels.Pending, []string{sc, labels.Pending, "ARD:P3"}, "g", true},
 		{"none plus pending", "", []string{sc, labels.Pending}, "g", false},
 		{"needs-human plus pending", labels.NeedsHuman, []string{sc, labels.NeedsHuman, labels.Pending}, "g", false},
 		{"pending plus needs-human", labels.Pending, []string{sc, labels.Pending, labels.NeedsHuman}, "g", false},

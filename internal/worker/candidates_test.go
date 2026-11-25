@@ -142,3 +142,46 @@ func TestNoWorkerRolesOffersNothing(t *testing.T) {
 		t.Errorf("offers %d last %v", h.pool.offers, h.pool.last)
 	}
 }
+
+func TestCandidatePriority(t *testing.T) {
+	h := newHarness(t, noTests)
+	p3 := h.issue("p3", labels.P3)
+	plain := h.issue("plain")
+	p1 := h.issue("p1", labels.P1)
+	h.mustTick()
+	prios := map[int]int{}
+	for _, c := range h.pool.last {
+		prios[c.Number] = c.Priority
+	}
+	want := map[int]int{p3: 3, plain: 2, p1: 1}
+	for n, w := range want {
+		if got, ok := prios[n]; !ok || got != w {
+			t.Errorf("issue %d priority = %d (offered %v), want %d", n, got, ok, w)
+		}
+	}
+}
+
+func TestP0BeyondOldest50IsFound(t *testing.T) {
+	h := newHarness(t, noTests)
+	for i := 0; i < 55; i++ {
+		h.issue("plain")
+	}
+	p0 := h.issue("urgent", labels.P0)
+	h.mustTick()
+	var found bool
+	for _, c := range h.pool.last {
+		if c.Number == p0 {
+			found = c.Priority == 0
+		}
+	}
+	if !found {
+		t.Fatalf("the P0 issue %d was not offered with priority 0", p0)
+	}
+	seen := map[int]bool{}
+	for _, c := range h.pool.last {
+		if seen[c.Number] {
+			t.Errorf("issue %d offered twice", c.Number)
+		}
+		seen[c.Number] = true
+	}
+}

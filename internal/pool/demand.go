@@ -15,6 +15,9 @@ type loopDemand struct {
 type waiting struct {
 	count  int
 	oldest time.Duration
+	// key and priority belong to the oldest waiter, for the starvation log.
+	key      string
+	priority int
 }
 
 // purgeLocked drops expired demand entries and their first-denied records.
@@ -109,6 +112,7 @@ func (p *Pool) waitingLocked(now time.Time) map[Class]waiting {
 			w.count++
 			if t, ok := p.firstDenied[k]; ok && now.Sub(t) > w.oldest {
 				w.oldest = now.Sub(t)
+				w.key, w.priority = k, c.Priority
 			}
 			out[c.Class] = w
 		}
@@ -118,7 +122,8 @@ func (p *Pool) waitingLocked(now time.Time) map[Class]waiting {
 
 // checkStarvationLocked logs one pool.starved warning when a class's oldest
 // wait first crosses StarveAfter. It re-arms once the class has no waiting
-// demand (a grant also clears the flag in Offer).
+// demand or no wait older than StarveAfter. A grant does not clear it, so a
+// long-waiting low-priority job does not re-warn on every grant.
 func (p *Pool) checkStarvationLocked(now time.Time) {
 	w := p.waitingLocked(now)
 	for c := ClassReview; c <= ClassScanner; c++ {
@@ -127,9 +132,13 @@ func (p *Pool) checkStarvationLocked(now time.Time) {
 			p.starved[c] = false
 			continue
 		}
-		if ws.oldest >= p.starveAfter && !p.starved[c] {
+		if ws.oldest < p.starveAfter {
+			p.starved[c] = false
+			continue
+		}
+		if !p.starved[c] {
 			p.starved[c] = true
-			p.log.Warn("pool.starved", "class", c.String(), "waiting", ws.count, "oldest_wait", ws.oldest.String())
+			p.log.Warn("pool.starved", "class", c.String(), "waiting", ws.count, "oldest_wait", ws.oldest.String(), "key", ws.key, "priority", ws.priority)
 		}
 	}
 }

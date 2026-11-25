@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -200,8 +201,18 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 
 	if dry {
 		// Dry-run never claims: no job row, no slot, no label.
+		sort.SliceStable(cands, func(i, j int) bool {
+			a, b := cands[i], cands[j]
+			if a.priority != b.priority {
+				return a.priority < b.priority
+			}
+			if !a.issue.CreatedAt.Equal(b.issue.CreatedAt) {
+				return a.issue.CreatedAt.Before(b.issue.CreatedAt)
+			}
+			return a.issue.Number < b.issue.Number
+		})
 		for _, c := range cands {
-			log.Info("triage.would_claim", "issue", c.issue.Number, "role", c.role.Name, "reason", string(c.reason))
+			log.Info("triage.would_claim", "issue", c.issue.Number, "role", c.role.Name, "reason", string(c.reason), "priority", c.priority)
 		}
 		l.offer(cfg, nil)
 		return errors.Join(errs...)
@@ -209,7 +220,7 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 
 	pcs := make([]pool.Candidate, len(cands))
 	for i, c := range cands {
-		pcs[i] = pool.Candidate{Class: pool.ClassTriage, Role: c.role.Name, Number: c.issue.Number, Since: c.issue.CreatedAt}
+		pcs[i] = pool.Candidate{Class: pool.ClassTriage, Role: c.role.Name, Number: c.issue.Number, Since: c.issue.CreatedAt, Priority: c.priority}
 	}
 	decs := l.offer(cfg, pcs)
 	stopped := false

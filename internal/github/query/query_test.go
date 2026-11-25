@@ -24,6 +24,16 @@ func TestBuild(t *testing.T) {
 			want: `is:open is:pr label:"ard:review:security"`,
 		},
 		{
+			name: "any of",
+			q:    RoleQuery{Type: TypeIssue, Request: "x", AnyOf: []string{"ard:p0", "ard:p1"}, Guards: []string{"ard:hold"}},
+			want: `is:open is:issue label:"x" label:"ard:p0","ard:p1" -label:ard:hold`,
+		},
+		{
+			name:    "any of with quote",
+			q:       RoleQuery{Request: "x", AnyOf: []string{`a"b`}},
+			wantErr: true,
+		},
+		{
 			name: "issue type",
 			q:    RoleQuery{Type: TypeIssue, Request: "x"},
 			want: `is:open is:issue label:"x"`,
