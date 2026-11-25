@@ -3,21 +3,22 @@ role: engineer
 status: done
 attempt: 1
 ---
-Adds a `needs-network` worker status with a strictly validated `network:` list. Close-out turns it into a new `OutcomeNeedsNetwork` that, for now, ends like `needs-human` with the list in the comment. Nothing is pushed and no PR is opened.
+Adds a `needs-network` worker status with a strictly validated `network:` list (what, url, why, optional verify). The close-out ends as needs-human, lists the requests in the issue comment, opens no PR and pushes nothing. The back-route comes in a later part.
 
 ## Changes
-- `internal/closeout/rolefile.go`: status `needs-network`, the `NetworkNeed` type and `network:` parsing (1–10 entries, https URL of at most 300 bytes without userinfo, one-line text of at most 200 runes). The list is rejected with any other status, and the status is rejected off the worker stage.
-- `plan.go`: `OutcomeNeedsNetwork` and `Plan.Network`. `Build` matches it before the generic not-done case, without reading the worker result, so the Reaper close-out gets the same plan.
-- `prepare.go`: takes the list from the redacted re-parse. If that no longer parses, the job ends `needs-human` ("network list unreadable after redaction").
-- `comment.go`: header reads `needs-human`; renders the list with each URL in a code span.
-- `costs/rows.go`, `reaper/reaper.go`, `reaper/finish.go`: handle the new outcome like needs-human.
-- `docs/proposal.md`: role file example, a "Network needs" paragraph and worker loop step 9.
-- Tests: `TestParseNetwork`, `TestCheckNeedsNetworkStage`, `TestBuildNeedsNetwork`, `TestPrepareNeedsNetwork`, `TestCommentNeedsNetwork`.
+- `internal/closeout/rolefile.go`: new status, `NetworkNeed`, `networkOf` validation (1–10 entries, https URLs, one-line capped text), type check, and worker-only rule.
+- `internal/closeout/plan.go`, `prepare.go`, `comment.go`: `OutcomeNeedsNetwork`, `Plan.Network`, use of the redacted re-parse (needs-human if the list is lost), and comment rendering.
+- `internal/costs/rows.go`, `internal/reaper/reaper.go`, `internal/reaper/finish.go`: handle the new outcome.
+- `docs/proposal.md`: documents the status and the interim ending.
+- Tests in `rolefile_test.go`, `plan_test.go`, `prepare_test.go`, `comment_test.go` and `closer_test.go`.
+- `internal/closeout/closeout.go`: re-wrapped the record-version comment.
 
 ## Testing
-`go test ./internal/closeout/... ./internal/costs/... ./internal/reaper/...` passes. `go vet` on those packages is clean and gofmt reports nothing.
+Ran `go test ./internal/closeout/`: passes. Earlier rounds ran the costs and reaper packages.
+
+## Review findings
+- `internal/closeout/closer_test.go`: fixed: added `TestRunWorkerNeedsNetwork`, a Run-level test. It checks the outcome, one comment with the URL, `ard:needs-human` added, `:running` removed, no review labels requested or added on the PR, and that only `.ard/` files are committed (the report and cost record). It does not check pushing or PR creation directly, because the Run-level helpers don't model them.
+- `internal/closeout/closeout.go` line 24: fixed: comment re-wrapped.
 
 ## Open issues
-- I did not run `make lint test` or the whole repository's tests.
-- `make docs-check` could not run because mkdocs is not installed here.
-- I added no Run-level test in `closer_test.go`. The no-PR and no-push behaviour rests on `worker/run.go` already handling any non-done status that way, which I read but did not exercise in a test. The outcome falls into `Store.Complete`'s default branch, which I left unchanged.
+- `make lint` fails on a pre-existing testdata fixture, as the reviewer noted.
