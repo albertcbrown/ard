@@ -269,6 +269,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 		Repo: repo, Root: clone, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners, Model: d.Model,
 		StateDir: stateDir, Started: time.Now(), K8s: k8s, Auth: d.Auth,
 	}
+	w.initSlots()
 	defer w.closeAll()
 	paths, perr := newPathRedactor(w.hostPaths())
 	if perr != nil {
@@ -321,7 +322,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 			}
 			w.cfg.Store(c)
 			if p := w.pool.Load(); p != nil {
-				p.SetMax(w.slots.Effective(c.MaxPods)) // a reload may change max_pods; a runtime override holds until it does (#415)
+				p.SetMax(w.reloadMax(c.MaxPods)) // a reload may change max_pods; a runtime override holds until it does (#415)
 			}
 			return c, nil
 		},

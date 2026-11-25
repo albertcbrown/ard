@@ -78,3 +78,20 @@ func TestOverrideNeverTouchesConfigFile(t *testing.T) {
 		t.Error("config file changed")
 	}
 }
+
+func TestWiringLogsOverride(t *testing.T) {
+	var buf bytes.Buffer
+	w := &wiring{Log: slog.New(slog.NewTextHandler(&buf, nil))}
+	w.initSlots()
+	w.slots.Set(5, 3)
+	if got := w.reloadMax(3); got != 5 {
+		t.Fatalf("reloadMax = %d, want 5", got)
+	}
+	if got := w.reloadMax(4); got != 4 {
+		t.Fatalf("reloadMax after config change = %d, want 4", got)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "pool.max_override") || !strings.Contains(out, "config_changed") || !strings.Contains(out, "reason=key") {
+		t.Errorf("log: %s", out)
+	}
+}

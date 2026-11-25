@@ -81,3 +81,10 @@ func (s *slotOverride) Active(cfgMax int) (int, bool) {
 	n := s.effectiveLocked(cfgMax)
 	return n, s.n != 0
 }
+
+// initSlots wires the serve logger into the slot override so that
+// pool.max_override is logged in a real run.
+func (w *wiring) initSlots() { w.slots.log = w.Log }
+
+// reloadMax is the cap for the pool after a config (re)load.
+func (w *wiring) reloadMax(cfgMax int) int { return w.slots.Effective(cfgMax) }
