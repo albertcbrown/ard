@@ -104,7 +104,7 @@ func TestRunWithUI(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	stopped := false
 	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	err := runWithUI(ctx, func(c context.Context) error { <-c.Done(); stopped = true; return nil }, take, "o/r", "", nil, io.Discard)
+	err := runWithUI(ctx, func(c context.Context) error { <-c.Done(); stopped = true; return nil }, take, nil, "o/r", "", nil, io.Discard)
 	if err != nil || !stopped {
 		t.Errorf("err %v stopped %v", err, stopped)
 	}
@@ -113,7 +113,7 @@ func TestRunWithUI(t *testing.T) {
 	stopped = false
 	done := make(chan error, 1)
 	go func() {
-		done <- runWithUI(context.Background(), func(c context.Context) error { <-c.Done(); stopped = true; return nil }, take, "o/r", "", nil, io.Discard)
+		done <- runWithUI(context.Background(), func(c context.Context) error { <-c.Done(); stopped = true; return nil }, take, nil, "o/r", "", nil, io.Discard)
 	}()
 	time.Sleep(20 * time.Millisecond)
 	fp.Send(tea.Quit())

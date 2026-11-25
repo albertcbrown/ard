@@ -143,7 +143,7 @@ func Render(m Model) string {
 
 	if m.help {
 		lines = append(lines, headStyle.Render("Help"),
-			"?  toggle help", "j/k, arrows  select issue", "o  open selected issue in the browser", "q  quit (asks first)", "ctrl+c  stop now")
+			"?  toggle help", "j/k, arrows  select issue", "o  open selected issue in the browser", "a  approve the selected issue (asks first)", "q  quit (asks first)", "ctrl+c  stop now")
 	}
 
 	room := h - len(lines) - len(tail) - 2 // issues heading and footer
@@ -173,9 +173,23 @@ func Render(m Model) string {
 	}
 	lines = append(lines, tail...)
 
-	footer := "? help  j/k select  o open  q quit"
+	footer := "? help  j/k select  o open  a approve  q quit"
+	if m.status != "" {
+		footer = m.status
+	}
 	if m.confirmQuit {
 		footer = "quit? y/n"
+	}
+	if q := m.confirmApprove; q != nil {
+		lines = []string{
+			titleStyle.Render("Approve issue #" + fmt.Sprint(q.Issue)),
+			Trunc("title: "+Clean(q.Title), w),
+			Trunc("worker: "+Clean(q.Role), w),
+			Trunc("plan: "+Clean(q.PlanURL), w),
+			"",
+			warnStyle.Render("Approve? [y/N]"),
+		}
+		footer = "y approve  any other key cancels"
 	}
 	if len(lines) > h-1 {
 		lines = lines[:h-1]
