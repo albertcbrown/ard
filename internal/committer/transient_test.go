@@ -20,6 +20,7 @@ type flaky struct {
 	Effects
 	fail, pushes int
 	landed       bool
+	onFail       func() // called when a transient error is about to be returned
 }
 
 func (f *flaky) Push(ctx context.Context, op effects.PushOp) error {
@@ -32,6 +33,9 @@ func (f *flaky) Push(ctx context.Context, op effects.PushOp) error {
 		if err := f.Effects.Push(ctx, op); err != nil {
 			return err
 		}
+	}
+	if f.onFail != nil {
+		f.onFail()
 	}
 	return fmt.Errorf("gitx: push: %w: remote: Internal Server Error", effects.ErrTransient)
 }
@@ -108,12 +112,16 @@ func TestTransientIndependentOfRejections(t *testing.T) {
 func TestTransientCancelledInBackoff(t *testing.T) {
 	e := newEnv(t)
 	e.cfg.Backoff = func(int) time.Duration { return time.Hour }
-	c := e.main(t, &flaky{Effects: e.live(), fail: 1000})
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	f := &flaky{Effects: e.live(), fail: 1000, onFail: cancel}
+	c := e.main(t, f)
 	_, err := c.Commit(ctx, req(12, "issue.md", "mine"))
-	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrTransient) {
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrTransient) {
 		t.Fatalf("err = %v", err)
+	}
+	if f.pushes != 1 {
+		t.Fatalf("pushes = %d, want 1", f.pushes)
 	}
 }
 
