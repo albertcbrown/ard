@@ -18,24 +18,28 @@ findings:
     blocking: false
     message: |
       plan.md's test plan lists "the log lacks the key and Authorization". TestPost does not test it.
-      The server's ErrorLog is discarded, so the property probably holds, but nothing asserts it. A short test that captures the logger output would pin it.
+      The server's ErrorLog is discarded, so the property probably holds, but nothing asserts it.
   - file: "internal/jobexec/exec.go"
     line: 152
     severity: low
     blocking: false
     message: |
-      The `finish` failure paths (Sync and write errors) and the `128+signal` branch of `exitCode` are never executed by the tests.
-      The common paths are covered, so this does not block.
+      The `finish` failure paths (Sync and write errors) and the `128+signal` branch of `exitCode` are never executed by the tests. The common paths are covered.
   - file: "internal/jobpre/pre.go"
     line: 243
     severity: low
     blocking: false
     message: |
-      `installBinary` error paths and the `History` plus `Sidecar` failure paths are untested (about 60% coverage on this function). Low risk.
+      `installBinary` error paths and the `History` plus `Sidecar` failure paths are untested. Low risk.
 ---
-The change matches plan.md: three hidden commands, `CheckoutTree`, handler wiring and docs. The core paths (pre layout and exit codes, exec deadline, kill and marker, post auth/409/429) are all tested. The only notable gap is a swallowed `Pack` error in job-post, which does not block.
+The change still matches plan.md: three hidden commands, `CheckoutTree`, handler wiring and docs. The core paths are tested, so I approve. The worker pushed only a merge of main since the last round, and none of the earlier non-blocking findings were addressed.
 
 ## Checks
-- Lint: `make lint` runs `go vet ./...` and `gofmt -l .`. The only complaint was `internal/roles/testdata/docs/skips/src/_x.go`, a testdata file this change did not touch.
-- Tests: `go test` on gitx, cli, jobpre, jobexec, jobpost, cmd/ard and docscheck all pass.
-- Diff coverage (from `go test -cover`): jobpre 79%, jobexec 84%, jobpost 93%, cli 95%, gitx 81%. Uncovered lines are the error paths listed in the findings. `CheckoutTree` is 60%, only the error returns. Hooks are disabled by the git runner's `core.hooksPath=/dev/null`, and `TestCheckoutTree` asserts that.
+- Lint: not re-run. The only change since the last round is a merge of main. Last round `make lint` (go vet and gofmt) flagged only an untouched testdata file.
+- Tests and diff coverage: not re-run, for the same reason. Last round's `go test -cover` showed jobpre 79%, jobexec 84%, jobpost 93%, cli 95% and gitx 81%, with the uncovered lines being the error paths listed in the findings.
+
+## Previous findings
+- internal/jobpost/post.go (discarded `Pack` error): still present
+- internal/jobpost/post_test.go (log lacks key and Authorization untested): still present
+- internal/jobexec/exec.go (`finish` failure paths and `exitCode` signal branch untested): still present
+- internal/jobpre/pre.go (`installBinary` and related failure paths untested): still present
