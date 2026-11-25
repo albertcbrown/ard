@@ -15,7 +15,7 @@ ard makes a GitHub repository maintain itself. One `ard` process per repository 
 
 ## The `ard:` labels
 
-GitHub labels prefixed `ard:` are the queue and the state machine. Most follow `ard:<stage>:<role>[:<state>]`, for example `ard:triage:lead:requested`. Run `ard labels sync` to create them. The ones you will touch:
+GitHub labels prefixed `ard:` are the queue and the state machine. Most follow `ard:<stage>:<role>[:<state>]`, for example `ard:triage:lead:requested`. Run `ard setup` to create them. The ones you will touch:
 
 | Label | Meaning |
 | --- | --- |
