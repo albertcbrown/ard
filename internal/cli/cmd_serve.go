@@ -52,6 +52,19 @@ func newServe(app *App) *cobra.Command {
 	f.DurationVar(&k.ResultGrace, "k8s-result-grace", envDur("ARD_K8S_RESULT_GRACE", 2*time.Minute), "executor k8s: grace for the result to arrive after the agent ends (env ARD_K8S_RESULT_GRACE)")
 	cmd.Flags().StringSliceVar(&opts.Loops, "loops", nil,
 		"run only these controller loops (comma-separated: scanners, stale, triage, workers, reviewers, reviewfix, merger, janitor, reaper); default every loop")
+	var ui, noUI bool
+	f.BoolVar(&ui, "ui", false, "draw the read-only command center (default: only when stdin and stdout are a terminal)")
+	f.BoolVar(&noUI, "no-ui", false, "never draw the command center; keep the plain log output")
+	cmd.MarkFlagsMutuallyExclusive("ui", "no-ui")
+	cmd.PreRunE = func(*cobra.Command, []string) error {
+		switch {
+		case ui:
+			opts.UI = "on"
+		case noUI:
+			opts.UI = "off"
+		}
+		return nil
+	}
 	return cmd
 }
 
