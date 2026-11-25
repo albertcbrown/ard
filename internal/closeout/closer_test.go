@@ -706,3 +706,34 @@ func TestTriageRolesOnlyClosedDone(t *testing.T) {
 		t.Errorf("other issue = %v, %v; want none", got, err)
 	}
 }
+
+func TestRunWorkerNeedsNetwork(t *testing.T) {
+	e := newEnv(t)
+	e.write(".ard/7/worker-engineer.md", roleFile("engineer", "needs-network",
+		"network:\n  - what: the spec\n    url: https://example.com/spec\n    why: to read it"))
+	j := e.claim(StageWorker, "engineer")
+	j.Worker = &WorkerResult{Tests: TestsPassed}
+	prBefore := e.labels(9)
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out != OutcomeNeedsNetwork {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	l := e.labels(7)
+	if !l["ard:needs-human"] || l["ard:worker:engineer:running"] || l["ard:worker:engineer:done"] || l["ard:review:eng-review"] {
+		t.Errorf("issue labels = %v", l)
+	}
+	if l := e.labels(9); fmt.Sprint(l) != fmt.Sprint(prBefore) {
+		t.Errorf("PR labels = %v, were %v", l, prBefore)
+	}
+	cs, _ := e.gh.ListComments(context.Background(), 7, timeZero)
+	if len(cs) != 1 || !strings.Contains(cs[0].Body, "https://example.com/spec") {
+		t.Errorf("comments = %+v", cs)
+	}
+	for _, files := range e.cm.commits {
+		for p := range files {
+			if !strings.HasPrefix(p, ".ard/") {
+				t.Errorf("committed %s outside .ard/", p)
+			}
+		}
+	}
+}

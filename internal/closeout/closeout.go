@@ -21,7 +21,8 @@ import (
 
 // recordVersion stays 1 across the Reaper's additions (Job.Cause, Plan.Tail,
 // Plan.TailWithheld, Plan.KeepUntil) and the usage-limit ones (Cause.Family,
-// Cause.ResetsAt, OutcomeLimited) and the network one (Plan.Network, OutcomeNeedsNetwork) and Job.Home: older records decode them as zero, and
+// Cause.ResetsAt, OutcomeLimited) and the network one (Plan.Network,
+// OutcomeNeedsNetwork) and Job.Home: older records decode them as zero, and
 // zero means the earlier behaviour.
 const recordVersion = 1
 
