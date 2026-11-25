@@ -40,7 +40,7 @@ type Store interface {
 	AppendEvent(ctx context.Context, e state.Event) error
 }
 
-// Executor is the part of the executor the Reaper uses (*local.Local).
+// Executor is the part of the executor the Reaper uses (*local.Local or *kube.Executor).
 type Executor interface {
 	Cleaner
 	Status(ctx context.Context, h executor.Handle) (executor.Status, error)

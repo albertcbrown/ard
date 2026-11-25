@@ -87,6 +87,9 @@ func TestExecJob(t *testing.T) {
 	if got.ID != "J" || got.RoleDir != "/repo/.ard/reviewers/r" || got.Dockerfile != "/repo/.ard/reviewers/r/Dockerfile" || got.Timeout != 7*time.Minute {
 		t.Errorf("job = %+v", got)
 	}
+	if got.RoleSource.Path != ".ard/reviewers/r" || got.RoleSource.SHA != cfg.SHA {
+		t.Errorf("role source = %+v", got.RoleSource)
+	}
 	if got.Sidecar.Name != "" {
 		t.Errorf("sidecar = %+v", got.Sidecar)
 	}

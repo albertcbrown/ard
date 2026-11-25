@@ -32,7 +32,10 @@ import (
 	"github.com/albertcbrown/ard/internal/digest"
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/executor"
+	"github.com/albertcbrown/ard/internal/executor/kube"
+	"github.com/albertcbrown/ard/internal/executor/kube/api"
 	"github.com/albertcbrown/ard/internal/executor/local"
+	"github.com/albertcbrown/ard/internal/executor/workspace"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/janitor"
@@ -61,6 +64,9 @@ type deps struct {
 	// is set: deterministic scanners run, and a job that needs one fails
 	// through Model.Require.
 	Model modelauth.Credential
+	// Auth is the GitHub credential; the k8s executor mints scoped read
+	// tokens from it. nil in tests that do not need one.
+	Auth github.Auth
 }
 
 // builder constructs deps for repo. stateDir is where a dry-run ledger goes.
@@ -71,11 +77,11 @@ var gitBin = ""
 
 // Serve is the handler behind `ard serve`.
 func Serve(ctx context.Context, e *cli.Env, o cli.ServeOpts) error {
-	return serveLoops(ctx, e, buildDeps, o.Loops)
+	return serveLoops(ctx, e, buildDeps, o.Loops, o.K8s)
 }
 
 func serve(ctx context.Context, e *cli.Env, build builder) error {
-	return serveLoops(ctx, e, build, nil)
+	return serveLoops(ctx, e, build, nil, cli.K8sOpts{})
 }
 
 // loopNames lists the names of loops, for the serve.loops log line.
@@ -122,7 +128,7 @@ var dockerProbe = func(ctx context.Context) ([]byte, error) {
 	return exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
 }
 
-func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []string) error {
+func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []string, k8s cli.K8sOpts) error {
 	if _, err := selectLoops(nil, wantLoops); err != nil {
 		return err
 	}
@@ -236,7 +242,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	w := &wiring{
 		AgentImage: agentImage, Log: log, Reader: d.Reader, Effects: d.Effects, Store: store, MaxPods: config.DefaultMaxPods,
 		Repo: repo, Root: clone, Home: home, RemoteURL: d.RemoteURL, Token: d.Token, Scanners: scanners, Model: d.Model,
-		StateDir: stateDir, Started: time.Now(),
+		StateDir: stateDir, Started: time.Now(), K8s: k8s, Auth: d.Auth,
 	}
 	defer w.closeAll()
 	paths, perr := newPathRedactor(w.hostPaths())
@@ -255,6 +261,13 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	} else {
 		w.MaxPods = cfg.MaxPods
 		w.cfg.Store(cfg)
+		// A k8s serve that cannot build its executor (a PAT cannot mint
+		// scoped tokens, a missing flag) must not start.
+		if cfg.Executor == "k8s" {
+			if _, err := w.newExecutor(); err != nil {
+				return &cli.ExitError{Code: 1, Err: fmt.Errorf("ard serve: %w", err)}
+			}
+		}
 	}
 	// A scan can outlast a pause, so the scanners re-check after it. The
 	// check fails closed, like the gate's own.
@@ -276,6 +289,9 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 		Config: func(ctx context.Context) (*config.Resolved, error) {
 			c, err := loader.Load(ctx)
 			if err != nil {
+				return nil, err
+			}
+			if err := w.checkExecutor(c); err != nil {
 				return nil, err
 			}
 			w.cfg.Store(c)
@@ -306,6 +322,9 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 				var cl workspaceCleaner
 				if ex, err := w.newExecutor(); err == nil {
 					cl = ex
+					if err := sweepOrphans(ctx, ex, store, log); err != nil {
+						return err
+					}
 				}
 				if err := failStaleScannerJobs(ctx, store, cl, log); err != nil {
 					return err
@@ -391,13 +410,23 @@ type wiring struct {
 	mc     *lazyCommitter
 	br     *lazyBranches
 	cl     *closeout.Closer
-	exec   *local.Local
-	fin    *reaper.Finisher
-	rp     *reaper.Reaper
-	lim    *limits.Book
+	exec   jobExecutor
+	// mode is the executor chosen at the first build ("local" or "k8s"); it
+	// is fixed for the life of the process.
+	mode string
+	// K8s are the cluster settings (--k8s-*); Auth mints the pods' read tokens.
+	K8s  cli.K8sOpts
+	Auth github.Auth
+	// newKube builds the cluster client; tests replace it with a fake.
+	// nil means newKubeClient.
+	newKube          func() (api.Client, error)
+	unresolvedLogged bool
+	fin              *reaper.Finisher
+	rp               *reaper.Reaper
+	lim              *limits.Book
+	bgt              *budget.Gate
 	// snap takes snapshots for the command center (#413); nothing renders it yet.
 	snap *snapshot.Taker
-	bgt  *budget.Gate
 	// budgetNow is the budget gate's clock; nil means time.Now (tests set it).
 	budgetNow func() time.Time
 
@@ -437,29 +466,193 @@ func (w *wiring) hostPaths() closeout.HostPaths {
 // EnvAgentImage is the host setting naming the default agent image.
 const EnvAgentImage = "ARD_AGENT_IMAGE"
 
-// newExecutor builds the local executor every loop uses; its host-mode hook
+// jobExecutor is the executor every loop shares: *local.Local or *kube.Executor.
+type jobExecutor interface {
+	executor.Executor
+	Prune(ctx context.Context, olderThan time.Duration) error
+}
+
+// errModeUnknown means the executor mode is not known yet: no config has
+// loaded and the cluster flags are set, so it may be k8s.
+var errModeUnknown = errors.New("executor mode unknown: no config has loaded yet")
+
+// newKubeClient is the in-cluster client. A variable so tests inject a fake.
+var newKubeClient = func() (api.Client, error) { return api.InCluster(api.RESTOptions{}) }
+
+func (w *wiring) k8sFlagsSet() bool {
+	k := w.K8s
+	return k.Namespace != "" || k.Instance != "" || k.AgentImage != "" || k.PodImage != ""
+}
+
+// normMode maps a config's executor to "local" or "k8s"; a Resolved built by
+// hand in a test may leave it empty.
+func normMode(m string) string {
+	if m == "" {
+		return "local"
+	}
+	return m
+}
+
+// checkExecutor refuses a config whose executor differs from the one this
+// process started with: the mode is fixed until restart, so serve pauses. A
+// k8s config that arrives before any executor exists builds it here, so a
+// build error (a PAT) pauses serve with that message.
+func (w *wiring) checkExecutor(c *config.Resolved) error {
+	w.initMu.Lock()
+	mode := w.mode
+	w.initMu.Unlock()
+	if mode != "" && normMode(c.Executor) != mode {
+		return fmt.Errorf("executor changed from %s to %s; restart ard serve", mode, normMode(c.Executor))
+	}
+	if mode == "" && normMode(c.Executor) == "k8s" {
+		w.cfg.Store(c)
+		if _, err := w.newExecutor(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// newExecutor builds the executor every loop uses; its host-mode hook
 // appends a state.EventHostUntrusted row to the controller database. Every
 // loop that runs jobs (scanners, and later triage, workers and reviewers)
 // must build its executor here, so host-mode warnings are recorded.
 //
 // There is one executor per process: it tracks the jobs it started, and the
 // Reaper must ask the same instance that the loops used. A build failure is
-// not cached.
-func (w *wiring) newExecutor() (*local.Local, error) {
+// not cached. The mode comes from the first loaded config (executor: local or
+// k8s) and never changes. Before any config loads the mode is local, unless
+// the cluster flags are set: then it is errModeUnknown.
+func (w *wiring) newExecutor() (jobExecutor, error) {
 	w.initMu.Lock()
 	defer w.initMu.Unlock()
 	if w.exec != nil {
 		return w.exec, nil
 	}
-	ex, err := local.New(local.Options{
-		Root: w.ardRoot(), AgentImage: w.AgentImage, Log: w.Log, SidecarToken: w.Token, CloneDir: w.Root,
-		OnHostUntrusted: recordHostUntrusted(w.Store),
-	})
+	mode := w.mode
+	if mode == "" {
+		if c := w.cfg.Load(); c != nil {
+			mode = normMode(c.Executor)
+		} else if w.k8sFlagsSet() {
+			if !w.unresolvedLogged {
+				w.unresolvedLogged = true
+				w.Log.Error("serve.executor_unresolved", "hint", "no config loaded; job loops stay off until restart")
+			}
+			return nil, errModeUnknown
+		} else {
+			mode = "local"
+		}
+	}
+	var ex jobExecutor
+	var err error
+	switch mode {
+	case "local":
+		ex, err = local.New(local.Options{
+			Root: w.ardRoot(), AgentImage: w.AgentImage, Log: w.Log, SidecarToken: w.Token, CloneDir: w.Root,
+			OnHostUntrusted: recordHostUntrusted(w.Store),
+		})
+	case "k8s":
+		ex, err = w.newKubeExecutor()
+	default:
+		err = fmt.Errorf("unknown executor %q", mode)
+	}
 	if err != nil {
 		return nil, err
 	}
-	w.exec = ex
+	w.exec, w.mode = ex, mode
 	return ex, nil
+}
+
+// newKubeExecutor builds the Kubernetes executor from the --k8s-* settings.
+func (w *wiring) newKubeExecutor() (jobExecutor, error) {
+	minter, err := github.ScopedMinter(w.Auth)
+	if err != nil {
+		return nil, fmt.Errorf("executor k8s needs a GitHub App credential: %w", err)
+	}
+	k := w.K8s
+	for _, m := range []struct{ flag, v string }{
+		{"--k8s-namespace", k.Namespace}, {"--k8s-instance", k.Instance},
+		{"--k8s-agent-image", k.AgentImage}, {"--k8s-pod-image", k.PodImage},
+	} {
+		if m.v == "" {
+			return nil, fmt.Errorf("executor k8s: %s is required", m.flag)
+		}
+	}
+	for _, im := range []string{k.AgentImage, k.PodImage} {
+		if err := executor.CheckImageRef(im); err != nil {
+			return nil, err
+		}
+	}
+	res, err := parseResources(k.Resources)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := workspace.New(workspace.Options{Root: w.ardRoot(), Git: local.ExecGit(""), SidecarToken: w.Token,
+		CloneDir: w.Root, Log: w.Log})
+	if err != nil {
+		return nil, err
+	}
+	mk := w.newKube
+	if mk == nil {
+		mk = newKubeClient
+	}
+	client, err := mk()
+	if err != nil {
+		return nil, fmt.Errorf("executor k8s: %w", err)
+	}
+	return kube.New(kube.Options{
+		Client: client, Tokens: minter, WS: ws, Namespace: k.Namespace, Instance: k.Instance,
+		Repo: w.Repo.String(), AgentImage: k.AgentImage, PodImage: k.PodImage, GitBase: k.GitBase,
+		Resources: res, PreBudget: k.PreBudget, ResultGrace: k.ResultGrace,
+		Policy: executor.EnvPolicy{
+			AllowEnv:   map[string]bool{"ANTHROPIC_API_KEY": true, "CLAUDE_CODE_OAUTH_TOKEN": true},
+			AllowFixed: map[string]bool{"CLAUDE_CONFIG_DIR": true, "DISABLE_AUTOUPDATER": true, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": true, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": true},
+		},
+		ConfigDirEnv: "CLAUDE_CONFIG_DIR", Log: w.Log,
+	})
+}
+
+// parseResources applies --k8s-resources to the defaults. Keys: cpu and
+// memory set the agent's requests, memory-limit its memory limit and
+// ephemeral-storage its ephemeral-storage limit.
+func parseResources(s string) (kube.Resources, error) {
+	r := kube.DefaultResources()
+	if strings.TrimSpace(s) == "" {
+		return r, nil
+	}
+	for _, kv := range strings.Split(s, ",") {
+		k, v, ok := strings.Cut(strings.TrimSpace(kv), "=")
+		if !ok || v == "" {
+			return r, fmt.Errorf("--k8s-resources: %q is not name=quantity", kv)
+		}
+		switch k {
+		case "cpu", "memory":
+			r.Agent.Requests[k] = v
+		case "memory-limit":
+			r.Agent.Limits["memory"] = v
+		case "ephemeral-storage":
+			r.Agent.Limits[k] = v
+		default:
+			return r, fmt.Errorf("--k8s-resources: unknown name %q (cpu, memory, memory-limit, ephemeral-storage)", k)
+		}
+	}
+	return r, nil
+}
+
+// environ is the process environment plus the executor's live job tokens
+// (ARD_K8S_TOKEN_<n>), so they are masked in close-out text and logs like any
+// other secret. The name matches the redactor's secret-name rule.
+func (w *wiring) environ() []string {
+	env := os.Environ()
+	w.initMu.Lock()
+	ex := w.exec
+	w.initMu.Unlock()
+	if sx, ok := ex.(interface{ Secrets() []string }); ok {
+		for i, v := range sx.Secrets() {
+			env = append(env, fmt.Sprintf("ARD_K8S_TOKEN_%d=%s", i, v))
+		}
+	}
+	return env
 }
 
 // recordHostUntrusted returns the executor hook that appends a
@@ -590,7 +783,7 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 	if err != nil {
 		return deps{}, fmt.Errorf("ard serve: %w", err)
 	}
-	d := deps{Reader: rd, Effects: fx, Token: auth.Token, RemoteURL: fmt.Sprintf("https://github.com/%s.git", repo), Model: model}
+	d := deps{Reader: rd, Effects: fx, Token: auth.Token, Auth: auth, RemoteURL: fmt.Sprintf("https://github.com/%s.git", repo), Model: model}
 	if c, ok := fx.(interface{ Close() error }); ok {
 		d.Close = c.Close
 	}

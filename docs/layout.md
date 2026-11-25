@@ -34,7 +34,7 @@ internal/costs/             the costs Loop: writes each dirty issue's cost table
 internal/scanner/stale/     the stale closer: a plain controller Loop that comments and closes untouched scanner issues
 internal/agentjob/          helpers the agent loops share: untrusted-input snapshot, admission re-check, agent command and executor job builders, handle save, shutdown-aware wait, post-once
 internal/worker/            the worker loop: claim, agent/test/fix steps, diff guard, code-lane push, draft PR, FinishWith
-internal/servecmd/          `ard serve` and `ard rebuild-state`: dependency wiring (lock, state, effects, pool adoption, controller); registerLoops takes one line per loop
+internal/servecmd/          `ard serve` and `ard rebuild-state`: dependency wiring (lock, state, effects, pool adoption, controller); registerLoops takes one line per loop; picks the local or Kubernetes executor from `executor:` and sweeps orphan pods at startup
 internal/redact/            log redaction (secrets and host paths), secret scan and 1 MiB cap (leaf library; close-out commits only LogResult.Clean)
 internal/roles/             starter .ard/ tree (config.yaml, role dirs) embedded for ard init (scanners/cve, scanners/docs, scanners/error-codes, scanners/lint, scanners/missing-tests, scanners/trufflehog, scanners/trufflehog-history, triage/lead, triage/engineer, workers/engineer, reviewers/eng-review, reviewers/license-review, reviewers/security-review)
 internal/pool/              slot arbiter for max_pods (stdlib only, no I/O): priority classes, per-issue triage cap; Stats also reports recent limited/budget refusals per role (display only, no demand)

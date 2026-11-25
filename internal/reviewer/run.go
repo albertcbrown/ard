@@ -181,6 +181,8 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		log.Error("review.prepare_failed", "error", err)
 		if errors.Is(err, executor.ErrClone) {
 			finish(executor.Handle{}, executor.Status{}, agent.Result{}, cause(closeout.CauseCloneFail, "could not clone the repository", true))
+		} else if errors.Is(err, executor.ErrInputsTooLarge) {
+			finish(executor.Handle{}, executor.Status{}, agent.Result{}, cause(closeout.CauseInputsTooLarge, executor.InputsTooLargeDetail, false))
 		} else {
 			finish(executor.Handle{}, executor.Status{}, agent.Result{}, cause(closeout.CauseNoProcess, "could not prepare the job", false))
 		}
