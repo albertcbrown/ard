@@ -3,18 +3,26 @@ role: engineer
 status: done
 attempt: 1
 ---
-Switches the network inputs back-route on: an engineer `done` in a network round re-arms the lead, the lead re-opens the other triage roles, the gate holds for the engineer's declared inputs, and a network round always needs a fresh approval.
+Addresses the review findings on the network inputs back-route (re-arm, persisted round state, inputs gate, per-round approval): adds the missing "waiting for inputs" status-issue count and the tests the plan named for the persisted round state, approval markers, gate paths and lead re-claim.
 
 ## Changes
-- `internal/closeout`: round detection now keys off the plan from the prepared phase on (fail-closed after a crash); new `NetworkRoundOpen`, `NetworkRoundCount`, `LeadRerun`, `InputsOf`; `NetworkState` and `Plan` gain `Round`/`Done`/`Rerun`, `Rearmed`, `Clear`, `Inputs` (all omitempty, no version bump). `Prepare` persists the round state; `Build` stays pure. `request` removes `Plan.Clear` labels (404 is success) before adding requests. `inputs:` frontmatter (triage engineer only, max 10, https URLs) is taken from the redacted parse; an unreadable list ends `needs-human`.
-- `internal/triage`: new `inputs.go` (path check, `decideInputs`, per-tick main SHA, SHA-keyed entry cache, waiting comment); `fanin.go` gates inputs and uses `rounds > 0` to force approval, with a `round=<n>` marker suffix; new `Deps.MainSHA`/`MainEntry`.
-- `internal/gitx/local.go`: `EntryAt` (ls-tree entry, no content). `internal/servecmd`: wires `Network` into the closer (bounce on) and the two main readers.
-- Engineer prompt starter and `docs/proposal.md` document `inputs:`, the re-run and the approval rules.
+- `internal/triage/inputs.go`, `loop.go`: the gate records one `wait` gate event when it starts waiting for inputs and an `inputs-ready` event when they land. The triage `Store` interface gains `Events`.
+- `internal/digest/`: the daily status-issue digest shows a "Waiting for inputs" count (open issues whose newest gate event is the wait); absent when zero.
+- `docs/proposal.md`: label state machine and status-issue notes for the round.
+- Tests: `internal/closeout/round_test.go` (new), `internal/triage/{inputs,intake,harness,loop}_test.go`, `internal/digest/digest_test.go`.
 
 ## Testing
-`go test` on closeout, triage, gitx, servecmd, docscheck and roles pass; `gofmt` clean. `go vet ./...` only reports an existing testdata file that does not parse. Added tests for the re-arm and lead re-run labels, the round-open and `LeadRerun` logic (including an unclosed worker record), Clear ordering with a 404, the `inputs:` parser, path checks, `decideInputs` (symlink, submodule, size, worker without network), and the gate holding, posting once, then asking for approval with `require_approval: false`. I changed the old rounds test, which asserted that an unclosed record does not count.
+Ran `go vet` and `go test` for closeout, triage, digest, servecmd, roles, docscheck and state; all pass (`make lint test` as a whole timed out here, and `go vet ./...` trips on a parse error in roles testdata, unrelated).
+Added: `TestPrepareRoundOpen` (closed and unclosed worker record; persisted round state, plan, labels), `TestPrepareNoRoundNoRearm`, `TestRearmConsumedByFirstEngineerDone`, `TestResumeReplaysRound` (store changed after a crash; Resume uses the stored plan), `TestInputsRedacted`, `TestInputsLostNeedsHuman`, `TestInputsOfAndNetworkRoundCount`; `TestApprovalMarkerPerRound`, `TestRerunBeforeGate`, `TestGateMainReadErrorWaits`, `TestGateInputSymlinkSubmodule`, `TestMainReadOncePerTickAndCacheDropsOnNewSHA`, `TestStatusEventsWaitingForInputs`, `TestRearmedLeadReclaimed` (default and custom intake label modes, edited body), `TestWaitingForInputsCounter`.
+
+## Review findings
+- `internal/closeout/prepare.go:251` (round state tests): fixed: tests above.
+- `internal/triage/fanin.go:451` (approval per round tests): fixed: `TestApprovalMarkerPerRound` and related.
+- `internal/triage/inputs.go:151` (status issue): fixed: gate events plus digest counter and test.
+- `internal/triage/inputs.go:108` (gate paths): fixed: tests above.
+- `internal/closeout/network.go:164` (InputsOf coverage): fixed: `TestInputsOfAndNetworkRoundCount`.
+- `internal/triage/intake.go` (re-claim test): fixed: `TestRearmedLeadReclaimed`. `TestCloserHasNetwork` in servecmd: not changed: the Closer does not expose its deps and a behavioural test needs a full git worktree; the wiring is one line in `reaping.go`.
+- `docs/proposal.md`: fixed: added state-machine and status-issue notes (re-arm, persisted state, Clear, gate and approval were already described).
 
 ## Open issues
-- Not done: the status issue's "waiting for inputs" line (the renderer was not located) and the intake test for a re-armed lead being re-claimed. No separate Resume or servecmd test was added.
-- The main fetch for inputs is once per tick, but `planExists` still fetches per issue.
-- The live prompt under `.ard/triage/` is protected; a human must update it to match the starter copy.
+- The status count is derived from gate events, so a closed issue that was waiting is excluded only because the digest lists open issues.
