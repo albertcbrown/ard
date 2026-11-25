@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
+	gogh "github.com/google/go-github/v88/github"
 )
 
 // EnvNames lists every environment variable that carries GitHub credentials.
@@ -316,3 +318,25 @@ func (a *AppAuth) DiscoverInstallation(ctx context.Context, repo Repo, baseURL s
 
 // DefaultAPIBaseURL is the public GitHub API root.
 func DefaultAPIBaseURL() string { return defaultBaseURL }
+
+// IsTransientToken reports whether a token mint or refresh error comes from the
+// network or a 5xx response, not from a refusal.
+func IsTransientToken(err error) bool {
+	var ne net.Error
+	var sc interface{ StatusCode() int }
+	var he *ghinstallation.HTTPError
+	var er *gogh.ErrorResponse
+	switch {
+	case err == nil:
+		return false
+	case errors.As(err, &ne), errors.Is(err, io.ErrUnexpectedEOF):
+		return true
+	case errors.As(err, &he):
+		return he.Response != nil && he.Response.StatusCode >= 500
+	case errors.As(err, &er):
+		return er.Response != nil && er.Response.StatusCode >= 500
+	case errors.As(err, &sc):
+		return sc.StatusCode() >= 500
+	}
+	return false
+}

@@ -3,15 +3,11 @@ package gitx
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/url"
 	"strings"
 
-	"github.com/bradleyfalzon/ghinstallation/v2"
-	gogh "github.com/google/go-github/v88/github"
+	"github.com/albertcbrown/ard/internal/github"
 )
 
 // CommitOp commits what is already staged in Dir.
@@ -125,25 +121,7 @@ func classifyTransient(stderr string) bool {
 
 // tokenTransient reports whether a token mint or refresh error comes from the
 // network or a 5xx, not from a refusal.
-func tokenTransient(err error) bool {
-	var ne net.Error
-	var sc interface{ StatusCode() int }
-	var he *ghinstallation.HTTPError
-	var er *gogh.ErrorResponse
-	switch {
-	case err == nil:
-		return false
-	case errors.As(err, &ne), errors.Is(err, io.ErrUnexpectedEOF):
-		return true
-	case errors.As(err, &he):
-		return he.Response != nil && he.Response.StatusCode >= 500
-	case errors.As(err, &er):
-		return er.Response != nil && er.Response.StatusCode >= 500
-	case errors.As(err, &sc):
-		return sc.StatusCode() >= 500
-	}
-	return false
-}
+func tokenTransient(err error) bool { return github.IsTransientToken(err) }
 
 // pushEnv passes the credential to git through the environment (never argv,
 // which is visible in the process list).
