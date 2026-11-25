@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -93,31 +93,33 @@ func (f *fakeProgram) Send(m tea.Msg) {
 func TestRunWithUI(t *testing.T) {
 	old := newProgram
 	defer func() { newProgram = old }()
-	var fp *fakeProgram
+	progs := make(chan *fakeProgram, 2)
 	newProgram = func(tea.Model, io.Reader, io.Writer) program {
-		fp = &fakeProgram{quit: make(chan struct{})}
+		fp := &fakeProgram{quit: make(chan struct{})}
+		progs <- fp
 		return fp
 	}
 	take := func(context.Context) snapshot.Snapshot { return snapshot.Snapshot{} }
 
 	// SIGINT path: ctx canceled, the controller stops gracefully.
 	ctx, cancel := context.WithCancel(context.Background())
-	stopped := false
-	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	err := runWithUI(ctx, func(c context.Context) error { <-c.Done(); stopped = true; return nil }, take, nil, nil, "o/r", "", nil, io.Discard)
-	if err != nil || !stopped {
-		t.Errorf("err %v stopped %v", err, stopped)
+	var stopped atomic.Bool
+	cancel()
+	err := runWithUI(ctx, func(c context.Context) error { <-c.Done(); stopped.Store(true); return nil }, take, nil, nil, "o/r", "", nil, io.Discard)
+	if err != nil || !stopped.Load() {
+		t.Errorf("err %v stopped %v", err, stopped.Load())
 	}
+	<-progs
 
 	// UI quit path: the controller is canceled and waited for.
-	stopped = false
+	stopped.Store(false)
 	done := make(chan error, 1)
 	go func() {
-		done <- runWithUI(context.Background(), func(c context.Context) error { <-c.Done(); stopped = true; return nil }, take, nil, nil, "o/r", "", nil, io.Discard)
+		done <- runWithUI(context.Background(), func(c context.Context) error { <-c.Done(); stopped.Store(true); return nil }, take, nil, nil, "o/r", "", nil, io.Discard)
 	}()
-	time.Sleep(20 * time.Millisecond)
+	fp := <-progs
 	fp.Send(tea.Quit())
-	if err := <-done; err != nil || !stopped {
-		t.Errorf("err %v stopped %v", err, stopped)
+	if err := <-done; err != nil || !stopped.Load() {
+		t.Errorf("err %v stopped %v", err, stopped.Load())
 	}
 }
