@@ -10,6 +10,9 @@ import (
 	"github.com/albertcbrown/ard/internal/cli"
 	"github.com/albertcbrown/ard/internal/configcmd"
 	"github.com/albertcbrown/ard/internal/initcmd"
+	"github.com/albertcbrown/ard/internal/jobexec"
+	"github.com/albertcbrown/ard/internal/jobpost"
+	"github.com/albertcbrown/ard/internal/jobpre"
 	"github.com/albertcbrown/ard/internal/labels/labelsync"
 	"github.com/albertcbrown/ard/internal/servecmd"
 	"github.com/albertcbrown/ard/internal/setupcmd"
@@ -49,5 +52,8 @@ func handlers() cli.Handlers {
 		RebuildState: servecmd.RebuildState,
 		Init:         initcmd.Init,
 		Setup:        setupcmd.Command,
+		JobPre:       jobpre.Run,
+		JobExec:      jobexec.Run,
+		JobPost:      jobpost.Run,
 	}
 }

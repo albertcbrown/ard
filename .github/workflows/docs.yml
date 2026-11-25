@@ -1,0 +1,78 @@
+# Docs site: build docs/site/ with MkDocs Material and check it against the
+# code (make docs-check: mkdocs build --strict plus the Go drift test), then
+# publish it to GitHub Pages on a push to main.
+#
+# Settings and the one-time steps: docs/runbooks/pages-setup.md.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/site/**
+      - mkdocs.yml
+      - internal/config/**
+      - internal/cli/**
+      - internal/docscheck/**
+      - .github/workflows/docs.yml
+  pull_request:
+    paths:
+      - docs/site/**
+      - mkdocs.yml
+      - internal/config/**
+      - internal/cli/**
+      - internal/docscheck/**
+      - .github/workflows/docs.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: pip install -r docs/site/requirements.txt
+      - run: make docs-check
+
+  # Publish only from main, after the checks pass. One deploy at a time; a
+  # newer push waits rather than cancelling a deploy in progress.
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r docs/site/requirements.txt
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - run: mkdocs build --strict -d site
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
