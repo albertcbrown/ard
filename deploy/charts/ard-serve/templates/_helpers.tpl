@@ -47,6 +47,9 @@ app.kubernetes.io/instance: {{ include "ard-serve.name" . }}
 {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $d) -}}
 {{- fail (printf "agentImage.digest must be sha256:<64 hex> with executor k8s, got %q" $d) -}}
 {{- end -}}
+{{- if not (regexMatch "^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$" (.Values.agentImage.repository | default "")) -}}
+{{- fail (printf "agentImage.repository must be a repository without a tag, got %q" .Values.agentImage.repository) -}}
+{{- end -}}
 {{ .Values.agentImage.repository }}@{{ $d }}
 {{- end -}}
 

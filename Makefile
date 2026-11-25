@@ -21,18 +21,22 @@ fmt:
 chart-test:
 	deploy/test-charts.sh
 
-# Builds the ard image for both platforms and checks it (needs Docker buildx and
-# network; not part of `make test`).
+# Builds both published images (ard and ard-agent) for both platforms and checks
+# them, including the no-secrets scan (needs Docker buildx, network, go and jq;
+# not part of `make test`).
 image-test:
 	deploy/test-image.sh
+	deploy/test-agent-image.sh ard-agent:dev
 
 # Builds the default ard-agent image for this host as ard-agent:dev and prints its
-# ID. Local only, never published. Needs Docker and network; not part of `make test`.
+# ID (for ARD_AGENT_IMAGE and role images built FROM it). The published image is
+# built by ard-build. Needs Docker and network; not part of `make test`.
 agent-image:
 	docker build -t ard-agent:dev deploy/agent
 	docker image inspect --format '{{.Id}}' ard-agent:dev
 
-# Checks ard-agent:dev (needs Docker; run `make agent-image` first; not part of `make test`).
+# Builds ard-agent for both platforms, loads this host's as ard-agent:dev and
+# checks it (needs Docker buildx, network, go and jq; not part of `make test`).
 agent-image-test:
 	deploy/test-agent-image.sh ard-agent:dev
 
