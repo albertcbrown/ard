@@ -589,3 +589,26 @@ func TestFetchSharedWithFetch(t *testing.T) {
 		t.Fatalf("fetch blocked by a shared holder: %v", err)
 	}
 }
+
+func TestClassifyPush(t *testing.T) {
+	gh := "remote: error: GH006: Protected branch update failed for refs/heads/main."
+	tests := []struct {
+		name string
+		out  string
+		want error
+	}{
+		{"gh006 stderr", gh, ErrProtected},
+		{"gh006 porcelain", "!\tHEAD:refs/heads/main\t[remote rejected] (protected branch hook declined)\n" + gh, ErrProtected},
+		{"gh006 with 500", gh + "\nerror: RPC failed; HTTP 500 returned error: 500", ErrProtected},
+		{"stale", "! [rejected] (stale info)", ErrStaleLease},
+		{"non-ff", "! [rejected] (non-fast-forward)", ErrNonFastForward},
+		{"5xx", "remote: Internal Server Error", ErrTransient},
+		{"other", "fatal: something else", nil},
+	}
+	for _, tc := range tests {
+		got := classifyPush(tc.out)
+		if got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

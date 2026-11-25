@@ -23,6 +23,11 @@ var (
 	ErrNothingToCommit = errors.New("gitx: nothing to commit")
 	// ErrNonFastForward means the remote ref moved and the push was rejected.
 	ErrNonFastForward = errors.New("gitx: push rejected: non-fast-forward")
+	// ErrProtected means GitHub refused the push with GH006 (protected branch
+	// update failed). It is not retryable by itself: on a main-lane push it is
+	// either a lost race or a real protection failure, which only a re-fetch
+	// can tell apart.
+	ErrProtected = errors.New("gitx: push rejected: protected branch")
 	// ErrStaleLease means a --force-with-lease expectation did not hold.
 	ErrStaleLease = errors.New("gitx: push rejected: stale lease")
 	// ErrTransient means a push or fetch failed for a reason that is likely to

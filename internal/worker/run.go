@@ -639,6 +639,8 @@ func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 			kind = "branch gone"
 		case errors.As(err, &ge):
 			kind = "guard"
+		case errors.Is(err, committer.ErrProtected):
+			kind = "protected"
 		}
 		jb.log.Error("worker.push_failed", "kind", kind, "error", err)
 		if errors.Is(err, committer.ErrTransient) {

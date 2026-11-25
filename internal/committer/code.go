@@ -151,6 +151,9 @@ func (b *Branches) CommitCode(ctx context.Context, branch string, req CodeReques
 		attrs := []any{"issue", req.Issue, "role", req.Role, "branch", branch, "job", req.JobID,
 			"files", len(s.files), "created", req.Create, "duration", time.Since(start).String()}
 		if err != nil {
+			if errors.Is(err, ErrProtected) {
+				attrs = append(attrs, "reason", "protected")
+			}
 			l.log.WarnContext(ctx, "committer.failed", append(attrs, "err", err.Error())...)
 			return
 		}

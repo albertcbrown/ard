@@ -241,6 +241,9 @@ func (l *lane) commit(ctx context.Context, req Request) (res Result, err error) 
 		attrs := []any{"issue", req.Issue, "stage", req.Stage, "role", req.Role, "branch", l.branch, "job", req.JobID,
 			"files", len(snap.Files), "duration", time.Since(start).String()}
 		if err != nil {
+			if errors.Is(err, ErrProtected) {
+				attrs = append(attrs, "reason", "protected")
+			}
 			l.log.WarnContext(ctx, "committer.failed", append(attrs, "err", err.Error())...)
 			return
 		}
@@ -381,6 +384,12 @@ func (l *lane) run(ctx context.Context, s snap) (Result, error) {
 			}
 			continue
 		}
+		if errors.Is(err, effects.ErrProtected) {
+			var perr error
+			if retry, perr = l.protectedRace(ctx, base, err); perr != nil {
+				return res, perr
+			}
+		}
 		rejections++
 		if !retry || rejections >= maxPushes {
 			return res, err
@@ -393,6 +402,26 @@ func (l *lane) run(ctx context.Context, s snap) (Result, error) {
 			return res, ctx.Err()
 		}
 	}
+}
+
+// protectedRace decides what a GH006 rejection of a push leased at base
+// means. On the main lane it re-fetches: a tip other than base is a lost race
+// (retry, counted as a rejection); the same tip is a real protection failure.
+// A branch lane is never protected, so there GH006 is a plain failure.
+func (l *lane) protectedRace(ctx context.Context, base string, cause error) (bool, error) {
+	if !l.persistent {
+		return false, fmt.Errorf("%w: %v", ErrProtected, cause)
+	}
+	tip, err := l.fetch(ctx)
+	if err != nil {
+		return false, err
+	}
+	if tip == base {
+		return false, fmt.Errorf("%w: main did not move since the lease, so this is not a race; "+
+			"check the main ruleset's bypass list for ard's App and run `ard setup --check`: %v", ErrProtected, cause)
+	}
+	l.log.InfoContext(ctx, "committer.retry", "branch", l.branch, "reason", "protected_race", "old", base, "new", tip)
+	return true, nil
 }
 
 // attempt applies the snapshot on base, commits and pushes. retry reports

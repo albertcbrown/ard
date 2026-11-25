@@ -24,6 +24,10 @@ var (
 	// ErrTransient means a remote or network failure outlasted the retry
 	// budget. It wraps the last cause too.
 	ErrTransient = errors.New("committer: transient remote failure persisted")
+	// ErrProtected means a push was rejected by branch protection (GH006) and
+	// it was not a lost race: a branch lane, or main had not moved since the
+	// lease. It is never retried.
+	ErrProtected = errors.New("committer: push rejected by branch protection")
 	// ErrClosed means Commit was called after Close.
 	ErrClosed = errors.New("committer: closed")
 )
