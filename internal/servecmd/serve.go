@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -393,7 +394,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	if cfg != nil {
 		startSHA = cfg.SHA
 	}
-	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun, "pause_file", pausePath, "config_sha", startSHA)
+	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun, "identity", identityOf(ctx, d.Reader), "pause_file", pausePath, "config_sha", startSHA)
 	if useUI {
 		return runWithUI(ctx, cc.Run, w.snap.Take, &controls{w: w, pausePath: pausePath, loops: loopNames(selected)}, approveFn(w.Effects, w.wakeLoops, repo.String(), ui.OpenBrowser), repo.String(), logPath, os.Stdin, e.Stdout)
 	}
@@ -786,17 +787,57 @@ func forceOnSecondSignal(ctx context.Context) <-chan struct{} {
 	return force
 }
 
-// buildDeps is the production builder: credentials from the environment,
-// the client and effect layer from effects.Open. Dev-token auth is refused
-// outside dry-run.
-func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir string) (deps, error) {
+// Seams for tests: the gh lookup and runner, and the GitHub API base URL.
+var (
+	lookPath         = exec.LookPath
+	runGh            = github.ExecRun
+	githubAPIBaseURL = "" // empty means api.github.com
+)
+
+// resolveAuth reads credentials from the environment and, when none are set,
+// falls back to the gh CLI's token. The token stays in memory.
+func resolveAuth(ctx context.Context, e *cli.Env) (github.Auth, error) {
 	auth, err := github.AuthFromEnv(os.Getenv, os.ReadFile)
+	if errors.Is(err, github.ErrNoCredentials) {
+		ta, gerr := github.GhFallback(ctx, lookPath, runGh, e.Stderr)
+		if gerr != nil {
+			if errors.Is(gerr, github.ErrNoGh) || errors.Is(gerr, github.ErrGhNotLoggedIn) {
+				return nil, &cli.ExitError{Code: 1, Err: fmt.Errorf("ard serve: %w", gerr)}
+			}
+			return nil, fmt.Errorf("ard serve: %w", gerr)
+		}
+		return ta, nil
+	}
 	if err != nil {
-		return deps{}, fmt.Errorf("ard serve: %w", err)
+		return nil, fmt.Errorf("ard serve: %w", err)
 	}
-	if auth.Kind() == github.AuthToken && !e.DryRun {
-		return deps{}, errors.New("ard serve: ARD_GITHUB_TOKEN auth is for --dry-run only; configure a GitHub App for live runs")
+	return auth, nil
+}
+
+// buildDeps is the production builder: credentials from the environment (or
+// the gh CLI), a startup connectivity check, then the client and effect layer
+// from effects.Open.
+func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir string) (deps, error) {
+	auth, err := resolveAuth(ctx, e)
+	if err != nil {
+		return deps{}, err
 	}
+	gcfg := github.Config{Repo: repo, Auth: auth, Log: e.Log, BaseURL: githubAPIBaseURL, ReadOnly: e.DryRun}
+	conn, err := github.Connect(ctx, gcfg)
+	if err != nil {
+		return deps{}, &cli.ExitError{Code: 1, Err: fmt.Errorf("ard serve: %w", err)}
+	}
+	src := "app"
+	if ta, ok := auth.(*github.TokenAuth); ok {
+		src = ta.Source
+	}
+	perms := make([]string, 0, len(conn.Permissions))
+	for k, v := range conn.Permissions {
+		perms = append(perms, k+":"+v)
+	}
+	sort.Strings(perms)
+	e.Log.Info("github.connect", "auth", string(conn.Kind), "source", src, "login", conn.Login, "repo", repo.String(),
+		"permissions", strings.Join(perms, ","), "scopes", strings.Join(conn.Scopes, ","))
 	cred, err := modelauth.Resolve(modelauth.Mode(os.Getenv(modelauth.EnvMode)), claude.New(claude.Options{}).CredentialEnv, os.Getenv)
 	var model modelauth.Credential
 	switch {
@@ -809,14 +850,14 @@ func buildDeps(ctx context.Context, e *cli.Env, repo github.Repo, stateDir strin
 		model = cred
 		e.Log.Info("serve.model_credential", "credential", cred)
 	}
-	red, err := redact.New(redact.FromEnviron(os.Environ()), redact.Options{})
+	red, err := newRedactor(auth)
 	if err != nil {
 		return deps{}, fmt.Errorf("ard serve: %w", err)
 	}
 	o := effects.Options{
 		Redact: func(text string) string { return redactText(context.WithoutCancel(ctx), e.Log, red, text) },
 		DryRun: e.DryRun,
-		GitHub: github.Config{Repo: repo, Auth: auth, Log: e.Log},
+		GitHub: github.Config{Repo: repo, Auth: auth, Log: e.Log, BaseURL: githubAPIBaseURL},
 		Log:    e.Log,
 	}
 	if e.DryRun {
@@ -847,4 +888,26 @@ func redactText(ctx context.Context, log *slog.Logger, rd *redact.Redactor, text
 		return "[REDACTED: secret scan flagged this text]"
 	}
 	return string(res.Clean)
+}
+
+// identityOf returns the login ard acts as, or "unknown" when GitHub cannot say.
+func identityOf(ctx context.Context, rd github.Reader) string {
+	if rd == nil {
+		return "unknown"
+	}
+	id, err := rd.Identity(ctx)
+	if err != nil || id.Login == "" {
+		return "unknown"
+	}
+	return id.Login
+}
+
+// newRedactor masks the environment's credentials and the token in auth. A gh
+// token is not in the environment, so it is added by hand.
+func newRedactor(auth github.Auth) (*redact.Redactor, error) {
+	secrets := redact.FromEnviron(os.Environ())
+	if ta, ok := auth.(*github.TokenAuth); ok {
+		_ = secrets.Add("ARD_GITHUB_TOKEN", ta.Value)
+	}
+	return redact.New(secrets, redact.Options{})
 }

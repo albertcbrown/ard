@@ -135,3 +135,27 @@ func errorMessage(body []byte) string {
 	}
 	return msg
 }
+
+// ConnectKind classifies a failed startup check.
+type ConnectKind string
+
+// The ways Connect fails.
+const (
+	ConnectNoCredentials     ConnectKind = "no-credentials"
+	ConnectBadKey            ConnectKind = "bad-key"
+	ConnectAppNotInstalled   ConnectKind = "app-not-installed"
+	ConnectMissingPermission ConnectKind = "missing-permission"
+	ConnectRepoNotFound      ConnectKind = "repo-not-found"
+	ConnectUnauthorized      ConnectKind = "unauthorized"
+	ConnectUnreachable       ConnectKind = "unreachable"
+)
+
+// ConnectError is a failed startup check. Detail is built from fixed strings,
+// repo names and permission names only, never from a response body, a header
+// or a credential, so Error is one safe line.
+type ConnectError struct {
+	Kind   ConnectKind
+	Detail string
+}
+
+func (e *ConnectError) Error() string { return "github: " + string(e.Kind) + ": " + e.Detail }

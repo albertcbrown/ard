@@ -104,3 +104,27 @@ func TestApproved(t *testing.T) {
 		})
 	}
 }
+
+// Under a personal access token, ard's own login is the token's user: that
+// user's approval is ignored, and a second write-access user's counts.
+func TestApprovedIgnoresSelfUnderPAT(t *testing.T) {
+	perms := map[string]github.Permission{
+		"owner": {Level: "admin", Role: "admin"}, "second": {Level: "write", Role: "write"},
+	}
+	rv := func(id int64, author string) github.Review {
+		return github.Review{ID: id, Author: author, State: "APPROVED", CommitSHA: "h", SubmittedAt: t0.Add(time.Duration(id) * time.Minute)}
+	}
+	check := approvalCheck{
+		self:       "owner",
+		permission: func(_ context.Context, l string) (github.Permission, error) { return perms[l], nil },
+		covers:     func(context.Context, string) (bool, error) { return true, nil },
+	}
+	got, err := approved(context.Background(), []github.Review{rv(1, "owner")}, check)
+	if err != nil || got {
+		t.Fatalf("self approval counted: %v, %v", got, err)
+	}
+	got, err = approved(context.Background(), []github.Review{rv(1, "owner"), rv(2, "second")}, check)
+	if err != nil || !got {
+		t.Fatalf("second user's approval did not count: %v, %v", got, err)
+	}
+}
