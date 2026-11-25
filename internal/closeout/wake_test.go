@@ -26,6 +26,8 @@ func TestWakeTargets(t *testing.T) {
 		{"failed", Plan{Outcome: OutcomeFailed, Terminal: []Label{l("ard:executor:failed")}}, nil},
 		{"retry keeps request", Plan{Outcome: OutcomeRetry, Requests: []Label{l("ard:worker:engineer")}}, nil},
 		{"stale", Plan{Outcome: OutcomeStale}, nil},
+		{"needs-network bounce wakes triage", Plan{Outcome: OutcomeNeedsNetwork, Requests: []Label{l("ard:triage:engineer")}}, []string{"triage"}},
+		{"needs-network without bounce", Plan{Outcome: OutcomeNeedsNetwork, Terminal: []Label{l("ard:needs-human")}}, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

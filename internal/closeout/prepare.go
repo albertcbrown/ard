@@ -241,6 +241,13 @@ func Prepare(ctx context.Context, j Job, d Deps) (Record, error) {
 	case networkLost:
 		plan = needsHumanPlan(j, rf.Status, "network list unreadable after redaction")
 	default:
+		if d.Network != nil && j.Stage == StageWorker && rf.Status == StatusNeedsNetwork {
+			prior, err := NetworkRounds(ctx, d.Network, n)
+			if err != nil {
+				return Record{}, err
+			}
+			j.Network = &NetworkState{Prior: prior}
+		}
 		plan = Build(j, rf, d.Roles)
 		if plan.Outcome == OutcomeNeedsNetwork {
 			plan.Network = network

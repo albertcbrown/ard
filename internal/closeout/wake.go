@@ -18,10 +18,15 @@ const WakeReason = "closeout"
 //	ard:review:<role>:changes    -> reviewfix and workers (a review round)
 //	ard:triage:<role>, :done, ard:pending -> triage (a request, or the fan-in gate)
 //
-// Only a plan that finished with outcome done or changes hands off; failed,
-// retry, stale, usage-limit and needs-human plans return nil.
+// Only a plan that finished with outcome done or changes hands off, plus a
+// needs-network worker that bounced to the triage engineer (#385: it requests
+// ard:triage:engineer); failed, retry, stale, usage-limit and needs-human
+// plans, and a needs-network plan that did not bounce, return nil.
 func WakeTargets(p Plan) []string {
-	if p.Outcome != OutcomeDone && p.Outcome != OutcomeChanges {
+	switch {
+	case p.Outcome == OutcomeDone, p.Outcome == OutcomeChanges:
+	case p.Outcome == OutcomeNeedsNetwork && len(p.Requests) > 0:
+	default:
 		return nil
 	}
 	var out []string
