@@ -1,4 +1,5 @@
-// Package budget enforces the daily dollar caps at the pool's claim gate.
+// Package budget enforces the daily dollar and token caps at the pool's claim
+// gate. A job must pass both checks; the token rule is in tokens.go.
 //
 // The day is the UTC day. A candidate is refused when spent >= cap, for its
 // role's own cap (budget_usd_per_day on the role) or the repo cap. Steps that
@@ -27,10 +28,11 @@ type SpendReader interface {
 
 // Gate is the pool's Options.Budget hook.
 type Gate struct {
-	store SpendReader
-	cfg   func() *config.Resolved
-	now   func() time.Time
-	log   *slog.Logger
+	store  SpendReader
+	tokens TokenReader // nil: token caps are not wired
+	cfg    func() *config.Resolved
+	now    func() time.Time
+	log    *slog.Logger
 
 	mu     sync.Mutex
 	day    time.Time       // UTC day start the logged map belongs to
@@ -94,7 +96,7 @@ func (g *Gate) Denied(c pool.Candidate) (bool, string) {
 			return true, g.capped(dayStart, "role", stage+"/"+c.Role, sp, limit)
 		}
 	}
-	return false, ""
+	return g.tokenDenied(ctx, cfg, role, stage, dayStart)
 }
 
 // capped builds the reason and logs budget.capped once per cap and UTC day.
