@@ -151,15 +151,32 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 		return fmt.Errorf("ard init: %w", err)
 	}
 	snap := filepath.Join(tmp, "main")
-	if err := gitx.New("").ExportPaths(ctx, root, base, snap, append(config.SourcePaths(), ContextPaths()...)...); err != nil {
+	if err := gitx.New("").ExportPaths(ctx, root, base, snap, append(append(config.SourcePaths(), ContextPaths()...), LockPath)...); err != nil {
 		return fmt.Errorf("ard init: read main's .ard/: %w", err)
 	}
 	existing := os.DirFS(snap)
-	ops, err := plan(existing, files, o.Force)
+	var lock Lock
+	if data, err := os.ReadFile(filepath.Join(snap, filepath.FromSlash(LockPath))); err == nil {
+		var warns []string
+		lock, warns = ParseLock(data)
+		for _, w := range warns {
+			fmt.Fprintln(e.Stderr, "warning: "+w)
+		}
+	}
+	pl, err := plan(existing, files, lock)
 	if err != nil {
 		return fmt.Errorf("ard init: %w", err)
 	}
-	merged, err := overlay(existing, changed(ops))
+	ops := pl.Ops
+	toWrite := changed(ops)
+	if len(toWrite) > 0 {
+		data, err := withLock(lock, ops, o.Version).Marshal()
+		if err != nil {
+			return fmt.Errorf("ard init: %w", err)
+		}
+		toWrite = append(toWrite, committer.InitFile{Path: LockPath, Data: data})
+	}
+	merged, err := overlay(existing, toWrite)
 	if err != nil {
 		return fmt.Errorf("ard init: %w", err)
 	}
@@ -183,7 +200,6 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 	}
 
 	// 8. Propose.
-	toWrite := changed(ops)
 	var pr github.PullRequest
 	if len(toWrite) > 0 {
 		pres, err := in.Propose(ctx, base, toWrite)
@@ -197,15 +213,19 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 		}
 	}
 	if len(toWrite) == 0 {
-		fmt.Fprintln(e.Stdout, "nothing to propose: main already has the starter files")
+		if len(toWrite) == 0 {
+			printLeftAlone(e, pl)
+		}
+		fmt.Fprintln(e.Stdout, "nothing to propose: main already has the starter files, or only edited ones differ")
 		e.Log.InfoContext(ctx, "init.done", "repo", d.Repo.String(), "base", base, "files", 0, "pr", 0, "dry_run", e.DryRun)
 		return nil
 	}
 	printOps(e, ops)
+	printLeftAlone(e, pl)
 
 	// 9. Open the PR.
 	pr, err = d.Effects.CreatePR(ctx, github.NewPR{
-		Title: prTitle, Body: initBody(ops, res), Head: committer.InitBranch, Base: "main",
+		Title: prTitle, Body: initBody(pl, res), Head: committer.InitBranch, Base: "main",
 	})
 	if err != nil {
 		return fmt.Errorf("ard init: branch %s pushed but opening the PR failed: %w; open it by hand, or delete the branch and rerun", committer.InitBranch, err)
@@ -221,10 +241,23 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 	return nil
 }
 
-// printOps writes one line per file the PR adds or overwrites.
+// printLeftAlone prints the files init did not touch: edited ones with their
+// diff against the starter, and ones the starter dropped.
+func printLeftAlone(e *cli.Env, pl Result) {
+	for _, o := range pl.Ops {
+		if o.Act == actEdited {
+			fmt.Fprintf(e.Stdout, "edited %s: left alone; the starter differs:\n%s", o.File.Path, o.Diff)
+		}
+	}
+	for _, p := range pl.Dropped {
+		fmt.Fprintf(e.Stdout, "%s: no longer in the starter, left in place\n", p)
+	}
+}
+
+// printOps writes one line per file the PR adds or updates.
 func printOps(e *cli.Env, ops []op) {
 	for _, o := range ops {
-		if o.Act == actUnchanged {
+		if o.Act == actUnchanged || o.Act == actEdited {
 			continue
 		}
 		verb := string(o.Act)

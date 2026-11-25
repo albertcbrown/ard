@@ -9,12 +9,13 @@ import (
 
 // initBody is the PR description. It is fixed text built from the file list
 // and the validated protected paths, with no issue or comment text in it.
-func initBody(ops []op, res *config.Resolved) string {
+func initBody(pl Result, res *config.Resolved) string {
 	var b strings.Builder
 	b.WriteString("This PR adds the starter `.ard/` directory proposed by `ard init`.\n\n")
 	b.WriteString("## Files\n\n")
+	ops := pl.Ops
 	for _, o := range ops {
-		if o.Act == actUnchanged {
+		if o.Act == actUnchanged || o.Act == actEdited {
 			continue
 		}
 		mode := ""
@@ -22,6 +23,25 @@ func initBody(ops []op, res *config.Resolved) string {
 			mode = " (executable)"
 		}
 		fmt.Fprintf(&b, "- %s `%s`%s\n", o.Act, o.File.Path, mode)
+	}
+	fmt.Fprintf(&b, "- add or update `%s`, the hashes of the starter files written\n", LockPath)
+	var edited []string
+	for _, o := range ops {
+		if o.Act == actEdited {
+			edited = append(edited, o.File.Path)
+		}
+	}
+	if len(edited) > 0 {
+		b.WriteString("\n## Edited files left alone\n\nThese differ from both the starter and the last `ard init`, so they are not changed. Run `ard init` locally to see the diffs.\n\n")
+		for _, p := range edited {
+			fmt.Fprintf(&b, "- `%s`\n", p)
+		}
+	}
+	if len(pl.Dropped) > 0 {
+		b.WriteString("\n## No longer in the starter\n\nLeft in place; delete by hand if unwanted.\n\n")
+		for _, p := range pl.Dropped {
+			fmt.Fprintf(&b, "- `%s`\n", p)
+		}
 	}
 	b.WriteString("\n## Protected paths\n\nA pull request touching any of these waits for a human approval:\n\n")
 	for _, p := range res.ProtectedPaths {
