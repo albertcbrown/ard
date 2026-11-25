@@ -5,20 +5,28 @@ ard makes a GitHub repository maintain itself. One `ard` process per repository 
 ## The loop
 
 ```mermaid
-flowchart TD
-    SC["Scanners<br/>file issues"] --> I["Issue"]
-    I -->|"ard:pending"| T["Triage<br/>lead, engineer, optional roles"]
-    T --> P["plan.md"]
-    P --> A{"Human ard:approved<br/>(when require_approval)"}
-    A --> W["Worker<br/>branch, tests, draft PR"]
-    W --> R["Reviewers"]
-    R -->|"changes: review rounds,<br/>up to max_review_rounds"| W
-    R -->|"all approve: PR ready"| M["Merger<br/>reviews at head, checks green;<br/>protected paths need a human"]
-    M --> D["Merged, issue closed"]
-    T -.-> H["ard:needs-human"]
-    W -.-> H
-    R -.-> H
-    M -.-> H
+flowchart TB
+    subgraph Flow[" "]
+        direction LR
+        S[Scanners] --> T
+        subgraph Issue
+            direction LR
+            subgraph Plan
+                T[Triage] --> A{Human approves}
+            end
+            subgraph Build
+                W[Worker] --> R[Reviewers]
+                R -- changes --> W
+            end
+            subgraph Ship
+                M[Merger] --> D[Merged]
+            end
+            A --> W
+            R --> M
+        end
+    end
+    Issue <-.-> H[Human review]
+    style Flow fill:none,stroke:none
 ```
 
 1. **Scanners** find problems (CVEs, lint, missing tests, docs gaps, secrets) and file deduplicated issues.
