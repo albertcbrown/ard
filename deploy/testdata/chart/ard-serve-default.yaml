@@ -1,0 +1,173 @@
+---
+# Source: ard-serve/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ard-albertcbrown-ard
+  labels:
+    app.kubernetes.io/name: ard
+    app.kubernetes.io/instance: ard-albertcbrown-ard
+    app.kubernetes.io/part-of: ard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ard
+      app.kubernetes.io/instance: ard-albertcbrown-ard
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+
+---
+# Source: ard-serve/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ard-albertcbrown-ard-home
+  labels:
+    app.kubernetes.io/name: ard
+    app.kubernetes.io/instance: ard-albertcbrown-ard
+    app.kubernetes.io/part-of: ard
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: example-sc
+  resources:
+    requests:
+      storage: 7Gi
+
+---
+# Source: ard-serve/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ard-albertcbrown-ard
+  labels:
+    app.kubernetes.io/name: ard
+    app.kubernetes.io/instance: ard-albertcbrown-ard
+    app.kubernetes.io/part-of: ard
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ard
+      app.kubernetes.io/instance: ard-albertcbrown-ard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ard
+        app.kubernetes.io/instance: ard-albertcbrown-ard
+        app.kubernetes.io/part-of: ard
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ard
+          image: ghcr.io/albertcbrown/ard@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          args:
+            - serve
+            - --dry-run
+            - --repo
+            - albertcbrown/ard
+            - --loops
+            - scanners,stale,reaper
+          # ard serve seeds and owns its bare clone at ~/.ard/repos/<owner>/<repo>.git (#113); the working directory is
+          # only read for the local `paused` key.
+          workingDir: /home/ard
+          env:
+            - {name: HOME, value: /home/ard}
+            - {name: TMPDIR, value: /var/tmp}
+            - {name: GIT_TERMINAL_PROMPT, value: "0"}
+            - name: ARD_GITHUB_APP_ID
+              valueFrom: {secretKeyRef: {name: ard-github-app, key: ARD_GITHUB_APP_ID}}
+            - name: ARD_GITHUB_INSTALLATION_ID
+              valueFrom: {secretKeyRef: {name: ard-github-app, key: ARD_GITHUB_INSTALLATION_ID}}
+            - {name: ARD_GITHUB_PRIVATE_KEY_FILE, value: /var/run/ard/github-app/private-key.pem}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: home, mountPath: /home/ard}
+            - {name: tmp, mountPath: /var/tmp}
+            - {name: github-app, mountPath: /var/run/ard/github-app, readOnly: true}
+          resources:
+            limits:
+              memory: 4Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: ard-albertcbrown-ard-home
+        - name: tmp
+          emptyDir:
+            sizeLimit: 4Gi
+        - name: github-app
+          secret:
+            secretName: ard-github-app
+            items:
+              - {key: private-key.pem, path: private-key.pem}
+            defaultMode: 0400
+
+---
+# Source: ard-serve/templates/externalsecret.yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ard-github-app
+  labels:
+    app.kubernetes.io/name: ard
+    app.kubernetes.io/instance: ard-albertcbrown-ard
+    app.kubernetes.io/part-of: ard
+spec:
+  refreshPolicy: Periodic
+  refreshInterval: 4h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: example-store
+  target:
+    name: ard-github-app
+    creationPolicy: Owner
+    template:
+      data:
+        ARD_GITHUB_APP_ID: "{{ .ARD_GITHUB_APP_ID }}"
+        ARD_GITHUB_INSTALLATION_ID: "{{ .ARD_GITHUB_INSTALLATION_ID }}"
+        private-key.pem: "{{ index . \"private-key.pem\" }}"
+  dataFrom:
+    - extract:
+        key: abcdefghijklmnopqrstuvwxyz  # ard GitHub App

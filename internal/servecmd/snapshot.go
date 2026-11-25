@@ -4,6 +4,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/snapshot"
+	"github.com/albertcbrown/ard/internal/triage"
 )
 
 // snapshotEvents is how many recent log records the command center keeps.
@@ -33,6 +34,26 @@ func (w *wiring) newSnapshotTaker(c *controller.Controller, events *snapshot.Rin
 		Control: c,
 		Caps:    w.budgetGate(),
 		Config:  func() *config.Resolved { return w.cfg.Load() },
-		Ring:    events,
+		Override: func() (int, bool) {
+			c := w.cfg.Load()
+			if c == nil {
+				return 0, false
+			}
+			return w.slots.Active(c.MaxPods)
+		},
+		Ring:      events,
+		Approvals: queueSource{&w.approvals},
 	})
+}
+
+// queueSource adapts the triage approval queue to the snapshot's source.
+type queueSource struct{ q *triage.ApprovalQueue }
+
+func (s queueSource) Queue() []snapshot.QueueItem {
+	items := s.q.Snapshot()
+	out := make([]snapshot.QueueItem, 0, len(items))
+	for _, it := range items {
+		out = append(out, snapshot.QueueItem{Issue: it.Issue, Title: it.Title, Role: it.Role, PlanURL: it.PlanURL})
+	}
+	return out
 }

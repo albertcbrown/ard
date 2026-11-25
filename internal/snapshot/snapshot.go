@@ -41,6 +41,7 @@ type Snapshot struct {
 	Ticks   []TickView
 	Limits  LimitsView
 	Issues  []IssueView
+	Queue   []QueueItem // issues waiting for a human to add ard:approved
 	Spend   SpendView
 	Events  []Event
 	Errors  []string
@@ -49,6 +50,8 @@ type Snapshot struct {
 // PoolView is the slot pool.
 type PoolView struct {
 	Used, Max int
+	ConfigMax int  // max_pods from config; 0 when no config has loaded
+	Override  bool // Max is a runtime override
 	Waiting   []Waiting
 }
 
@@ -120,6 +123,20 @@ type IssueView struct {
 	CostUSD *float64 // total of all recorded steps; nil when none priced
 }
 
+// QueueItem is an issue in the approval queue: triage finished and the gate
+// is waiting for ard:approved. Strings are raw; the UI sanitises them.
+type QueueItem struct {
+	Issue   int
+	Title   string
+	Role    string // worker role that starts once approved
+	PlanURL string
+}
+
+// QueueSource is the in-memory approval queue.
+type QueueSource interface {
+	Queue() []QueueItem
+}
+
 // SpendView is today's spend against the daily caps.
 type SpendView struct {
 	RepoUSD   float64
@@ -177,8 +194,11 @@ type Sources struct {
 	Control ControlSource
 	Caps    CapSource
 	Config  func() *config.Resolved
-	Ring    *Ring
-	Now     func() time.Time
+	// Override reports the runtime max_pods override, if any (optional).
+	Override  func() (int, bool)
+	Ring      *Ring
+	Approvals QueueSource // may be nil
+	Now       func() time.Time
 }
 
 // Taker takes snapshots. It is safe for concurrent use.
@@ -224,6 +244,7 @@ func (t *Taker) Take(ctx context.Context) Snapshot {
 	if t.s.Pool != nil {
 		if p := t.s.Pool(); p != nil {
 			snap.Pool, held = poolView(p.Stats()), p.HeldSlots()
+			t.addOverride(&snap.Pool)
 			snap.Pool.Used = len(held)
 		}
 	}
@@ -237,6 +258,9 @@ func (t *Taker) Take(ctx context.Context) Snapshot {
 		if l := t.s.Limits(); l != nil {
 			snap.Limits = limitsView(l, now)
 		}
+	}
+	if t.s.Approvals != nil {
+		snap.Queue = t.s.Approvals.Queue()
 	}
 	if t.s.Ring != nil {
 		snap.Events = t.s.Ring.Events()
@@ -468,4 +492,16 @@ func spendView(per map[state.RoleKey]state.Spend, repo state.Spend, cfg *config.
 		return v.Roles[i].Role < v.Roles[j].Role
 	})
 	return v
+}
+
+// addOverride fills the config max and the override flag of the pool view.
+func (t *Taker) addOverride(v *PoolView) {
+	if t.s.Config != nil {
+		if c := t.s.Config(); c != nil {
+			v.ConfigMax = c.MaxPods
+		}
+	}
+	if t.s.Override != nil {
+		_, v.Override = t.s.Override()
+	}
 }

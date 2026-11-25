@@ -59,6 +59,10 @@ type Effects interface {
 	// ErrNothingToCommit when nothing is staged.
 	Commit(ctx context.Context, op CommitOp) (CommitResult, error)
 	Push(ctx context.Context, op PushOp) error
+	// ApproveIssue runs the operator's own gh to add ard:approved to issue n
+	// of repo (owner/name). It is not part of github.Writer, so the App client
+	// can never reach it. ErrGHUnavailable means gh is missing or logged out.
+	ApproveIssue(ctx context.Context, repo string, n int) error
 	// DryRun reports whether effects are only logged.
 	DryRun() bool
 }

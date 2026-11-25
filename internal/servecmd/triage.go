@@ -39,6 +39,7 @@ func triageLoop(w *wiring) controller.Loop {
 		Repo: w.Repo.String(), RepoDir: w.Root, Log: w.Log,
 		PlanExists: planExists(w),
 		MainSHA:    mainSHA(w), MainEntry: mainEntry(w),
+		Approvals: &w.approvals,
 	})
 }
 

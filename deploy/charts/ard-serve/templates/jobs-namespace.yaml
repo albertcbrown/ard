@@ -1,0 +1,150 @@
+{{- /* executor k8s: the namespace job pods run in (#54). Pod Security restricted, pinned to the chart's minimum
+Kubernetes minor. NetworkPolicies, allow-lists on top of default-deny:
+  ard-job-ingress      the ard-serve pod may reach the post container on the result port; nothing else gets in.
+  ard-job-base-egress  every job pod: cluster DNS, and GitHub (pre fetches the repository) and the model API on 443.
+                       NetworkPolicy is per pod, not per container, so a network: false agent can reach these too.
+  ard-job-internet     pods not labelled network=false: the internet minus the ranges ard-serve also excepts
+                       (other namespaces, private and CGNAT ranges, 169.254.169.254); the #276 posture.
+ResourceQuota and LimitRange bound what the jobs together can use. */ -}}
+{{- if include "ard-serve.k8s" . }}
+{{- $ns := include "ard-serve.jobsNamespace" . }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.30
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.30
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.30
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ard-job-ingress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ard-serve.jobSelector" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "ard-serve.selector" . | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: {{ .Values.jobs.resultPort }}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ard-job-base-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ard-serve.jobSelector" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        {{- range concat (.Values.jobs.githubCIDRs | default list) (.Values.jobs.modelAPICIDRs | default list) }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - {protocol: TCP, port: 443}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ard-job-internet
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ard-serve.jobSelector" . | nindent 6 }}
+    matchExpressions:
+      - {key: ard.albertcbrown/network, operator: NotIn, values: ["false"]}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- include "ard-serve.exceptRanges" . | nindent 14 }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ard-jobs
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- range $k, $v := .Values.jobs.quota }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ard-jobs
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      {{- with .Values.jobs.limitRange.default }}
+      default:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.jobs.limitRange.defaultRequest }}
+      defaultRequest:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.jobs.limitRange.max }}
+      max:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

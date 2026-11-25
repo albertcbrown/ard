@@ -1,0 +1,24 @@
+ard serve  o/r
+2026-11-25 12:00:00Z  pool 2/4  spend $3.50 of $20.00
+logs: /home/u/.ard/logs/o/r/serve.log
+Needs you
+paused workers: label 
+limit opus until 14:00Z
+error state: boom
+Running (1)
+#414   worker:engineer 5m00s/1h00m $1.25
+Waiting
+worker:engineer 3 slot oldest 1m30s
+Limits
+5h  42% allowed resets 13:00Z
+Issues (page 1/7)
+#1     triage:engineer done  jobs 1  $1.25
+#2     triage:engineer done  jobs 1  $1.25
+#3     triage:engineer done  jobs 1  $1.25
+#4     triage:engineer done  jobs 1  $1.25
+#5     triage:engineer done  jobs 1  $1.25
+#6     triage:engineer done  jobs 1  $1.25
+#7     triage:engineer done  jobs 1  $1.25
+#8     triage:engineer done  jobs 1  $1.25
+#9     triage:engineer done  jobs 1  $1.25
+? help  j/k select  o open  a approve  p pause  +/- slots  q quit

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -520,4 +521,31 @@ func TestGateOther(t *testing.T) {
 			t.Error("wrote")
 		}
 	})
+}
+
+func TestGateTracksApprovalQueue(t *testing.T) {
+	h := gateHarness(t, true)
+	q := &ApprovalQueue{}
+	h.loop.d.Approvals = q
+	n := h.ready()
+	h.mustTick()
+	h.mustTick() // a repeat does not duplicate
+	items := q.Snapshot()
+	if len(items) != 1 || items[0].Issue != n || items[0].Role != "engineer" || items[0].PlanURL != fmt.Sprintf("https://github.com/o/r/blob/main/.ard/%d/plan.md", n) {
+		t.Fatalf("queue = %+v", items)
+	}
+	if err := h.gh.AddLabels(context.Background(), n, labels.Approved); err != nil {
+		t.Fatal(err)
+	}
+	h.labelledBy(n, labels.Approved, "maint", "triage", tDone.Add(time.Minute))
+	h.mustTick()
+	if got := q.Snapshot(); len(got) != 0 {
+		t.Fatalf("approved issue still queued: %+v", got)
+	}
+	var nilQ *ApprovalQueue
+	nilQ.Add(QueueItem{Issue: 1}) // nil queue is a no-op
+	nilQ.Remove(1)
+	if nilQ.Snapshot() != nil {
+		t.Fatal("nil queue not empty")
+	}
 }

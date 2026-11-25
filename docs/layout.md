@@ -30,6 +30,7 @@ internal/jobpod/           controller-pod contract of the k8s executor: paths, S
 internal/jobpre/           `ard job-pre`, pod-side init of the k8s executor: fetch and lay out the job inputs (git only, no GitHub API)
 internal/jobexec/          `ard job-exec`, pod-side agent step: run the agent, tee stdout, write the done marker
 internal/jobpost/          `ard job-post`, pod-side result server: GET /v1/result behind the per-job key
+internal/imagescan/        the published images' no-secrets check: credential file names and secret content in a `docker export` tar stream; fails closed
 internal/costs/             the costs Loop: writes each dirty issue's cost table from state; Claims() false so it runs while paused
 internal/scanner/stale/     the stale closer: a plain controller Loop that comments and closes untouched scanner issues
 internal/agentjob/          helpers the agent loops share: untrusted-input snapshot, admission re-check, agent command and executor job builders, handle save, shutdown-aware wait, post-once
@@ -62,9 +63,13 @@ internal/setupcmd/          `ard setup`: checks, then applies (labels) when gree
 internal/gitref/            ref-name checks shared by config and executor; leaf, stdlib only
 internal/repopath/          owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
 internal/initcmd/           ard init: proposes the starter .ard/ as a PR on ard-init
-Dockerfile                  the ard image (ghcr.io/albertcbrown/ard): ard plus the cve tools; no RUN on the target platform
+Dockerfile                  the ard image (ghcr.io/albertcbrown/ard): ard plus the cve tools, also the k8s job pods' pre/post image; no RUN on the target platform
+deploy/agent/               the ard-agent image (ghcr.io/albertcbrown/ard/agent): claude, git, Go and the starter roles' tools; the k8s agent container; no secrets
 deploy/argocd/              ard-root app-of-apps chart (one Application per target repo); deploy/charts/ard-serve/ one ard serve
-deploy/test-*.sh            chart, image and repo checks for the above (`make chart-test`, `make image-test`); test-release.sh is `make release-check`
+deploy/imagescan/           `go run ./deploy/imagescan`: the no-secrets scan of `docker export` output, used by the image tests
+deploy/test-*.sh            chart, image and repo checks for the above (`make chart-test`, `make image-test`, `make agent-image-test`); test-release.sh is `make release-check`
+deploy/testdata/chart/      the default (executor local) ard-serve render that `make chart-test` requires byte for byte
+deploy/github-cidrs.sh      human-run: prints the chart's jobs.githubCIDRs from api.github.com/meta
 .goreleaser.yaml            GoReleaser v2 config: four-target archives, checksums and the Homebrew cask (checked by `make release-check`)
 docs/proposal.md            design source of truth
 docs/layout.md              this file: every directory and package

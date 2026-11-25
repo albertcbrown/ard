@@ -188,7 +188,7 @@ func TestK8sRefusesPAT(t *testing.T) {
 			d.Auth = github.NewTokenAuth("x")
 			return d, err
 		}
-		err := serveLoops(context.Background(), env(t, "o/r", cfg, dry), pat, nil, k8sOpts())
+		err := serveLoops(context.Background(), env(t, "o/r", cfg, dry), pat, nil, k8sOpts(), uiOff)
 		var ee *cli.ExitError
 		if !errors.As(err, &ee) || ee.Code != 1 || !errors.Is(err, github.ErrCannotScope) {
 			t.Errorf("dry=%v: err = %v", dry, err)

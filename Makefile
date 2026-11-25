@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test docs-check release-check
+.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test kind-e2e docs-check release-check
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ard ./cmd/ard
@@ -21,18 +21,22 @@ fmt:
 chart-test:
 	deploy/test-charts.sh
 
-# Builds the ard image for both platforms and checks it (needs Docker buildx and
-# network; not part of `make test`).
+# Builds both published images (ard and ard-agent) for both platforms and checks
+# them, including the no-secrets scan (needs Docker buildx, network, go and jq;
+# not part of `make test`).
 image-test:
 	deploy/test-image.sh
+	deploy/test-agent-image.sh ard-agent:dev
 
 # Builds the default ard-agent image for this host as ard-agent:dev and prints its
-# ID. Local only, never published. Needs Docker and network; not part of `make test`.
+# ID (for ARD_AGENT_IMAGE and role images built FROM it). The published image is
+# built by ard-build. Needs Docker and network; not part of `make test`.
 agent-image:
 	docker build -t ard-agent:dev deploy/agent
 	docker image inspect --format '{{.Id}}' ard-agent:dev
 
-# Checks ard-agent:dev (needs Docker; run `make agent-image` first; not part of `make test`).
+# Builds ard-agent for both platforms, loads this host's as ard-agent:dev and
+# checks it (needs Docker buildx, network, go and jq; not part of `make test`).
 agent-image-test:
 	deploy/test-agent-image.sh ard-agent:dev
 
@@ -70,3 +74,9 @@ release-check:
 
 clean:
 	rm -rf bin
+
+# End-to-end test of the Kubernetes executor on a kind cluster it creates (or
+# ARD_KIND_CLUSTER). Needs Docker, kind (0.24 or later), kubectl, helm and network; about 4 CPU
+# and 8 GiB; ~10 minutes. Not part of `make test`. ARD_KIND_KEEP=1 keeps the cluster.
+kind-e2e:
+	ARD_KIND_E2E=1 go test -tags integration -run TestKind ./internal/executor/kube/e2e/ -timeout 30m -v

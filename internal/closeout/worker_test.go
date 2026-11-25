@@ -159,3 +159,35 @@ func TestPrepareExtraLogs(t *testing.T) {
 		}
 	})
 }
+
+func TestPrepareReopenedWorker(t *testing.T) {
+	e := newEnv(t)
+	j := e.claim(StageWorker, "engineer")
+	// No agent ran: no worktree, no log, an unstarted step's exit code.
+	j.Worktree, j.BaseSHA, j.LogPath, j.ExitCode = "", "", "", -1
+	j.PR, j.Worker = 9, &WorkerResult{PR: 9, Tests: TestsPassed, Pushed: true, Reopened: true, Summary: "Did the thing."}
+	rec, err := Prepare(context.Background(), j, e.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := rec.Plan
+	if p.Outcome != OutcomeDone || p.Summary != "Did the thing." {
+		t.Fatalf("plan = %+v", p)
+	}
+	if p.RolePath != "" {
+		t.Errorf("role path = %q, want none", p.RolePath)
+	}
+}
+
+func TestPRCreateFailedIsFailedPlan(t *testing.T) {
+	e := newEnv(t)
+	j := e.causeJob(StageWorker, "engineer", Cause{Kind: CausePRCreateFailed, Detail: "pushed branch b at abc; only the pull request is missing"})
+	rec, err := Prepare(context.Background(), j, e.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := rec.Plan
+	if p.Outcome != OutcomeFailed || !strings.Contains(p.Reason, "pr_create_failed") {
+		t.Errorf("plan = %+v", p)
+	}
+}
