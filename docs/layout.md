@@ -17,6 +17,7 @@ internal/configsrc/         config from origin/main: a snapshot per SHA under ~/
 internal/executor/          Executor interface and plain-data job types
 internal/executor/local/    host subprocess or docker run, watchdog, tracking; calls workspace
 internal/executor/workspace/ job worktree, home, config dir, inputs, sidecar export, logs and their removal; shared by local and kube
+internal/executor/kube/api/       minimal k8s REST types, Client, in-cluster transport (token re-read, no redirects); fake/ is the test double
 internal/agent/             Adapter interface, Spec/Result types, Registry (pure: builds argv, parses output)
 internal/agent/claude/      Claude Code adapter (`claude -p`, stream-json parser)
 internal/modelauth/         picks the one model credential (OAuth token or API key) from the controller env and carries its value to the executor; never logged
