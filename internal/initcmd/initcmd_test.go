@@ -46,13 +46,13 @@ func newHarness(t *testing.T) *harness {
 	return &harness{bare: bare, clone: clone, fake: fake.New()}
 }
 
-func (h *harness) env(force, dry bool) (*cli.Env, cli.InitOpts, *bytes.Buffer) {
+func (h *harness) env(dry bool) (*cli.Env, cli.InitOpts, *bytes.Buffer) {
 	var out bytes.Buffer
 	h.dry = dry
 	return &cli.Env{
 		Globals: cli.Globals{ConfigPath: filepath.Join(h.clone, ".ard", "config.yaml"), DryRun: dry},
 		Log:     quiet, Stdout: &out, Stderr: &bytes.Buffer{},
-	}, cli.InitOpts{Force: force}, &out
+	}, cli.InitOpts{Version: "v-test"}, &out
 }
 
 func (h *harness) open(t *testing.T) func(context.Context, string) (deps, error) {
@@ -73,9 +73,9 @@ func (h *harness) open(t *testing.T) func(context.Context, string) (deps, error)
 	}
 }
 
-func (h *harness) run(t *testing.T, force, dry bool) (string, error) {
+func (h *harness) run(t *testing.T, dry bool) (string, error) {
 	t.Helper()
-	e, o, out := h.env(force, dry)
+	e, o, out := h.env(dry)
 	err := run(context.Background(), e, o, h.open(t))
 	return out.String(), err
 }
@@ -149,12 +149,14 @@ var starterTree = []string{".ard/PRODUCT.md", ".ard/TECH_STACK.md", ".ard/VISION
 func TestInitOpensPR(t *testing.T) {
 	h := newHarness(t)
 	before := snapshot(t, h.clone)
-	out, err := h.run(t, false, false)
+	out, err := h.run(t, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := h.tree(t, "ard-init"); !reflect.DeepEqual(got, starterTree) {
-		t.Errorf("ard-init tree = %v, want %v", got, starterTree)
+	wantTree := append(slices.Clone(starterTree), LockPath)
+	slices.Sort(wantTree)
+	if got := h.tree(t, "ard-init"); !reflect.DeepEqual(got, wantTree) {
+		t.Errorf("ard-init tree = %v, want %v", got, wantTree)
 	}
 	if got := strings.TrimSpace(gittest.Run(t, h.bare, "ls-tree", "-r", "ard-init", "--", ".ard/scanners/cve/scan")); !strings.HasPrefix(got, "100755 ") {
 		t.Errorf("scan = %q, want mode 100755", got)
@@ -277,7 +279,7 @@ func loadStarter(t *testing.T, base fs.FS) (*config.Resolved, error) {
 
 func TestInitDryRun(t *testing.T) {
 	h := newHarness(t)
-	out, err := h.run(t, false, true)
+	out, err := h.run(t, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +319,7 @@ func TestInitRefusesWhenBranchExists(t *testing.T) {
 				prNum = h.fake.SeedPR(github.PullRequest{Title: "init", HeadRef: "ard-init", BaseRef: "main", State: github.StateOpen})
 			}
 			tipBefore := strings.TrimSpace(gittest.Run(t, h.bare, "rev-parse", "ard-init"))
-			_, err := h.run(t, false, false)
+			_, err := h.run(t, false)
 			if err == nil || !strings.Contains(err.Error(), "already exists") {
 				t.Fatalf("err = %v, want 'already exists'", err)
 			}
@@ -337,56 +339,6 @@ func TestInitRefusesWhenBranchExists(t *testing.T) {
 	}
 }
 
-func TestInitConflictAndForce(t *testing.T) {
-	seed := map[string]string{
-		".ard/config.yaml":              "max_pods: 7\n",
-		".ard/12/issue.md":              "issue\n",
-		".ard/triage/custom/prompt.txt": "mine\n",
-		".ard/scanners/cve/merge.jq":    "# identical-path, different content\n",
-	}
-	t.Run("without force", func(t *testing.T) {
-		h := newHarness(t)
-		h.commitMain(t, seed)
-		_, err := h.run(t, false, false)
-		if err == nil || !strings.Contains(err.Error(), ".ard/config.yaml") || !strings.Contains(err.Error(), ".ard/scanners/cve/merge.jq") || !strings.Contains(err.Error(), "--force") {
-			t.Fatalf("err = %v, want a conflict naming the paths", err)
-		}
-		if strings.Contains(h.branches(t), "ard-init") || len(h.fake.Writes()) != 0 {
-			t.Errorf("something was pushed or synced: %s %v", h.branches(t), h.fake.Writes())
-		}
-	})
-	t.Run("with force", func(t *testing.T) {
-		h := newHarness(t)
-		h.commitMain(t, seed)
-		out, err := h.run(t, true, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(out, "overwrite  .ard/config.yaml") {
-			t.Errorf("stdout:\n%s", out)
-		}
-		got := h.tree(t, "ard-init")
-		for _, want := range []string{".ard/12/issue.md", ".ard/triage/custom/prompt.txt", ".ard/config.yaml", ".ard/scanners/cve/scan"} {
-			found := false
-			for _, g := range got {
-				found = found || g == want
-			}
-			if !found {
-				t.Errorf("tree lacks %s: %v", want, got)
-			}
-		}
-		if s := gittest.Run(t, h.bare, "show", "ard-init:.ard/12/issue.md"); s != "issue\n" {
-			t.Errorf("issue.md changed: %q", s)
-		}
-		if s := gittest.Run(t, h.bare, "show", "ard-init:.ard/config.yaml"); strings.Contains(s, "max_pods") {
-			t.Errorf("config.yaml not overwritten: %q", s)
-		}
-		if st := gittest.Run(t, h.bare, "diff", "--name-status", "main", "ard-init"); strings.Contains(st, "D\t") {
-			t.Errorf("init deleted something:\n%s", st)
-		}
-	})
-}
-
 func TestInitNothingToPropose(t *testing.T) {
 	h := newHarness(t)
 	files, err := starter()
@@ -398,7 +350,7 @@ func TestInitNothingToPropose(t *testing.T) {
 		seed[f.Path] = string(f.Data)
 	}
 	h.commitMain(t, seed)
-	out, err := h.run(t, false, false)
+	out, err := h.run(t, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +372,7 @@ func TestInitNothingToPropose(t *testing.T) {
 func TestInitInvalidResultWritesNothing(t *testing.T) {
 	h := newHarness(t)
 	h.commitMain(t, map[string]string{".ard/triage/foo/.gitkeep": ""})
-	_, err := h.run(t, false, false)
+	_, err := h.run(t, false)
 	if err == nil || !strings.Contains(err.Error(), "invalid") || !strings.Contains(err.Error(), "foo") {
 		t.Fatalf("err = %v, want an invalid-configuration error naming foo", err)
 	}
@@ -433,7 +385,7 @@ func TestInitMissingPieces(t *testing.T) {
 	ctx := context.Background()
 	t.Run("open fails", func(t *testing.T) {
 		h := newHarness(t)
-		e, o, _ := h.env(false, false)
+		e, o, _ := h.env(false)
 		before := snapshot(t, h.clone)
 		err := run(ctx, e, o, func(context.Context, string) (deps, error) { return deps{}, errors.New("ard init: no credentials") })
 		if err == nil || !strings.Contains(err.Error(), "no credentials") {
@@ -498,7 +450,7 @@ func TestInitMissingPieces(t *testing.T) {
 		h := newHarness(t)
 		gittest.Run(t, h.bare, "branch", "-m", "main", "trunk")
 		gittest.Run(t, h.bare, "symbolic-ref", "HEAD", "refs/heads/trunk")
-		_, err := h.run(t, false, false)
+		_, err := h.run(t, false)
 		if err == nil || !strings.Contains(err.Error(), "has no main branch") {
 			t.Errorf("err = %v", err)
 		}
@@ -511,7 +463,7 @@ func TestInitMissingPieces(t *testing.T) {
 func TestInitCreatePRFailsAfterPush(t *testing.T) {
 	h := newHarness(t)
 	h.fake.FailNext("CreatePR", errors.New("boom"))
-	_, err := h.run(t, false, false)
+	_, err := h.run(t, false)
 	if err == nil || !strings.Contains(err.Error(), "pushed but opening the PR failed") || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v", err)
 	}
@@ -523,7 +475,7 @@ func TestInitCreatePRFailsAfterPush(t *testing.T) {
 func TestInitLabelSyncFailureStopsBeforePush(t *testing.T) {
 	h := newHarness(t)
 	h.fake.FailNext("CreateLabel", errors.New("denied"))
-	_, err := h.run(t, false, false)
+	_, err := h.run(t, false)
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -537,12 +489,12 @@ func TestDefaultProtectedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.ProtectedPaths) != 20 || res.ProtectedPaths[0] != ".github/" || res.ProtectedPaths[6] != ".ard/PRODUCT.md" || res.ProtectedPaths[8] != ".ard/TECH_STACK.md" || res.ProtectedPaths[15] != ".mcp.json" || res.ProtectedPaths[19] != "**/.golangci.json" {
+	if len(res.ProtectedPaths) != 21 || res.ProtectedPaths[0] != ".github/" || res.ProtectedPaths[2] != ".ard/ard-init.lock" || res.ProtectedPaths[7] != ".ard/PRODUCT.md" || res.ProtectedPaths[9] != ".ard/TECH_STACK.md" || res.ProtectedPaths[16] != ".mcp.json" || res.ProtectedPaths[20] != "**/.golangci.json" {
 		t.Errorf("ProtectedPaths = %v", res.ProtectedPaths)
 	}
 	yes := []string{".github/workflows/ci.yml", ".ard/config.yaml", ".ard/triage/x/prompt.txt", "CODEOWNERS", "docs/CODEOWNERS",
 		".github/CODEOWNERS", "CLAUDE.md", "pkg/CLAUDE.md", "AGENTS.md", "a/b/AGENTS.md", ".claude/settings.json", ".mcp.json", ".golangci.yml", "sub/.golangci.toml",
-		".ard/PRODUCT.md", ".ard/VISION.md", ".ard/TECH_STACK.md"}
+		".ard/PRODUCT.md", ".ard/VISION.md", ".ard/TECH_STACK.md", ".ard/ard-init.lock"}
 	no := []string{".ard/NOTES.md", "docs/PRODUCT.md", ".ard/12/issue.md", "main.go", "docs/CODEOWNERS.md", "pkg/.mcp.json"}
 	for _, p := range yes {
 		if !res.Protected(p) {
@@ -556,110 +508,34 @@ func TestDefaultProtectedPaths(t *testing.T) {
 	}
 }
 
-func TestPlan(t *testing.T) {
-	files, err := starter()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 1; i < len(files); i++ {
-		if files[i-1].Path >= files[i].Path {
-			t.Fatalf("starter not sorted: %s, %s", files[i-1].Path, files[i].Path)
-		}
-	}
-	existing := fstest.MapFS{}
-	for _, f := range files {
-		mode := fs.FileMode(0o644)
-		if f.Exec {
-			mode = 0o755
-		}
-		existing[f.Path] = &fstest.MapFile{Data: f.Data, Mode: mode}
-	}
-	ops, err := plan(existing, files, false)
-	if err != nil || len(changed(ops)) != 0 {
-		t.Fatalf("identical tree: %v, %v", ops, err)
-	}
-	// Same bytes, lost exec bit: a difference.
-	existing[".ard/scanners/cve/scan"].Mode = 0o644
-	if _, err := plan(existing, files, false); err == nil || !strings.Contains(err.Error(), "scanners/cve/scan") {
-		t.Errorf("err = %v, want a conflict on scan", err)
-	}
-	ops, err = plan(existing, files, true)
-	if err != nil || len(changed(ops)) != 1 {
-		t.Fatalf("force: %v, %v", ops, err)
-	}
-	for _, op := range ops {
-		if (op.Act == actOverwrite) != (op.File.Path == ".ard/scanners/cve/scan") {
-			t.Errorf("force: op %+v", op)
-		}
-	}
-}
-
-func TestPlanContextFiles(t *testing.T) {
-	files, err := starter()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := ContextPaths()
-	for _, force := range []bool{false, true} {
-		// absent: created
-		ops, err := plan(fstest.MapFS{}, files, force)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, o := range ops {
-			if slices.Contains(ctx, o.File.Path) && o.Act != actCreate {
-				t.Errorf("force=%v absent %s: act %s, want add", force, o.File.Path, o.Act)
-			}
-		}
-		// present with other content, even executable: left alone, no conflict
-		existing := fstest.MapFS{}
-		for _, p := range ctx {
-			existing[p] = &fstest.MapFile{Data: []byte("mine\n"), Mode: 0o755}
-		}
-		ops, err = plan(existing, files, force)
-		if err != nil {
-			t.Fatalf("force=%v: %v", force, err)
-		}
-		for _, o := range ops {
-			if slices.Contains(ctx, o.File.Path) && o.Act != actUnchanged {
-				t.Errorf("force=%v present %s: act %s, want unchanged", force, o.File.Path, o.Act)
-			}
-		}
-	}
-}
-
 func TestInitContextFiles(t *testing.T) {
 	has := func(tree []string, p string) bool { return slices.Contains(tree, p) }
-	for _, force := range []bool{false, true} {
-		// all present with different content: none proposed, none overwritten
-		h := newHarness(t)
-		h.commitMain(t, map[string]string{".ard/PRODUCT.md": "mine\n", ".ard/VISION.md": "mine\n", ".ard/TECH_STACK.md": "mine\n"})
-		if _, err := h.run(t, force, false); err != nil {
-			t.Fatalf("force=%v: %v", force, err)
+	// all present with different content: none proposed, none overwritten
+	h := newHarness(t)
+	h.commitMain(t, map[string]string{".ard/PRODUCT.md": "mine\n", ".ard/VISION.md": "mine\n", ".ard/TECH_STACK.md": "mine\n"})
+	if _, err := h.run(t, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ContextPaths() {
+		if !has(h.tree(t, "main"), p) {
+			t.Fatalf("%s missing on main", p)
 		}
-		tree := h.tree(t, "ard-init")
-		for _, p := range ContextPaths() {
-			if !has(h.tree(t, "main"), p) {
-				t.Fatalf("%s missing on main", p)
-			}
-			_ = tree
-		}
-		if got := gittest.Run(t, h.bare, "diff", "--name-only", "main", "ard-init"); strings.Contains(got, "PRODUCT.md") || strings.Contains(got, "VISION.md") || strings.Contains(got, "TECH_STACK.md") {
-			t.Errorf("force=%v: ard-init changes context files:\n%s", force, got)
-		}
-		if got := gittest.Run(t, h.bare, "show", "ard-init:.ard/PRODUCT.md"); got != "mine\n" {
-			t.Errorf("force=%v: PRODUCT.md = %q", force, got)
-		}
+	}
+	if got := gittest.Run(t, h.bare, "diff", "--name-only", "main", "ard-init"); strings.Contains(got, "PRODUCT.md") || strings.Contains(got, "VISION.md") || strings.Contains(got, "TECH_STACK.md") {
+		t.Errorf("ard-init changes context files:\n%s", got)
+	}
+	if got := gittest.Run(t, h.bare, "show", "ard-init:.ard/PRODUCT.md"); got != "mine\n" {
+		t.Errorf("PRODUCT.md = %q", got)
+	}
 
-		// one present, two absent: only the two are proposed
-		h = newHarness(t)
-		h.commitMain(t, map[string]string{".ard/VISION.md": "mine\n"})
-		if _, err := h.run(t, force, false); err != nil {
-			t.Fatalf("force=%v: %v", force, err)
-		}
-		if got := gittest.Run(t, h.bare, "diff", "--name-only", "main", "ard-init"); strings.Contains(got, "VISION.md") || !strings.Contains(got, ".ard/PRODUCT.md") || !strings.Contains(got, ".ard/TECH_STACK.md") {
-			t.Errorf("force=%v: diff:\n%s", force, got)
-		}
+	// one present, two absent: only the two are proposed
+	h = newHarness(t)
+	h.commitMain(t, map[string]string{".ard/VISION.md": "mine\n"})
+	if _, err := h.run(t, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := gittest.Run(t, h.bare, "diff", "--name-only", "main", "ard-init"); strings.Contains(got, "VISION.md") || !strings.Contains(got, ".ard/PRODUCT.md") || !strings.Contains(got, ".ard/TECH_STACK.md") {
+		t.Errorf("diff:\n%s", got)
 	}
 }
 
@@ -668,8 +544,91 @@ func TestInitBodyProtectedPathsHint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := initBody(nil, res)
+	body := initBody(Result{}, res)
 	if !strings.Contains(body, "merge.protected_paths") || !strings.Contains(body, "`.ard/TECH_STACK.md`") {
 		t.Errorf("body lacks the protected_paths instruction:\n%s", body)
 	}
+}
+
+func TestInitLockEndToEnd(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.run(t, false); err != nil {
+		t.Fatal(err)
+	}
+	lockText := gittest.Run(t, h.bare, "show", "ard-init:"+LockPath)
+	lock, warns := ParseLock([]byte(lockText))
+	files, _ := starter()
+	if len(warns) != 0 || lock.Version != "v-test" || len(lock.Files) != len(files) {
+		t.Fatalf("lock: version %q, %d entries (want %d), warns %v", lock.Version, len(lock.Files), len(files), warns)
+	}
+
+	// Rerun against a main that has the merged tree: nothing to propose.
+	seed := map[string]string{LockPath: lockText}
+	for _, f := range files {
+		seed[f.Path] = string(f.Data)
+	}
+	h2 := newHarness(t)
+	h2.commitMain(t, seed)
+	if out, err := h2.run(t, false); err != nil || !strings.Contains(out, "nothing to propose") {
+		t.Fatalf("rerun: %q %v", out, err)
+	}
+
+	// An edited file stays untouched and its diff is printed; a dropped lock
+	// entry is listed; an untouched stale file is updated and re-locked.
+	var edited, stale string
+	for _, f := range files {
+		if f.Path == ".ard/config.yaml" || slices.Contains(ContextPaths(), f.Path) || f.Path == ".ard/scanners/cve/scan" {
+			continue
+		}
+		switch {
+		case edited == "":
+			edited = f.Path
+		case stale == "":
+			stale = f.Path
+		}
+	}
+	old := lock
+	old.Files = map[string]string{}
+	for k, v := range lock.Files {
+		old.Files[k] = v
+	}
+	old.Files[".ard/triage/gone/prompt.txt"] = hashOf([]byte("g"))
+	old.Files[stale] = hashOf([]byte("previous starter\n"))
+	oldText, _ := old.Marshal()
+	seed[LockPath] = string(oldText)
+	seed[edited] = "hand edited\n"
+	seed[stale] = "previous starter\n"
+	h3 := newHarness(t)
+	h3.commitMain(t, seed)
+	out, err := h3.run(t, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"update  " + stale, "edited " + edited + ": left alone", "+hand", ".ard/triage/gone/prompt.txt: no longer in the starter"} {
+		if !strings.Contains(out, w) && !strings.Contains(out, strings.Replace(w, "+hand", "-hand", 1)) {
+			t.Errorf("stdout lacks %q:\n%s", w, out)
+		}
+	}
+	if got := gittest.Run(t, h3.bare, "show", "ard-init:"+edited); got != "hand edited\n" {
+		t.Errorf("edited file changed: %q", got)
+	}
+	if got := gittest.Run(t, h3.bare, "diff", "--name-only", "main", "ard-init"); !strings.Contains(got, stale) || strings.Contains(got, edited) || strings.Contains(got, "gone") {
+		t.Errorf("diff:\n%s", got)
+	}
+	nl, _ := ParseLock([]byte(gittest.Run(t, h3.bare, "show", "ard-init:"+LockPath)))
+	if nl.Files[stale] != hashOf(starterData(t, stale)) || nl.Files[".ard/triage/gone/prompt.txt"] == "" {
+		t.Errorf("new lock: %v", nl.Files)
+	}
+}
+
+func starterData(t *testing.T, p string) []byte {
+	t.Helper()
+	files, _ := starter()
+	for _, f := range files {
+		if f.Path == p {
+			return f.Data
+		}
+	}
+	t.Fatalf("no starter file %s", p)
+	return nil
 }

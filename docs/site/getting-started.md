@@ -33,7 +33,7 @@ Set the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login, an
 ard init
 ```
 
-`ard init` opens a pull request with the starter `.ard/` tree: `config.yaml` and the starter role directories. Review and merge it. Then:
+`ard init` opens a pull request with the starter `.ard/` tree: `config.yaml` and the starter role directories. It also writes `.ard/ard-init.lock`, the hash of each starter file it wrote. Review and merge it. Rerunning `ard init` after an upgrade updates only files you have not edited, never touches an edited file (it prints a diff against the starter instead) and never deletes. Then:
 
 ```sh
 ard labels sync

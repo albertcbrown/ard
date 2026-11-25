@@ -16,14 +16,14 @@ import (
 
 func TestCheckInitPath(t *testing.T) {
 	ok := []string{
-		".ard/config.yaml", ".ard/PRODUCT.md", ".ard/VISION.md", ".ard/TECH_STACK.md", ".ard/scanners/cve/scan", ".ard/triage/lead/prompt.txt",
+		".ard/config.yaml", ".ard/ard-init.lock", ".ard/PRODUCT.md", ".ard/VISION.md", ".ard/TECH_STACK.md", ".ard/scanners/cve/scan", ".ard/triage/lead/prompt.txt",
 		".ard/workers/engineer/sub/x", ".ard/reviewers/eng-review/prompt.txt",
 	}
 	bad := []string{
 		"", ".ard/OTHER.md", ".ard/product.md", ".ard/sub/PRODUCT.md", ".ard/12/PRODUCT.md", ".ard/PRODUCT.md/x", ".ard/12/issue.md", ".ard/config.yml", ".ard/scanners/cve", ".ard/scanners/Bad/x",
 		".ard/scanners/cve/.git/x", ".ard/scanners/../x", ".ard/scanners/cve/../../x", ".github/workflows/x.yml",
 		"CLAUDE.md", "main.go", ".ard/scanners\\cve/x", ".ard/scanners/cve/a\nb", ".ard/scanners/12/x",
-		".ard/scanners//cve/x", "/.ard/config.yaml", ".ard/config.yaml/x",
+		".ard/scanners//cve/x", "/.ard/config.yaml", ".ard/config.yaml/x", ".ard/ard-init.lock/x", ".ard/ard-init.lockx", ".ard/ard-init.LOCK", ".ard/sub/ard-init.lock",
 		".ARD/config.yaml", ".ard/Config.yaml", ".ard/Scanners/cve/x", ".ard/scanners/cve/.GIT/x",
 		".ard/scanners/cve/.Git", ".github/x",
 	}
