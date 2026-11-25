@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRun(t *testing.T) {
@@ -271,4 +272,44 @@ func TestRunHandlers(t *testing.T) {
 			t.Error("handler context is nil")
 		}
 	})
+}
+
+func TestJobCommands(t *testing.T) {
+	const dl = "2030-01-02T03:04:05Z"
+	var gotExec JobExecOpts
+	var gotPre JobPreOpts
+	h := Handlers{
+		JobExec: func(_ context.Context, _ *Env, o JobExecOpts) error { gotExec = o; return nil },
+		JobPre:  func(_ context.Context, _ *Env, o JobPreOpts) error { gotPre = o; return nil },
+	}
+	run := func(args ...string) (int, string, string) {
+		var so, se strings.Builder
+		c := Run(args, &so, &se, h, "dev")
+		return c, so.String(), se.String()
+	}
+	if c, _, se := run("job-exec", "--deadline", dl, "--grace", "3s", "--", "agent", "-x", "--y"); c != 0 {
+		t.Fatalf("exit %d: %s", c, se)
+	}
+	if !gotExec.Deadline.Equal(time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)) || gotExec.Grace != 3*time.Second ||
+		strings.Join(gotExec.Argv, " ") != "agent -x --y" {
+		t.Errorf("exec opts = %+v", gotExec)
+	}
+	if c, _, _ := run("job-exec", "--deadline", dl); c != 2 {
+		t.Errorf("no argv: exit %d, want 2", c)
+	}
+	if c, _, _ := run("job-exec", "--deadline", dl, "agent"); c != 2 {
+		t.Errorf("argv without --: exit %d, want 2", c)
+	}
+	if c, _, se := run("job-pre", "--deadline", "tomorrow"); c != 2 || !strings.Contains(se, "deadline") {
+		t.Errorf("bad deadline: exit %d, %q", c, se)
+	}
+	if c, _, _ := run("job-pre", "--deadline", dl); c != 0 || gotPre.GitBase != "https://github.com" {
+		t.Errorf("pre: exit %d, opts %+v", c, gotPre)
+	}
+	if c, _, se := run("job-post", "--deadline", dl); c != 1 || !strings.Contains(se, "not implemented") {
+		t.Errorf("post stub: exit %d, %q", c, se)
+	}
+	if _, so, _ := run("--help"); strings.Contains(so, "job-") {
+		t.Errorf("job commands are not hidden:\n%s", so)
+	}
 }

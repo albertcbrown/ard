@@ -545,3 +545,18 @@ func (g *Git) SetExec(ctx context.Context, dir string, paths ...string) error {
 	}
 	return nil
 }
+
+// CheckoutTree writes the tree of sha into workTree with git checkout, keeping
+// symlinks and exec bits. The index and HEAD live in gitDir, so workTree gets
+// no .git. Unlike ExportTree it has no size cap and accepts symlinks. Hooks
+// are off.
+func (g *Git) CheckoutTree(ctx context.Context, gitDir, workTree, sha string) error {
+	if err := os.MkdirAll(workTree, 0o777); err != nil {
+		return fmt.Errorf("gitx: checkout %s: %w", workTree, err)
+	}
+	if _, _, err := g.run(ctx, workTree, nil, "", nil, "--git-dir", gitDir, "--work-tree", workTree,
+		"checkout", "--quiet", "--detach", "--force", sha); err != nil {
+		return fmt.Errorf("gitx: checkout %s: %w", sha, err)
+	}
+	return nil
+}

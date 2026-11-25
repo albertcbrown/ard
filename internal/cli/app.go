@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -37,6 +38,9 @@ type Handlers struct {
 	RebuildState func(ctx context.Context, e *Env, scanner string) error    // #23
 	Init         func(ctx context.Context, e *Env, o InitOpts) error        // #27
 	Setup        func(ctx context.Context, e *Env, o SetupOpts) error       // #346
+	JobPre       func(ctx context.Context, e *Env, o JobPreOpts) error      // #316
+	JobExec      func(ctx context.Context, e *Env, o JobExecOpts) error     // #316
+	JobPost      func(ctx context.Context, e *Env, o JobPostOpts) error     // #316
 }
 
 // ServeOpts is the parsed flag set of `ard serve`.
@@ -67,6 +71,27 @@ type SetupOpts struct {
 	AppName     string // --app-name
 	KeyFile     string // --key-file
 	Force       bool   // --force: overwrite an existing key file
+}
+
+// JobPreOpts is the parsed flag set of `ard job-pre`.
+type JobPreOpts struct {
+	Deadline time.Time
+	// GitBase is the git host URL, default https://github.com.
+	GitBase string
+}
+
+// JobExecOpts is the parsed flag set of `ard job-exec`.
+type JobExecOpts struct {
+	Deadline time.Time
+	// Grace is the time between SIGTERM and SIGKILL.
+	Grace time.Duration
+	// Argv is the agent command, the arguments after "--".
+	Argv []string
+}
+
+// JobPostOpts is the parsed flag set of `ard job-post`.
+type JobPostOpts struct {
+	Deadline time.Time
 }
 
 // ErrNotImplemented is returned (wrapped) by stub commands whose handler
