@@ -32,6 +32,7 @@ var (
 	ErrNothingToCommit = gitx.ErrNothingToCommit
 	ErrNonFastForward  = gitx.ErrNonFastForward
 	ErrStaleLease      = gitx.ErrStaleLease
+	ErrProtected       = gitx.ErrProtected
 	ErrTransient       = gitx.ErrTransient
 )
 

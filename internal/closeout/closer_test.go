@@ -260,6 +260,22 @@ func TestTransientCommitErrorRetries(t *testing.T) {
 	}
 }
 
+func TestProtectedCommitErrorFails(t *testing.T) {
+	e := newEnv(t)
+	j := e.lead()
+	e.cm.err = fmt.Errorf("push: %w", committer.ErrProtected)
+	out, err := New(e.d).Run(context.Background(), j)
+	if err != nil || out == OutcomeRetry {
+		t.Fatalf("Run = %s, %v", out, err)
+	}
+	if l := e.labels(7); !l["ard:executor:failed"] {
+		t.Errorf("labels = %v", l)
+	}
+	if sj := e.sjob(j.ID); !strings.Contains(sj.FailReason, "push_protected") || !strings.Contains(sj.FailReason, "ard setup --check") {
+		t.Errorf("reason = %q", sj.FailReason)
+	}
+}
+
 // TestCrashMatrix interrupts the close-out at every effect, commit and
 // state write in turn, then resumes with fresh collaborators.
 func TestCrashMatrix(t *testing.T) {

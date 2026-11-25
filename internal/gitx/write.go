@@ -3,6 +3,7 @@ package gitx
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -53,8 +54,8 @@ func (g *Git) Commit(ctx context.Context, op CommitOp) (string, error) {
 	return g.RevParse(ctx, op.Dir, "HEAD")
 }
 
-// Push pushes op.Ref. Typed errors: ErrNonFastForward, ErrStaleLease and
-// ErrTransient (the push may have landed).
+// Push pushes op.Ref. Typed errors: ErrNonFastForward, ErrStaleLease,
+// ErrProtected (GH006) and ErrTransient (the push may have landed).
 func (g *Git) Push(ctx context.Context, op PushOp) error {
 	args := []string{"push", "--porcelain"}
 	if op.ForceWithLease != "" {
@@ -82,15 +83,31 @@ func (g *Git) Push(ctx context.Context, op PushOp) error {
 		return nil
 	}
 	stderr = stdout + stderr // --porcelain reports rejections on stdout
-	switch {
-	case strings.Contains(stderr, "stale info"):
-		return fmt.Errorf("gitx: push %s: %w", op.Ref, ErrStaleLease)
-	case strings.Contains(stderr, "non-fast-forward"), strings.Contains(stderr, "fetch first"):
-		return fmt.Errorf("gitx: push %s: %w", op.Ref, ErrNonFastForward)
-	case classifyTransient(stderr):
-		return fmt.Errorf("gitx: push %s: %w: %v", op.Ref, ErrTransient, err)
+	if cerr := classifyPush(stderr); cerr != nil {
+		if errors.Is(cerr, ErrTransient) {
+			return fmt.Errorf("gitx: push %s: %w: %v", op.Ref, cerr, err)
+		}
+		return fmt.Errorf("gitx: push %s: %w", op.Ref, cerr)
 	}
 	return fmt.Errorf("gitx: push %s: %w", op.Ref, err)
+}
+
+// classifyPush maps git's push output to ErrStaleLease, ErrNonFastForward,
+// ErrProtected or ErrTransient, or nil when it names none of them. The order
+// matters: stale and non-fast-forward win over protected, which wins over
+// transient.
+func classifyPush(out string) error {
+	switch {
+	case strings.Contains(out, "stale info"):
+		return ErrStaleLease
+	case strings.Contains(out, "non-fast-forward"), strings.Contains(out, "fetch first"):
+		return ErrNonFastForward
+	case strings.Contains(out, "GH006"), strings.Contains(out, "Protected branch update failed"):
+		return ErrProtected
+	case classifyTransient(out):
+		return ErrTransient
+	}
+	return nil
 }
 
 // transientMarkers are git messages (matched case-insensitively) that name a

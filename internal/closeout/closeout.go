@@ -110,7 +110,10 @@ const (
 	// CausePushTransient: a push or fetch hit a GitHub 5xx or a network error
 	// that outlasted the committer's retries.
 	CausePushTransient CauseKind = "push_transient"
-	CauseEvicted       CauseKind = "evicted" // the Kubernetes pod was evicted, deleted or never scheduled
+	// CauseProtected: GitHub refused a push with GH006 and main had not moved,
+	// so branch protection itself blocks the App. Never retried.
+	CauseProtected CauseKind = "push_protected"
+	CauseEvicted   CauseKind = "evicted" // the Kubernetes pod was evicted, deleted or never scheduled
 	// CauseInputsTooLarge: the job's untrusted inputs exceed what a pod
 	// manifest carries. Never retried.
 	CauseInputsTooLarge CauseKind = "inputs_too_large"
@@ -648,6 +651,13 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 		// retry like any named transient cause.
 		rec.Job.Cause = Cause{Kind: CausePushTransient, Detail: "remote unavailable after retries", Transient: true, Retry: true}
 		*p = retryPlan(rec.Job, "push_transient: remote unavailable after retries")
+		p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
+		return nil
+	}
+	if errors.Is(err, committer.ErrProtected) {
+		rec.Job.Cause = Cause{Kind: CauseProtected, Detail: "push rejected by branch protection"}
+		*p = failedPlan(rec.Job, "push_protected: branch protection rejected the push and main had not moved; "+
+			"check the main ruleset's bypass list for ard's App and run `ard setup --check`: "+err.Error(), p.LogWithheld)
 		p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
 		return nil
 	}
