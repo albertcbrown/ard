@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/albertcbrown/ard/internal/cli"
+	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
@@ -86,4 +87,17 @@ func TestLocalVsMain(t *testing.T) {
 			t.Errorf("w=%q err=%v", w, err)
 		}
 	})
+}
+
+func TestCheckPermissions(t *testing.T) {
+	f := fake.New()
+	repo := github.Repo{Owner: "o", Name: "r"}
+	if r := CheckPermissions(context.Background(), f, repo); r.Status != StatusOK {
+		t.Errorf("row = %+v", r)
+	}
+	f.FailNext("ListLabels", errors.New("denied"))
+	r := CheckPermissions(context.Background(), f, repo)
+	if r.Status != StatusManual || !strings.Contains(r.Detail, "o/r") {
+		t.Errorf("row = %+v", r)
+	}
 }

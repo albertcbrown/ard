@@ -142,6 +142,18 @@ func TestRunHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("init --pr is parsed", func(t *testing.T) {
+		var opts InitOpts
+		h := Handlers{Init: func(_ context.Context, _ *Env, o InitOpts) error { opts = o; return nil }}
+		var stdout, stderr strings.Builder
+		if code := Run([]string{"init", "--pr"}, &stdout, &stderr, h, "dev"); code != 0 {
+			t.Fatalf("exit = %d (stderr: %q)", code, stderr.String())
+		}
+		if !opts.PR {
+			t.Error("InitOpts.PR = false")
+		}
+	})
+
 	t.Run("setup --check and labels sync reach their handlers", func(t *testing.T) {
 		var setup []SetupOpts
 		synced := false
