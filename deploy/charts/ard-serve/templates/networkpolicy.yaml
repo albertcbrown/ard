@@ -2,7 +2,10 @@
 ranges, or link-local metadata. "Public internet" is broad on purpose: it covers GitHub, the model API, the Go
 module proxy and checksum DB, osv.dev and vuln.go.dev for the cve scan, endoflife.date for the lts scan, and anything an agent with network fetches.
 This policy is per pod, not per role: a role's `network: false` (#276) is advisory here and is not enforced for
-agent steps; per-job egress comes with the Kubernetes executor (#54). See docs/proposal.md, Guardrails. */ -}}
+agent steps that the local executor runs in this pod. With executor k8s (#54) ard serve has no listener, so ingress
+stays empty; egress adds the job pods' post container on the result port (the controller pulls each result) and the
+kube-apiserver endpoints, which are usually inside the excepted ranges. Job pods get their own policies
+(jobs-namespace.yaml). See docs/proposal.md, Guardrails. */ -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -32,8 +35,22 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-              - 100.64.0.0/10
-              - 169.254.0.0/16
+              {{- include "ard-serve.exceptRanges" . | nindent 14 }}
+    {{- if include "ard-serve.k8s" . }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "ard-serve.jobsNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "ard-serve.jobSelector" . | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: {{ .Values.jobs.resultPort }}}
+    {{- range .Values.apiServer }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr }}
+      ports:
+        - {protocol: TCP, port: {{ .port }}}
+    {{- end }}
+    {{- end }}
