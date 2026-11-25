@@ -14,7 +14,7 @@ func newLabels(app *App) *cobra.Command {
 	}
 	labels.AddCommand(&cobra.Command{
 		Use:   "sync",
-		Short: "Create or update the ard: labels on the repository",
+		Short: "Create or update the ard: labels (alias of ard setup, labels only)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.run(cmd, func(ctx context.Context, e *Env) error {

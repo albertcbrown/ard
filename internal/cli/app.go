@@ -36,6 +36,7 @@ type Handlers struct {
 	LabelsSync   func(ctx context.Context, e *Env) error                    // #22
 	RebuildState func(ctx context.Context, e *Env, scanner string) error    // #23
 	Init         func(ctx context.Context, e *Env, o InitOpts) error        // #27
+	Setup        func(ctx context.Context, e *Env, o SetupOpts) error       // #346
 }
 
 // ServeOpts is the parsed flag set of `ard serve`.
@@ -54,6 +55,11 @@ type ConfigCheckOpts struct {
 // InitOpts is the parsed flag set of `ard init`.
 type InitOpts struct {
 	Force bool
+}
+
+// SetupOpts is the parsed flag set of `ard setup`.
+type SetupOpts struct {
+	Check bool
 }
 
 // ErrNotImplemented is returned (wrapped) by stub commands whose handler

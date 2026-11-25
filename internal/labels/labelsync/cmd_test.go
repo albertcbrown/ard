@@ -204,14 +204,14 @@ func TestResolveRepo(t *testing.T) {
 	t.Run("flag wins", func(t *testing.T) {
 		e, _ := env(clone, false)
 		e.Repo = "o/r"
-		got, err := resolveRepo(ctx, e, clone)
+		got, err := ResolveRepo(ctx, e, clone)
 		if err != nil || got != (github.Repo{Owner: "o", Name: "r"}) {
 			t.Errorf("got %v, %v", got, err)
 		}
 	})
 	t.Run("origin fallback", func(t *testing.T) {
 		e, _ := env(clone, false)
-		got, err := resolveRepo(ctx, e, clone)
+		got, err := ResolveRepo(ctx, e, clone)
 		if err != nil || got != (github.Repo{Owner: "acme", Name: "widgets"}) {
 			t.Errorf("got %v, %v", got, err)
 		}
@@ -220,14 +220,14 @@ func TestResolveRepo(t *testing.T) {
 		_, c := gittest.NewRemote(t)
 		gittest.Run(t, c, "remote", "set-url", "origin", (&url.URL{Scheme: "https", User: url.UserPassword("x", "secret"), Host: "gitlab.com", Path: "/a/b.git"}).String())
 		e, _ := env(c, false)
-		_, err := resolveRepo(ctx, e, c)
+		_, err := ResolveRepo(ctx, e, c)
 		if err == nil || strings.Contains(err.Error(), "secret") {
 			t.Errorf("err = %v, want an error without the token", err)
 		}
 	})
 	t.Run("no remote", func(t *testing.T) {
 		e, _ := env(t.TempDir(), false)
-		_, err := resolveRepo(ctx, e, t.TempDir())
+		_, err := ResolveRepo(ctx, e, t.TempDir())
 		if err == nil || !strings.Contains(err.Error(), "--repo owner/repo is required") {
 			t.Errorf("err = %v", err)
 		}

@@ -12,6 +12,7 @@ import (
 	"github.com/albertcbrown/ard/internal/initcmd"
 	"github.com/albertcbrown/ard/internal/labels/labelsync"
 	"github.com/albertcbrown/ard/internal/servecmd"
+	"github.com/albertcbrown/ard/internal/setupcmd"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -47,5 +48,6 @@ func handlers() cli.Handlers {
 		LabelsSync:   labelsync.Command,
 		RebuildState: servecmd.RebuildState,
 		Init:         initcmd.Init,
+		Setup:        setupcmd.Command,
 	}
 }

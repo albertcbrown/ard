@@ -38,6 +38,7 @@ func TestRun(t *testing.T) {
 		{"labels sync stub", []string{"labels", "sync"}, 1, nil, []string{"ard labels sync: not implemented yet (tracked in #22)"}},
 		{"rebuild-state stub", []string{"rebuild-state", "cve"}, 1, nil, []string{"ard rebuild-state: not implemented yet (tracked in #23)"}},
 		{"init stub", []string{"init"}, 1, nil, []string{"ard init: not implemented yet (tracked in #27)"}},
+		{"setup stub", []string{"setup"}, 1, nil, []string{"ard setup: not implemented yet (tracked in #346)"}},
 		{"global flags accepted before subcommand", []string{"--repo", "o/r", "--dry-run", "serve"}, 1, nil, []string{"not implemented yet"}},
 		{"global flags accepted after subcommand", []string{"serve", "--repo", "o/r", "--dry-run"}, 1, nil, []string{"not implemented yet"}},
 	}
