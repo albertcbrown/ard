@@ -5,25 +5,23 @@ attempt: 1
 verdict: approve
 findings:
   - file: "internal/setupcmd/cmd.go"
-    line: 62
+    line: 66
     severity: medium
     message: |
       The shared permission definition is still not wired into setup's Permissions row.
-      AppPermissions and CheckPermissions are used only by the manifest and tests. The issue's acceptance criterion says the definition is shared with `ard setup`'s check. The worker's report defers this to #302/#347. A maintainer should confirm the deferral. It does not block, because the row is a placeholder owned by another issue.
+      AppPermissions and CheckPermissions are used only by the manifest and tests, although the issue says the definition is shared with `ard setup`'s check. The worker defers this to another issue. A maintainer should confirm the deferral. It does not block because the row is a placeholder owned by that other issue.
   - file: "internal/setupcmd/createapp.go"
     line: 541
     severity: low
     message: |
-      --dry-run still makes a read-only GET /users/{owner}, although plan.md says dry-run makes no HTTP call. The worker's report discloses this. Consider an offline default in dry-run, or document the call.
+      --dry-run still makes a read-only GET /users/{owner} to choose the user or org URL, although plan.md says dry-run makes no HTTP call. Document the call or default offline in dry-run.
 ---
-The previous blocking bug is fixed. A failed key write after conversion now falls back to a unique path, and a test covers it. The change follows plan.md, and the remaining findings are non-blocking. Approved.
+The manifest flow, the loopback callback, the key handling and the key-file fallback match plan.md and the issue, and tests cover them. Approved; two non-blocking findings carry over from the previous round.
 
 ## Checks
-- Lint: `make lint` was not run. The worker reports a pre-existing gofmt failure in a testdata file. I ran `go test -cover ./internal/setupcmd/ ./internal/cli/`, and both packages pass.
-- Diff coverage: setupcmd is 77.0% and cli is 97.7%. The new key fallback and symlink refusal are exercised. Not exercised: the real `openBrowser`, the `lookupOwnerIsOrg` error paths and the unresolvable-home case.
+- Lint: `make lint` was not run, because the worker reports a pre-existing gofmt failure in an unrelated testdata file.
+- Tests: `go test -cover ./internal/setupcmd/ ./internal/cli/` passes. setupcmd coverage is 79.6% and cli is 97.7%. Not exercised: the real `openBrowser`, the `lookupOwnerIsOrg` error paths and the unresolvable-home case.
 
 ## Previous findings
-- internal/setupcmd/createapp.go (key lost if write fails after conversion): resolved. `WriteKeyWithFallback` is in place and tested by `TestWriteKeyFallbackAndSymlink`.
-- internal/setupcmd/cmd.go (shared permission check not wired): still present, reported again at its current line as non-blocking.
+- internal/setupcmd/cmd.go (shared permission check not wired): still present, non-blocking.
 - internal/setupcmd/createapp.go (dry-run makes a network call): still present, low.
-- internal/setupcmd/keyfile.go (--force follows a symlink): resolved. `WriteKey` refuses symlinks and a test covers it.
