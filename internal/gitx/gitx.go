@@ -25,6 +25,10 @@ var (
 	ErrNonFastForward = errors.New("gitx: push rejected: non-fast-forward")
 	// ErrStaleLease means a --force-with-lease expectation did not hold.
 	ErrStaleLease = errors.New("gitx: push rejected: stale lease")
+	// ErrTransient means a push or fetch failed for a reason that is likely to
+	// pass: a GitHub 5xx, a dropped connection, a DNS failure or a token mint
+	// that hit one. The push may or may not have landed.
+	ErrTransient = errors.New("gitx: transient remote or network failure")
 )
 
 // Git runs the git binary.

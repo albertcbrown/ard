@@ -82,6 +82,7 @@ type Pool struct {
 	demand      map[string]*loopDemand
 	firstDenied map[string]time.Time
 	starved     map[Class]bool
+	refused     map[refusalKey]*refusal
 	freed       chan struct{}
 }
 
@@ -98,6 +99,7 @@ func New(o Options) *Pool {
 		demand:      map[string]*loopDemand{},
 		firstDenied: map[string]time.Time{},
 		starved:     map[Class]bool{},
+		refused:     map[refusalKey]*refusal{},
 		freed:       make(chan struct{}, 1),
 	}
 	if p.now == nil {
@@ -199,12 +201,14 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 			if until := p.limited(c); now.Before(until) {
 				decisions[i].Verdict = DeniedLimited
 				decisions[i].Reason = "usage limit until " + until.UTC().Format("15:04") + " UTC"
+				p.noteRefusalLocked(c, DeniedLimited, now)
 				continue
 			}
 		}
 		if p.budget != nil {
 			if denied, why := p.budget(c); denied {
 				decisions[i].Verdict, decisions[i].Reason = DeniedBudget, why
+				p.noteRefusalLocked(c, DeniedBudget, now)
 				continue
 			}
 		}

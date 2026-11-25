@@ -61,6 +61,9 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 				fmt.Fprint(e.Stderr, local.HostNetworkText(string(r.Kind), r.Name))
 			}
 		}
+		if res.Executor == "k8s" {
+			fmt.Fprintln(e.Stderr, "ard config check: note: executor k8s: cluster settings come from `ard serve` flags")
+		}
 		if allReviewersGated(res) {
 			fmt.Fprintln(e.Stderr, "ard config check: warning: every reviewer has a when: rule, so a PR that matches none of them gets no review and stays a draft")
 		}

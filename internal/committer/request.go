@@ -39,6 +39,9 @@ type Result struct {
 	NoOp      bool   // the tree already matched: nothing was committed or pushed
 	Synthetic bool   // dry-run: SHA is synthetic and nothing reached the remote
 	Attempts  int    // pushes tried
+	// pushed is the commit of a push that failed with ErrTransient: it may
+	// have landed.
+	pushed string
 }
 
 // MaxFiles bounds one request.

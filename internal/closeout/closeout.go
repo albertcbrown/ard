@@ -107,6 +107,13 @@ const (
 	CauseNoProcess CauseKind = "no_process"         // never started, or its process vanished in this run
 	CauseRateLimit CauseKind = "rate_limit"         // the agent reported a transient API error
 	CauseCloneFail CauseKind = "clone_failed"       // a loop's Prepare failed at git or clone
+	// CausePushTransient: a push or fetch hit a GitHub 5xx or a network error
+	// that outlasted the committer's retries.
+	CausePushTransient CauseKind = "push_transient"
+	CauseEvicted       CauseKind = "evicted" // the Kubernetes pod was evicted, deleted or never scheduled
+	// CauseInputsTooLarge: the job's untrusted inputs exceed what a pod
+	// manifest carries. Never retried.
+	CauseInputsTooLarge CauseKind = "inputs_too_large"
 	// CauseUsageLimit: the run stopped at a subscription usage limit. It is
 	// not a failure and never hands off to the automatic retry (Retry is
 	// false); the issue is re-claimed after the reset.
@@ -333,6 +340,9 @@ type Deps struct {
 	StagingDir string
 	Log        *slog.Logger
 	Now        func() time.Time
+	// Wake, when non-nil, is called once after a job is closed, with the
+	// loops that have new work (see WakeTargets). It must not block.
+	Wake func(reason string, loops ...string)
 	// Network enables the network bounce (#385): a first-job needs-network
 	// worker is sent to the triage engineer. nil leaves it off and the worker
 	// ends needs-human. Prepare reads it for the one-round loop guard, the
@@ -557,6 +567,7 @@ func (c *Closer) advance(ctx context.Context, rec Record) (Outcome, error) {
 	if err := c.save(ctx, rec); err != nil {
 		return "", err
 	}
+	c.wake(rec)
 	if err := os.RemoveAll(filepath.Join(c.d.StagingDir, rec.Job.ID)); err != nil {
 		c.d.log().Warn("closeout: remove staging", "job", rec.Job.ID, "error", err)
 	}
@@ -624,6 +635,15 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 	tail, tailWithheld, keep := p.Tail, p.TailWithheld, p.KeepUntil
 	if isReview && errors.Is(err, committer.ErrBranchGone) {
 		c.prGone(rec, "branch gone", "branch_gone")
+		return nil
+	}
+	if errors.Is(err, committer.ErrTransient) {
+		// The remote was unavailable past the committer's retries: not a
+		// failure that needs a human. The job hands off to the automatic
+		// retry like any named transient cause.
+		rec.Job.Cause = Cause{Kind: CausePushTransient, Detail: "remote unavailable after retries", Transient: true, Retry: true}
+		*p = retryPlan(rec.Job, "push_transient: remote unavailable after retries")
+		p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
 		return nil
 	}
 	if errors.Is(err, committer.ErrMerge) {

@@ -22,6 +22,11 @@ type waiting struct {
 
 // purgeLocked drops expired demand entries and their first-denied records.
 func (p *Pool) purgeLocked(now time.Time) {
+	for k, r := range p.refused {
+		if now.Sub(r.taken) >= refusalTTL {
+			delete(p.refused, k)
+		}
+	}
 	for loop, d := range p.demand {
 		if !now.Before(d.expires) {
 			for k := range d.cands {
