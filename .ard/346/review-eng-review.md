@@ -1,31 +1,23 @@
 ---
 role: eng-review
 status: done
-attempt: 1
-verdict: changes
+attempt: 2
+verdict: approve
 findings:
-  - file: "internal/setupcmd/cmd.go"
-    line: 20
-    severity: high
-    blocking: true
-    message: |
-      plan.md's test plan names TestCheckExitsTwoOnDrift, which was not written. Command is only tested for the bad-config path.
-      The exit-code-2 mapping on --check drift, the "manual steps needed" error and the Check/DryRun interaction (`dry := e.DryRun && !o.Check`) have no test. Command takes no injectable seams, so split out the part after effects.Open (or let tests pass a fake client) and assert a *cli.ExitError with Code 2 on drift.
-  - file: "internal/cli/cmd_setup.go"
-    line: 11
-    severity: medium
-    blocking: false
-    message: |
-      The plan's cli tests were not written: that `--check` reaches `SetupOpts{Check:true}` through a handler, that `ard labels sync` still reaches LabelsSync, and that help lists `setup`. Only the nil-handler stub and the command path were added. Add a table case with a recording handler.
   - file: "internal/setupcmd/cmd.go"
     line: 84
     severity: low
     blocking: false
     message: |
-      The plan said LocalVsMain also checks the worktree; this only calls ChangedSince(root, root, origin/main, ".ard/"). Confirm this covers uncommitted edits, or document the limit.
+      LocalVsMain compares ./.ard/ with origin/main via ChangedSince(root, root, ...). Confirm it also covers uncommitted worktree edits, or document the limit in the comment. It never fails the run, so this does not block.
 ---
-The core Run/Print logic is correct and well tested, but the plan's TestCheckExitsTwoOnDrift for Command (the new exit code 2) is missing, so this needs changes.
+The previous blocking finding is fixed: TestCheckExitsTwoOnDrift and the manual-steps test now cover the exit-2 mapping. The rest follows plan.md. Approved.
 
 ## Checks
-- `make lint`: go vet passes on the changed packages. The run stopped on a parse error in `internal/roles/testdata/docs/skips/src/_x.go`, which this change does not touch.
-- `go test -cover` on setupcmd, cli and labels/...: all pass. setupcmd coverage is 66%. Command's apply and exit-code paths are not executed by any test.
+- `go vet` on setupcmd and cli is clean. I did not run the `make lint` entry point again; last round it stopped on a parse error in a testdata file this change does not touch.
+- `go test -cover` on setupcmd (75%), cli (97.6%) and labels/... (labelsync 84.4%): all pass. Command's wiring code that opens real clients is only partly executed, but the exit-code and apply logic is tested through `execute`.
+
+## Previous findings
+- internal/setupcmd/cmd.go (missing TestCheckExitsTwoOnDrift): resolved
+- internal/cli/cmd_setup.go (cli handler tests): resolved
+- internal/setupcmd/cmd.go (LocalVsMain worktree coverage): still present, low and non-blocking
