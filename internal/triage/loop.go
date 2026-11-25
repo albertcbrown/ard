@@ -95,6 +95,11 @@ type Deps struct {
 	// PlanExists reports whether .ard/<issue>/plan.md exists on main. The
 	// fan-in gate refuses to ask for approval without it. nil skips the check.
 	PlanExists func(ctx context.Context, issue int) (bool, error)
+	// MainSHA fetches main and returns its SHA. The gate calls it at most once
+	// per tick, and only for a network round. MainEntry reads one path's tree
+	// entry at that SHA (no content). nil for either holds a network round.
+	MainSHA   func(ctx context.Context) (string, error)
+	MainEntry func(ctx context.Context, sha, path string) (TreeEntry, bool, error)
 }
 
 // Loop is the triage loop. It implements controller.Loop.
@@ -104,6 +109,9 @@ type Loop struct {
 	mu       sync.Mutex
 	noLead   string // config SHA the no-lead warning was last logged for
 	noCredOK bool   // the no-credential warning was logged
+
+	mainCacheSHA string // the SHA mainCache is for; older SHAs are dropped
+	mainCache    map[string]cachedEntry
 }
 
 var _ controller.Loop = (*Loop)(nil)
@@ -252,6 +260,10 @@ type tick struct {
 	self      string
 	enabledAt time.Time
 	dry       bool
+
+	mainDone bool // MainSHA was called this tick
+	mainSHA  string
+	mainErr  error
 }
 
 func (t *tick) event(ctx context.Context, issue int, action string, outcome, reason, actor string) {

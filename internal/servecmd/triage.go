@@ -38,6 +38,7 @@ func triageLoop(w *wiring) controller.Loop {
 		Agents: reg, Parse: w.parseFunc(), Model: w.Model,
 		Repo: w.Repo.String(), RepoDir: w.Root, Log: w.Log,
 		PlanExists: planExists(w),
+		MainSHA:    mainSHA(w), MainEntry: mainEntry(w),
 	})
 }
 
@@ -53,5 +54,24 @@ func planExists(w *wiring) func(context.Context, int) (bool, error) {
 		}
 		_, ok, err := g.FileAt(ctx, w.Root, planRef, fmt.Sprintf(".ard/%d/plan.md", n), closeout.MaxRoleFileBytes)
 		return ok, err
+	}
+}
+
+// mainSHA fetches main into the gate's private ref and returns its SHA.
+func mainSHA(w *wiring) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		g := gitx.New("")
+		if err := g.FetchRef(ctx, w.Root, w.RemoteURL, "+refs/heads/main:"+planRef, w.Token); err != nil {
+			return "", fmt.Errorf("fetch main: %w", err)
+		}
+		return g.RevParse(ctx, w.Root, planRef)
+	}
+}
+
+// mainEntry reads one path's tree entry at sha; it never reads content.
+func mainEntry(w *wiring) func(context.Context, string, string) (triage.TreeEntry, bool, error) {
+	return func(ctx context.Context, sha, path string) (triage.TreeEntry, bool, error) {
+		e, ok, err := gitx.New("").EntryAt(ctx, w.Root, sha, path)
+		return triage.TreeEntry{Mode: e.Mode, Type: e.Type, Size: e.Size}, ok, err
 	}
 }

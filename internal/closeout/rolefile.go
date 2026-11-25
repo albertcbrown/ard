@@ -89,6 +89,21 @@ type RoleFile struct {
 	// Network are the inputs a needs-network worker asks for, in file order.
 	// Only a needs-network worker has them (Parse, check).
 	Network []NetworkNeed
+	// Inputs are the inputs a triage engineer declares for the worker. Only
+	// the triage engineer may have them (check).
+	Inputs []Input
+}
+
+// MaxInputs bounds the inputs of one engineer role file.
+const (
+	MaxInputs    = 10
+	MaxInputPath = 200
+)
+
+// Input is one input the engineer declares: a repo path on main, who provides
+// it ("human" or "worker") and an optional https URL it comes from.
+type Input struct {
+	Path, Provider, URL string
 }
 
 // NetworkNeed is one network input a worker could not fetch itself.
@@ -161,6 +176,12 @@ type rawNetwork struct {
 	Verify *string `yaml:"verify"`
 }
 
+type rawInput struct {
+	Path     *string `yaml:"path"`
+	Provider *string `yaml:"provider"`
+	URL      *string `yaml:"url"`
+}
+
 type rawFront struct {
 	Role    *string   `yaml:"role"`
 	Status  *string   `yaml:"status"`
@@ -172,6 +193,7 @@ type rawFront struct {
 	Findings *[]rawFinding `yaml:"findings"`
 	Fetched  *[]rawFetched `yaml:"fetched"`
 	Network  *[]rawNetwork `yaml:"network"`
+	Inputs   *[]rawInput   `yaml:"inputs"`
 }
 
 func malformed(format string, a ...any) error {
@@ -258,6 +280,11 @@ func Parse(b []byte) (RoleFile, error) {
 			return RoleFile{}, err
 		}
 	}
+	if raw.Inputs != nil {
+		if rf.Inputs, err = inputsOf(*raw.Inputs); err != nil {
+			return RoleFile{}, err
+		}
+	}
 	switch rf.Status {
 	case StatusDone, StatusBlocked, StatusNeedsHuman, StatusNeedsNetwork:
 	default:
@@ -298,6 +325,9 @@ func (rf RoleFile) check(j Job) error {
 	}
 	if len(rf.Fetched) > 0 && j.Stage != StageWorker {
 		return malformed("fetched is allowed only on a worker")
+	}
+	if len(rf.Inputs) > 0 && !(j.Stage == StageTriage && j.Role == "engineer") {
+		return malformed("inputs is allowed only for triage:engineer")
 	}
 	if rf.Status == StatusNeedsNetwork && j.Stage != StageWorker {
 		return malformed("needs-network is allowed only on a worker")
@@ -437,6 +467,38 @@ func networkOf(raw []rawNetwork) ([]NetworkNeed, error) {
 				if c < ' ' || c == 0x7f || c == 0x85 || c == 0x2028 || c == 0x2029 {
 					return nil, malformed("network %d: %s is not one line of text", n, f.name)
 				}
+			}
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// inputsOf validates the inputs of a triage engineer.
+func inputsOf(raw []rawInput) ([]Input, error) {
+	if len(raw) > MaxInputs {
+		return nil, malformed("%d inputs, max %d", len(raw), MaxInputs)
+	}
+	out := make([]Input, 0, len(raw))
+	for i, r := range raw {
+		n := i + 1
+		if r.Path == nil || strings.TrimSpace(*r.Path) == "" {
+			return nil, malformed("input %d: missing path", n)
+		}
+		if r.Provider == nil || (*r.Provider != "human" && *r.Provider != "worker") {
+			return nil, malformed("input %d: provider is not human or worker", n)
+		}
+		v := Input{Path: *r.Path, Provider: *r.Provider}
+		if len(v.Path) > MaxInputPath {
+			return nil, malformed("input %d: path is over %d bytes", n, MaxInputPath)
+		}
+		if r.URL != nil {
+			v.URL = *r.URL
+			if len(v.URL) > MaxNetworkURL {
+				return nil, malformed("input %d: url is %d bytes, max %d", n, len(v.URL), MaxNetworkURL)
+			}
+			if err := checkHTTPS(v.URL); err != nil {
+				return nil, malformed("input %d: url %v", n, err)
 			}
 		}
 		out = append(out, v)

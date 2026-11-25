@@ -179,6 +179,12 @@ type harness struct {
 	// noPlan holds issues without a plan.md; planErr fails the check.
 	noPlan  map[int]bool
 	planErr error
+	// mainFiles are the entries of main for the inputs gate; sha, shaCalls and
+	// entryCalls count the reads.
+	mainFiles  map[string]TreeEntry
+	mainSHAval string
+	shaCalls   int
+	entryCalls int
 }
 
 type option func(*harness)
@@ -242,6 +248,18 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		Pool: func() Offerer { return h.pool }, Agents: reg, Model: cred,
 		Repo: "o/r", RepoDir: t.TempDir(), Poll: 5 * time.Millisecond, Log: quiet,
 		PlanExists: func(_ context.Context, n int) (bool, error) { return !h.noPlan[n], h.planErr },
+		MainSHA: func(context.Context) (string, error) {
+			h.shaCalls++
+			if h.mainSHAval == "" {
+				return "sha1", nil
+			}
+			return h.mainSHAval, nil
+		},
+		MainEntry: func(_ context.Context, _, p string) (TreeEntry, bool, error) {
+			h.entryCalls++
+			e, ok := h.mainFiles[p]
+			return e, ok, nil
+		},
 	})
 	return h
 }
