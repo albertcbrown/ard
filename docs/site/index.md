@@ -4,6 +4,23 @@ ard makes a GitHub repository maintain itself. One `ard` process per repository 
 
 ## The loop
 
+```mermaid
+flowchart TD
+    SC["Scanners<br/>file issues"] --> I["Issue"]
+    I -->|"ard:pending"| T["Triage<br/>lead, engineer, optional roles"]
+    T --> P["plan.md"]
+    P --> A{"Human ard:approved<br/>(when require_approval)"}
+    A --> W["Worker<br/>branch, tests, draft PR"]
+    W --> R["Reviewers"]
+    R -->|"changes: review rounds,<br/>up to max_review_rounds"| W
+    R -->|"all approve: PR ready"| M["Merger<br/>reviews at head, checks green;<br/>protected paths need a human"]
+    M --> D["Merged, issue closed"]
+    T -.-> H["ard:needs-human"]
+    W -.-> H
+    R -.-> H
+    M -.-> H
+```
+
 1. **Scanners** find problems (CVEs, lint, missing tests, docs gaps, secrets) and file deduplicated issues.
 2. **Triage** roles (lead, engineer, and optionally product manager, architect, designer, documentation planner) read an issue and write `plan.md`.
 3. **Workers** implement the plan on a `worker/...` branch, run the tests and open a draft pull request.

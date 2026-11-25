@@ -1,4 +1,4 @@
-# Roles
+# Roles overview
 
 A role is a directory under `.ard/`. Its type is the parent directory, its name is the directory name, and `config.yaml` never lists it.
 
@@ -11,14 +11,14 @@ A role is a directory under `.ard/`. Its type is the parent directory, its name 
 
 A role is an agent when it has a `prompt.txt`, and an executable (for scanners) when it has a `scan` script. A role with a `Dockerfile` runs in Docker; one without runs as a host subprocess.
 
-## Starter roles
+## The four kinds
 
-`ard init` ships these:
+- [Scanners](scanners.md) find problems and file issues.
+- [Triage](triage.md) roles plan an issue.
+- [Workers](workers.md) implement a plan.
+- [Reviewers](reviewers.md) review the pull request.
 
-- **Scanners:** `cve`, `docs`, `error-codes`, `lint`, `missing-tests`, `trufflehog`, `trufflehog-history`.
-- **Triage:** `lead` (routes the issue), `engineer` (writes the implementation plan), `product-manager`, `architect`, `designer`, `documentation-planner`.
-- **Workers:** `engineer`.
-- **Reviewers:** `eng-review`, `security-review`, `license-review`, `product-manager-review`.
+Each page lists the starter roles `ard init` ships for that kind.
 
 Role directories are protected paths in the recommended config, so changing one takes a human approval.
 
