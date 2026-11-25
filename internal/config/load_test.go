@@ -86,6 +86,7 @@ func TestLoadDefaults(t *testing.T) {
 		Reviewers: Duration(5 * time.Minute),
 		Merger:    Duration(5 * time.Minute),
 		PRWatch:   Duration(5 * time.Minute),
+		Approvals: Duration(time.Minute),
 	}
 	if res.Intervals != wantIntervals {
 		t.Errorf("Intervals = %+v, want %+v", res.Intervals, wantIntervals)
@@ -705,6 +706,11 @@ func TestLoadErrors(t *testing.T) {
 			name: "unknown interval key",
 			yaml: "intervals: {scannerz: 4h}\n",
 			want: []wantErr{{".ard/config.yaml", "intervals.scannerz", "unknown key"}},
+		},
+		{
+			name: "approvals interval below minimum",
+			yaml: "intervals: {approvals: 30s}\n",
+			want: []wantErr{{".ard/config.yaml", "intervals.approvals", "must be at least 1m"}},
 		},
 		{
 			name: "prwatch interval below minimum",

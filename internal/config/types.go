@@ -45,6 +45,9 @@ type Intervals struct {
 	Reviewers Duration // default 5m
 	Merger    Duration // default 5m
 	PRWatch   Duration // default 5m
+	// Approvals is the approval watch poll: one cheap search that wakes the
+	// loop owning an approved or unblocked item (#406); default 1m.
+	Approvals Duration
 }
 
 // PRWatch configures the PR watch loop (#267).

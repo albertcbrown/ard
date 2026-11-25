@@ -79,6 +79,7 @@ func (w *wiring) closer() *closeout.Closer {
 		Repo:       w.Repo,
 		StagingDir: staging,
 		Log:        w.Log,
+		Wake:       w.wakeLoops,
 	})
 	return w.cl
 }
