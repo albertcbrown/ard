@@ -21,6 +21,9 @@ var (
 	// ErrInitExists means the ard-init branch already exists on the remote, so
 	// ard init refuses to propose again.
 	ErrInitExists = errors.New("committer: branch ard-init already exists on the remote")
+	// ErrTransient means a remote or network failure outlasted the retry
+	// budget. It wraps the last cause too.
+	ErrTransient = errors.New("committer: transient remote failure persisted")
 	// ErrClosed means Commit was called after Close.
 	ErrClosed = errors.New("committer: closed")
 )

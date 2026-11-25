@@ -107,7 +107,10 @@ const (
 	CauseNoProcess CauseKind = "no_process"         // never started, or its process vanished in this run
 	CauseRateLimit CauseKind = "rate_limit"         // the agent reported a transient API error
 	CauseCloneFail CauseKind = "clone_failed"       // a loop's Prepare failed at git or clone
-	CauseEvicted   CauseKind = "evicted"            // the Kubernetes pod was evicted, deleted or never scheduled
+	// CausePushTransient: a push or fetch hit a GitHub 5xx or a network error
+	// that outlasted the committer's retries.
+	CausePushTransient CauseKind = "push_transient"
+	CauseEvicted       CauseKind = "evicted" // the Kubernetes pod was evicted, deleted or never scheduled
 	// CauseInputsTooLarge: the job's untrusted inputs exceed what a pod
 	// manifest carries. Never retried.
 	CauseInputsTooLarge CauseKind = "inputs_too_large"
@@ -631,6 +634,15 @@ func (c *Closer) commit(ctx context.Context, rec *Record) error {
 	tail, tailWithheld, keep := p.Tail, p.TailWithheld, p.KeepUntil
 	if isReview && errors.Is(err, committer.ErrBranchGone) {
 		c.prGone(rec, "branch gone", "branch_gone")
+		return nil
+	}
+	if errors.Is(err, committer.ErrTransient) {
+		// The remote was unavailable past the committer's retries: not a
+		// failure that needs a human. The job hands off to the automatic
+		// retry like any named transient cause.
+		rec.Job.Cause = Cause{Kind: CausePushTransient, Detail: "remote unavailable after retries", Transient: true, Retry: true}
+		*p = retryPlan(rec.Job, "push_transient: remote unavailable after retries")
+		p.Tail, p.TailWithheld, p.KeepUntil = tail, tailWithheld, keep
 		return nil
 	}
 	if errors.Is(err, committer.ErrMerge) {

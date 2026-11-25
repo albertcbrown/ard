@@ -169,6 +169,9 @@ func (g *Git) fetch(ctx context.Context, repoDir, url, refspec string, token Tok
 	if token != nil {
 		tok, err := token(ctx)
 		if err != nil {
+			if ctx.Err() == nil && tokenTransient(err) {
+				return fmt.Errorf("gitx: fetch token: %w: %v", ErrTransient, err)
+			}
 			return fmt.Errorf("gitx: fetch token: %w", err)
 		}
 		env, secrets = pushEnv(tok, url), []string{tok}
@@ -207,6 +210,11 @@ func classifyFetch(stderr string, shallow bool) error {
 	}
 	if strings.Contains(stderr, "couldn't find remote ref") || (shallow && strings.Contains(stderr, "not our ref")) {
 		return ErrRefNotFound
+	}
+	// Only FetchRef: the shallow callers already treat other failures as
+	// theirs to decide.
+	if !shallow && classifyTransient(stderr) {
+		return ErrTransient
 	}
 	return nil
 }

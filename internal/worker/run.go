@@ -641,6 +641,10 @@ func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 			kind = "guard"
 		}
 		jb.log.Error("worker.push_failed", "kind", kind, "error", err)
+		if errors.Is(err, committer.ErrTransient) {
+			jb.finishWithPR(ctx, s, "", jb.cause(closeout.CausePushTransient, "could not push the branch: remote unavailable after retries", !jb.pushed))
+			return "", false
+		}
 		jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "could not push the branch: "+kind, false))
 		return "", false
 	}

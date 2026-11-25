@@ -32,6 +32,7 @@ var (
 	ErrNothingToCommit = gitx.ErrNothingToCommit
 	ErrNonFastForward  = gitx.ErrNonFastForward
 	ErrStaleLease      = gitx.ErrStaleLease
+	ErrTransient       = gitx.ErrTransient
 )
 
 // ErrSyntheticTarget is returned by Live when asked to act on a dry-run

@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -45,6 +46,11 @@ import (
 
 // maxPushes is one push plus up to 3 retries.
 const maxPushes = 4
+
+// maxTransient is the number of retries after a transient failure (5xx,
+// network), counted apart from rejections: 1s, 2s, 4s, 8s, 16s, about a
+// minute with jitter.
+const maxTransient = 5
 
 // Effects is the subset of effects.Effects the committer needs.
 type Effects interface {
@@ -118,6 +124,72 @@ func (c *core) backoff(attempt int) time.Duration {
 		return c.cfg.Backoff(attempt)
 	}
 	return 500 * time.Millisecond * time.Duration(attempt)
+}
+
+// transientBackoff is the wait before transient retry n (1-based): 1s doubling,
+// with up to 25% jitter either way. Config.Backoff replaces it in tests.
+func (c *core) transientBackoff(n int) time.Duration {
+	if c.cfg.Backoff != nil {
+		return c.cfg.Backoff(n)
+	}
+	d := time.Second << (n - 1)
+	return d - d/4 + time.Duration(rand.Int63n(int64(d/2)+1))
+}
+
+// transientWait logs committer.retry and sleeps before transient retry n. It
+// returns ctx.Err() when the context ends first.
+func (c *core) transientWait(ctx context.Context, branch string, n int, cause error) error {
+	c.log.InfoContext(ctx, "committer.retry", "branch", branch, "reason", "transient", "retry", n, "err", cause.Error())
+	t := time.NewTimer(c.transientBackoff(n))
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// exhausted wraps the last transient cause so callers can match ErrTransient.
+func exhausted(cause error) error { return fmt.Errorf("%w: %w", ErrTransient, cause) }
+
+// pushNew pushes a commit that creates branch (the lease expects it absent),
+// retrying transient failures. The push may have landed before the failure,
+// so each retry first fetches the branch: at (or past) sha it is a success;
+// at another commit it is exists.
+func (c *core) pushNew(ctx context.Context, branch, sha string, exists error, push func() error) error {
+	for n := 1; ; n++ {
+		err := push()
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, effects.ErrNonFastForward), errors.Is(err, effects.ErrStaleLease):
+			return fmt.Errorf("%w: %v", exists, err)
+		case !errors.Is(err, effects.ErrTransient):
+			return err
+		case n > maxTransient:
+			return exhausted(err)
+		}
+		if werr := c.transientWait(ctx, branch, n, err); werr != nil {
+			return werr
+		}
+		spec := "+refs/heads/" + branch + ":" + upstreamRef(branch)
+		switch ferr := c.g.FetchRef(ctx, c.cfg.RepoDir, c.cfg.RemoteURL, spec, c.cfg.Token); {
+		case ferr == nil:
+			tip, rerr := c.g.RevParse(ctx, c.cfg.RepoDir, upstreamRef(branch))
+			if rerr != nil {
+				return rerr
+			}
+			if ok, aerr := c.g.IsAncestor(ctx, c.cfg.RepoDir, sha, tip); aerr == nil && ok {
+				return nil
+			}
+			return fmt.Errorf("%w: %v", exists, err)
+		case errors.Is(ferr, gitx.ErrRefNotFound), errors.Is(ferr, effects.ErrTransient):
+			// Not landed, or unknown: push again.
+		default:
+			return ferr
+		}
+	}
 }
 
 func upstreamRef(branch string) string { return "refs/ard/upstream/" + branch }
@@ -247,12 +319,32 @@ func (l *lane) run(ctx context.Context, s snap) (Result, error) {
 	}
 	declared := s.declared
 
-	var base, prev string
+	var base, prev, pending string
+	rejections, transients := 0, 0
 	for attempt := 1; ; attempt++ {
 		var err error
 		if base, err = l.fetch(ctx); err != nil {
 			l.reset(ctx, prev)
+			if errors.Is(err, effects.ErrTransient) {
+				if transients >= maxTransient {
+					return Result{Attempts: attempt - 1}, exhausted(err)
+				}
+				transients++
+				if werr := l.transientWait(ctx, l.branch, transients, err); werr != nil {
+					return Result{Attempts: attempt - 1}, werr
+				}
+				attempt--
+				continue
+			}
 			return Result{Attempts: attempt - 1}, err
+		}
+		if pending != "" {
+			// An earlier push failed transiently and may have landed.
+			if ok, aerr := l.g.IsAncestor(ctx, l.cfg.RepoDir, pending, base); aerr == nil && ok {
+				l.reset(ctx, base)
+				return Result{SHA: pending, Attempts: attempt - 1}, nil
+			}
+			pending = ""
 		}
 		from := prev
 		if attempt == 1 {
@@ -278,13 +370,25 @@ func (l *lane) run(ctx context.Context, s snap) (Result, error) {
 			return res, nil
 		}
 		l.reset(ctx, base)
-		if !retry || attempt >= maxPushes {
+		if errors.Is(err, effects.ErrTransient) {
+			if transients >= maxTransient {
+				return res, exhausted(err)
+			}
+			transients++
+			pending, prev = res.pushed, base
+			if werr := l.transientWait(ctx, l.branch, transients, err); werr != nil {
+				return res, werr
+			}
+			continue
+		}
+		rejections++
+		if !retry || rejections >= maxPushes {
 			return res, err
 		}
 		l.log.DebugContext(ctx, "committer.retry", "branch", l.branch, "attempt", attempt, "err", err.Error())
 		prev = base
 		select {
-		case <-time.After(l.backoff(attempt)):
+		case <-time.After(l.backoff(rejections)):
 		case <-ctx.Done():
 			return res, ctx.Err()
 		}
@@ -396,12 +500,18 @@ func (l *lane) attempt(ctx context.Context, s snap, base string, create bool) (r
 	if create {
 		lease = zeroSHA
 	}
-	err = l.fx.Push(ctx, effects.PushOp{Dir: l.wt, Remote: l.cfg.RemoteURL, Ref: "HEAD:refs/heads/" + l.branch,
-		ForceWithLease: lease, Token: l.cfg.Token})
-	if create && (errors.Is(err, effects.ErrNonFastForward) || errors.Is(err, effects.ErrStaleLease)) {
-		return res, false, fmt.Errorf("%w: %v", ErrBranchExists, err)
+	push := func() error {
+		return l.fx.Push(ctx, effects.PushOp{Dir: l.wt, Remote: l.cfg.RemoteURL, Ref: "HEAD:refs/heads/" + l.branch,
+			ForceWithLease: lease, Token: l.cfg.Token})
 	}
-	if err != nil {
+	if create {
+		if err := l.pushNew(ctx, l.branch, cr.SHA, ErrBranchExists, push); err != nil {
+			return res, false, err
+		}
+		return Result{SHA: cr.SHA, Synthetic: cr.Synthetic}, false, nil
+	}
+	if err = push(); err != nil {
+		res.pushed = cr.SHA
 		return res, errors.Is(err, effects.ErrNonFastForward) || errors.Is(err, effects.ErrStaleLease), err
 	}
 	return Result{SHA: cr.SHA, Synthetic: cr.Synthetic}, false, nil
