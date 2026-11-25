@@ -11,12 +11,23 @@ theme:
     - search.suggest
 plugins:
   - search
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
 nav:
   - Overview: index.md
   - Install: install.md
   - Getting started: getting-started.md
   - Configuration: configuration.md
-  - Roles: roles.md
+  - Roles:
+      - Roles overview: roles/index.md
+      - Scanners: roles/scanners.md
+      - Triage: roles/triage.md
+      - Workers: roles/workers.md
+      - Reviewers: roles/reviewers.md
   - Operations:
       - operations.md
       - Gate 2 runbook: operations/gate-2-runbook.md
