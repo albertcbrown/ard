@@ -163,6 +163,9 @@ func RenderComment(r Record, repo github.Repo, dryRun bool) string {
 			}
 			b.WriteString("\n")
 		}
+		if p.Bounced {
+			b.WriteString("\nSent to the triage engineer to plan how to provide these inputs; the worker re-runs afterwards.\n")
+		}
 	}
 	var lines []string
 	if len(p.Requests) > 0 {
