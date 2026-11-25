@@ -23,10 +23,12 @@ check() { local label="$1"; shift; if "$@"; then pass "$label"; else fail "$labe
 DIGEST="sha256:$(printf '0123456789abcdef%.0s' 1 2 3 4)"
 COMMIT="0123456789abcdef0123456789abcdef01234567"
 ITEM="abcdefghijklmnopqrstuvwxyz"
+AGENT_DIGEST="sha256:$(printf 'fedcba9876543210%.0s' 1 2 3 4)"
 
 # ---- ard-root with a pin and site values, as a deployment repository gives them -----------------------------------
 cat >"$work/pin.yaml" <<EOF
 image: {repository: ghcr.io/albertcbrown/ard, digest: "$DIGEST", commit: "$COMMIT"}
+agentImage: {repository: ghcr.io/albertcbrown/ard-agent, digest: "$AGENT_DIGEST"}
 EOF
 cat >"$work/site.yaml" <<EOF
 site:
@@ -288,6 +290,7 @@ refused "k8s without githubCIDRs" --set 'jobs.githubCIDRs=null'
 refused "live with ReadWriteOnce home" --set storage.accessMode=ReadWriteOnce
 refused "k8s without an agent digest" --set agentImage.digest=
 refused "agent image by tag" --set agentImage.digest=latest
+refused "agent image repository with a tag" --set agentImage.repository=ghcr.io/albertcbrown/ard-agent:v1
 refused "equal agent and sidecar UIDs" --set jobs.sidecarUID=65532
 refused "non-integer UID" --set jobs.agentUID=root
 refused "non-integer result port" --set jobs.resultPort=http
@@ -295,5 +298,16 @@ refused "a githubCIDRs entry that is not an IPv4 CIDR" --set 'jobs.githubCIDRs={
 refused "an apiServer cidr that is not an IPv4 CIDR" --set 'apiServer[0].cidr=kubernetes.default'
 refused "jobs namespace equal to the release namespace" --namespace ard --set executor.jobsNamespace=ard
 refused "an instance name that is not a DNS label" --set instance.name=Bad_Name
+
+
+# ---- the agent image pin with executor local (#320) ----------------------------------------------------------------
+# pin.yaml carries an agentImage pin: ard-root passes it on, and executor local renders no ARD_K8S_* env for it.
+check "child passes the agent image pin to ard-serve" \
+  test "$(child '.spec.source.helm.valuesObject.agentImage.repository + "@" + .spec.source.helm.valuesObject.agentImage.digest')" = "ghcr.io/albertcbrown/ard-agent@$AGENT_DIGEST"
+check "executor local renders no ARD_K8S_* env even with an agent pin" \
+  test "$(ctr '.env[] | select(.name | test("^ARD_K8S_")) | .name' | grep -c . || true)" = "0"
+check "ard-root without an agent pin passes none to the child" \
+  bash -c "helm template r '$ROOT_CHART' --set image.digest=$DIGEST --set image.commit=$COMMIT | yq 'select(.kind == \"Application\") | .spec.source.helm.valuesObject | has(\"agentImage\")' | grep -qx false"
+check "k8s pod spec has no imagePullSecrets (public images)" test "$(kdep '.spec.template.spec.imagePullSecrets // [] | length')" = "0"
 
 [ "$failures" -eq 0 ] || { echo "$failures case(s) failed" >&2; exit 1; }
