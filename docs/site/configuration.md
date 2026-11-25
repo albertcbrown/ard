@@ -45,7 +45,7 @@ The Reaper runs every minute and is not configurable.
 | --- | --- | --- |
 | `merge.protected_paths` | none | A pull request touching any entry waits for human approval. There is no built-in list: removing an entry removes its gate. An entry ending in `/` is a directory prefix, anything else is a glob |
 
-`ard init` writes a recommended list that includes `.github/`, `.ard/config.yaml`, the role directories, `CODEOWNERS`, `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json` and build and deploy files.
+`ard init` writes a recommended list that includes `.github/`, `.ard/config.yaml`, `.ard/ard-init.lock`, the role directories, `CODEOWNERS`, `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json` and build and deploy files.
 
 ## Stale scanner issues
 

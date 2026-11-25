@@ -113,6 +113,7 @@ type PatchGit interface {
 	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
 	Parents(ctx context.Context, repoDir, rev string) ([]string, error)
 	PatchID(ctx context.Context, repoDir, from, to, path string) (string, error)
+	MergeTreeEqual(ctx context.Context, repoDir, merge string) (bool, error)
 }
 
 // Cover is the outcome of CoversDetail.
@@ -126,7 +127,10 @@ type Cover struct {
 // and main changed is still covered when the PR's own patch to it (stable
 // patch id of the diff from the merge base) is the same before and after the
 // update. That needs head to reach reviewed along first parents through
-// two-parent merges only (update-branch merges). Any git error fails closed.
+// two-parent merges only (update-branch merges), and every one of those merges
+// must have the tree of a clean mechanical merge of its parents, so a conflict
+// resolution, a whitespace edit or a hand-crafted merge breaks the cover. Any
+// git error fails closed.
 func CoversDetail(ctx context.Context, g PatchGit, repoDir, reviewed, head, base string, issue int) (Cover, error) {
 	return cover(ctx, g, g, repoDir, reviewed, head, base, issue)
 }
@@ -136,7 +140,8 @@ const maxChain = 100
 
 // firstUpdateMerge walks first parents from head to reviewed. It returns the
 // merge whose first parent is reviewed, or "" when head is not reached only
-// through two-parent merges.
+// through two-parent merges or one of them is not a clean mechanical merge of
+// its parents.
 func firstUpdateMerge(ctx context.Context, g PatchGit, repoDir, reviewed, head string) (string, error) {
 	cur := head
 	for i := 0; i < maxChain; i++ {
@@ -145,6 +150,13 @@ func firstUpdateMerge(ctx context.Context, g PatchGit, repoDir, reviewed, head s
 			return "", err
 		}
 		if len(ps) != 2 {
+			return "", nil
+		}
+		ok, err := g.MergeTreeEqual(ctx, repoDir, cur)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
 			return "", nil
 		}
 		if ps[0] == reviewed {

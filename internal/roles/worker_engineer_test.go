@@ -37,7 +37,7 @@ func TestEmbeddedWorkerEngineerLoadsAsWorker(t *testing.T) {
 	if r.Model != "claude-sonnet-5-5" || r.Timeout != 60*time.Minute || r.Agent != "claude" {
 		t.Errorf("model=%q timeout=%v agent=%q", r.Model, r.Timeout, r.Agent)
 	}
-	if r.Tests != "make test" || r.MaxTestFixes != 2 || r.MaxReviewRounds != 3 || r.Reviewers != nil {
+	if r.Tests != "make lint test" || r.MaxTestFixes != 2 || r.MaxReviewRounds != 3 || r.Reviewers != nil {
 		t.Errorf("tests=%q fixes=%d rounds=%d reviewers=%v", r.Tests, r.MaxTestFixes, r.MaxReviewRounds, r.Reviewers)
 	}
 	// Accepted under #84 until #55's base image: no Dockerfile, so the worker

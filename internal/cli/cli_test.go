@@ -125,7 +125,7 @@ func TestRunHandlers(t *testing.T) {
 		}
 	})
 
-	t.Run("init passes force", func(t *testing.T) {
+	t.Run("init passes the version", func(t *testing.T) {
 		var opts InitOpts
 		h := Handlers{
 			Init: func(_ context.Context, _ *Env, o InitOpts) error {
@@ -134,11 +134,11 @@ func TestRunHandlers(t *testing.T) {
 			},
 		}
 		var stdout, stderr strings.Builder
-		if code := Run([]string{"init", "--force"}, &stdout, &stderr, h, "dev"); code != 0 {
+		if code := Run([]string{"init"}, &stdout, &stderr, h, "dev"); code != 0 {
 			t.Fatalf("exit = %d, want 0 (stderr: %q)", code, stderr.String())
 		}
-		if !opts.Force {
-			t.Error("InitOpts.Force = false, want true")
+		if opts.Version != "dev" {
+			t.Errorf("InitOpts.Version = %q, want dev", opts.Version)
 		}
 	})
 
