@@ -29,6 +29,7 @@ const (
 	defaultIntervalReviewers = Duration(5 * time.Minute)
 	defaultIntervalMerger    = Duration(5 * time.Minute)
 	defaultIntervalPRWatch   = Duration(5 * time.Minute)
+	defaultIntervalApprovals = Duration(1 * time.Minute)
 
 	defaultPRWatchPendingTimeout = Duration(2 * time.Hour)
 	maxPRWatchPendingTimeout     = Duration(7 * 24 * time.Hour)
@@ -73,6 +74,7 @@ func newResolved(repoRoot string) *Resolved {
 			Reviewers: defaultIntervalReviewers,
 			Merger:    defaultIntervalMerger,
 			PRWatch:   defaultIntervalPRWatch,
+			Approvals: defaultIntervalApprovals,
 		},
 		PRWatch: PRWatch{PendingTimeout: defaultPRWatchPendingTimeout},
 		Intake:  Intake{Mode: defaultIntakeMode},
@@ -153,6 +155,7 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 	res.Intervals.Reviewers = intervalOr(raw.intervals.reviewers, res.Intervals.Reviewers)
 	res.Intervals.Merger = intervalOr(raw.intervals.merger, res.Intervals.Merger)
 	res.Intervals.PRWatch = intervalOr(raw.intervals.prwatch, res.Intervals.PRWatch)
+	res.Intervals.Approvals = intervalOr(raw.intervals.approvals, res.Intervals.Approvals)
 	for _, iv := range []struct {
 		key string
 		d   Duration
@@ -163,6 +166,7 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		{"intervals.reviewers", res.Intervals.Reviewers},
 		{"intervals.merger", res.Intervals.Merger},
 		{"intervals.prwatch", res.Intervals.PRWatch},
+		{"intervals.approvals", res.Intervals.Approvals},
 	} {
 		if iv.d < minLoopInterval {
 			errs = append(errs, &Error{File: cfgPath, Key: iv.key, Msg: fmt.Sprintf("must be at least 1m (the Reaper alone runs every minute), got %s", iv.d)})
@@ -246,6 +250,9 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 			errs = append(errs, &Error{File: cfgPath, Key: "roles_repo.ref", Msg: fmt.Sprintf("invalid ref %q: %v", entry.Ref, err)})
 		}
 		res.RolesRepo = &entry
+		if res.Executor == "k8s" {
+			errs = append(errs, &Error{File: cfgPath, Key: "roles_repo", Msg: "not supported with executor k8s yet"})
+		}
 	}
 
 	return errs

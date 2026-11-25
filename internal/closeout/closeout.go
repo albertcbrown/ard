@@ -110,6 +110,10 @@ const (
 	// CausePushTransient: a push or fetch hit a GitHub 5xx or a network error
 	// that outlasted the committer's retries.
 	CausePushTransient CauseKind = "push_transient"
+	CauseEvicted       CauseKind = "evicted" // the Kubernetes pod was evicted, deleted or never scheduled
+	// CauseInputsTooLarge: the job's untrusted inputs exceed what a pod
+	// manifest carries. Never retried.
+	CauseInputsTooLarge CauseKind = "inputs_too_large"
 	// CauseUsageLimit: the run stopped at a subscription usage limit. It is
 	// not a failure and never hands off to the automatic retry (Retry is
 	// false); the issue is re-claimed after the reset.
@@ -336,6 +340,9 @@ type Deps struct {
 	StagingDir string
 	Log        *slog.Logger
 	Now        func() time.Time
+	// Wake, when non-nil, is called once after a job is closed, with the
+	// loops that have new work (see WakeTargets). It must not block.
+	Wake func(reason string, loops ...string)
 	// Network enables the network bounce (#385): a first-job needs-network
 	// worker is sent to the triage engineer. nil leaves it off and the worker
 	// ends needs-human. Prepare reads it for the one-round loop guard.
@@ -559,6 +566,7 @@ func (c *Closer) advance(ctx context.Context, rec Record) (Outcome, error) {
 	if err := c.save(ctx, rec); err != nil {
 		return "", err
 	}
+	c.wake(rec)
 	if err := os.RemoveAll(filepath.Join(c.d.StagingDir, rec.Job.ID)); err != nil {
 		c.d.log().Warn("closeout: remove staging", "job", rec.Job.ID, "error", err)
 	}

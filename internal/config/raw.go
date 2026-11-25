@@ -42,7 +42,7 @@ type rawConfig struct {
 // rawIntervals keeps every interval optional so defaults can tell "unset"
 // apart from an explicit value.
 type rawIntervals struct {
-	scanners, triage, workers, reviewers, merger, prwatch *Duration
+	scanners, triage, workers, reviewers, merger, prwatch, approvals *Duration
 }
 
 // rawIntake keeps both keys optional so defaults can tell "unset" apart
@@ -186,12 +186,13 @@ func (ri *rawIntervals) parse(n *yaml.Node, file, prefix string) Errors {
 	set("reviewers", &ri.reviewers)
 	set("merger", &ri.merger)
 	set("prwatch", &ri.prwatch)
+	set("approvals", &ri.approvals)
 	for i := 0; i < len(n.Content); i += 2 {
 		name := n.Content[i].Value
 		switch name {
-		case "scanners", "triage", "workers", "reviewers", "merger", "prwatch":
+		case "scanners", "triage", "workers", "reviewers", "merger", "prwatch", "approvals":
 		default:
-			errs = append(errs, &Error{File: file, Key: prefix + "." + name, Msg: "unknown key (want one of scanners, triage, workers, reviewers, merger, prwatch)"})
+			errs = append(errs, &Error{File: file, Key: prefix + "." + name, Msg: "unknown key (want one of scanners, triage, workers, reviewers, merger, prwatch, approvals)"})
 		}
 	}
 	return errs

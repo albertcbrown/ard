@@ -320,7 +320,8 @@ func (jb *job) execJob(id, ref string, timeout time.Duration) executor.Job {
 	ej := executor.Job{
 		ID: id, Repo: jb.l.d.Repo.String(), Issue: jb.is.Number, Stage: stageWorker, Role: role.Name,
 		RepoDir: jb.l.d.RepoDir, Ref: ref, RoleDir: filepath.Join(cfg.Repo, filepath.FromSlash(role.Dir)),
-		Timeout: timeout,
+		RoleSource: executor.RoleSource{SHA: cfg.SHA, Path: role.Dir},
+		Timeout:    timeout,
 	}
 	if role.Dockerfile != "" {
 		ej.Dockerfile = filepath.Join(cfg.Repo, filepath.FromSlash(role.Dockerfile))
@@ -345,6 +346,9 @@ func (jb *job) runStep(ctx context.Context, ej executor.Job, command func(execut
 		jb.log.Error("worker.prepare_failed", "step", ej.ID, "error", err)
 		if errors.Is(err, executor.ErrClone) {
 			return fail(closeout.CauseCloneFail, "could not clone the repository", !jb.pushed)
+		}
+		if errors.Is(err, executor.ErrInputsTooLarge) {
+			return fail(closeout.CauseInputsTooLarge, executor.InputsTooLargeDetail, false)
 		}
 		return fail(closeout.CauseNoProcess, "could not prepare the job", false)
 	}

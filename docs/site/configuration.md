@@ -28,6 +28,7 @@ Durations are Go-style strings such as `30m` or `4h`; `d` is not accepted, so wr
 | `intervals.reviewers` | `5m` | Reviewer loop poll |
 | `intervals.merger` | `5m` | Merger loop poll |
 | `intervals.prwatch` | `5m` | PR watch loop poll (minimum `1m`): checks ard's open pull requests for human merges, closes without merge, long-pending checks and red drafts |
+| `intervals.approvals` | `1m` | Approval watch poll (minimum `1m`): one cheap search for a human adding `ard:approved` or removing `ard:needs-human` or `ard:executor:failed`; a hit wakes the loop that owns the item, so the triage interval can stay long |
 | `pr_watch.pending_timeout` | `2h` | How long a required check may stay pending before the PR watch flags it (at least the interval, at most `7d`) |
 
 The Reaper runs every minute and is not configurable.

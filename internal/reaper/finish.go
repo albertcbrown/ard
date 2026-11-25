@@ -80,12 +80,14 @@ func NewCause(sj state.Job, kind closeout.CauseKind, detail string, transient bo
 //  1. The Reaper recorded a kill reason: that cause (heartbeat_quiet and
 //     deadline are not transient; controller_restart is).
 //  2. The executor timed the job out: deadline.
-//  3. The process is gone: controller_restart (transient) when the job was
+//  3. A Gone job with an executor End (Kubernetes): evicted and clone_failed
+//     are transient; prep_failed, bad_result and no_result are no_process.
+//  4. The process is gone: controller_restart (transient) when the job was
 //     created before processStart, otherwise no_process. The latter covers a
 //     process of this run that vanished, such as a container killed from
 //     outside.
-//  4. The agent reported a transient API error: rate_limit.
-//  5. Otherwise the zero Cause: a normal close-out from the role file and the
+//  5. The agent reported a transient API error: rate_limit.
+//  6. Otherwise the zero Cause: a normal close-out from the role file and the
 //     exit code.
 //
 // Retry is set for a transient cause when sj is not itself a retry.
@@ -104,6 +106,18 @@ func CauseOf(sj state.Job, st executor.Status, res agent.Result, processStart ti
 		return NewCause(sj, kind, "killed by the Reaper", false)
 	case st.State == executor.TimedOut:
 		return NewCause(sj, closeout.CauseDeadline, "ran past its deadline", false)
+	case st.State == executor.Gone && st.End != "":
+		switch st.End {
+		case executor.EndEvicted:
+			return NewCause(sj, closeout.CauseEvicted, "pod evicted or never ran", true)
+		case executor.EndCloneFailed:
+			return NewCause(sj, closeout.CauseCloneFail, "inputs could not be fetched", true)
+		}
+		detail := st.Reason
+		if detail == "" {
+			detail = "job ended with " + string(st.End)
+		}
+		return NewCause(sj, closeout.CauseNoProcess, detail, false)
 	case st.State == executor.Gone:
 		if sj.CreatedAt.Before(processStart) {
 			return NewCause(sj, closeout.CauseRestart, "process gone after a controller restart", true)

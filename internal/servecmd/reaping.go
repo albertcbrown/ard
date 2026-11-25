@@ -68,7 +68,7 @@ func (w *wiring) closer() *closeout.Closer {
 		Roles: cfgRoles{w},
 		// The job's model credentials are in the controller's environment.
 		// Host paths are replaced by placeholders in the same pass.
-		NewRedactor: closeout.JobRedactor(os.Environ, w.hostPaths(), w.gitleaksOptions),
+		NewRedactor: closeout.JobRedactor(w.environ, w.hostPaths(), w.gitleaksOptions),
 		// Job worktrees belong to the agent: git runs in the controller's own
 		// clone (w.Root) and never trusts a worktree's .git, index or config.
 		Changed: func(ctx context.Context, worktree, base string, paths ...string) ([]gitx.PathChange, error) {
@@ -81,6 +81,7 @@ func (w *wiring) closer() *closeout.Closer {
 		Repo:       w.Repo,
 		StagingDir: staging,
 		Log:        w.Log,
+		Wake:       w.wakeLoops,
 	})
 	return w.cl
 }

@@ -47,6 +47,22 @@ type Handlers struct {
 type ServeOpts struct {
 	// Loops names the controller loops to run; empty means every loop (#187).
 	Loops []string
+	// K8s holds the cluster settings of the Kubernetes executor (#318). They
+	// are read only when the config says executor: k8s.
+	K8s K8sOpts
+}
+
+// K8sOpts are the `ard serve --k8s-*` flags. Each has an ARD_K8S_* env
+// fallback (ARD_K8S_NAMESPACE, ...), set by the chart.
+type K8sOpts struct {
+	Namespace   string // jobs namespace
+	Instance    string // app.kubernetes.io/instance value of this install
+	AgentImage  string // agent container image, pinned by digest
+	PodImage    string // image of the pre and post containers, pinned by digest
+	GitBase     string // git host base URL; default https://github.com
+	Resources   string // "cpu=1,memory=2Gi,..." override; empty = defaults
+	PreBudget   time.Duration
+	ResultGrace time.Duration
 }
 
 // ConfigCheckOpts is the parsed flag set of `ard config check`.
