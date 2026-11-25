@@ -30,34 +30,43 @@ Do **not** grant `workflows`. Without it GitHub itself rejects any push that edi
 
 Give `ard serve` the App through its environment: `ARD_GITHUB_APP_ID`, `ARD_GITHUB_INSTALLATION_ID` and the key as `ARD_GITHUB_PRIVATE_KEY_FILE` (a path) or `ARD_GITHUB_PRIVATE_KEY`.
 
-## 2. Let the App push to main
-
-ard commits its own files under `.ard/<issue#>/` straight to `main`. If `main` has a ruleset, add the App to the ruleset's bypass list. Without that, pushes fail with a `GH013` ruleset rejection.
-
-## 3. Audit the bot's commits
-
-Set the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login, and add a workflow that fails when a bot commit changes anything outside a single `.ard/<issue#>/` directory. The example is [.github/workflows/bot-commits.yml](https://github.com/albertcbrown/ard/blob/main/.github/workflows/bot-commits.yml). The App cannot write workflows, so you add this one yourself.
-
-## 4. Initialise the repository
+## 2. Initialise the repository
 
 ```sh
 ard init
 ```
 
-`ard init` opens a pull request with the starter `.ard/` tree: `config.yaml` and the starter role directories. It also writes `.ard/ard-init.lock`, the hash of each starter file it wrote. Review and merge it. Rerunning `ard init` after an upgrade updates only files you have not edited, never touches an edited file (it prints a diff against the starter instead) and never deletes. Then:
+`ard init` writes the starter `.ard/` tree into your local clone: `config.yaml` and the starter role directories. It also writes `.ard/ard-init.lock`, the hash of each starter file it wrote. Review the files, commit them on a branch and merge them by pull request. Merge with **Squash** or a **merge commit**, never fast-forward or rebase. To have ard open the pull request for you, run `ard init --pr` instead; it opens the `ard-init` PR.
+
+Nothing takes effect until the tree is merged, because `ard serve` reads its configuration from `origin/main`. Rerunning `ard init` after an upgrade updates only files you have not edited, never touches an edited file (it prints a diff against the starter instead) and never deletes.
+
+## 3. Run setup
 
 ```sh
-ard labels sync
-ard config check
+ard setup
 ```
 
-`ard labels sync` creates the `ard:` labels and never deletes one. `ard config check` prints the resolved configuration and reports every problem with its file and key.
+`ard setup` creates the `ard:` labels (it never deletes one) and checks the App's permissions, the ruleset on `main` and the App's bypass, the App permissions (no `workflows` or administration) and the merge settings. It prints one row per check: `permissions`, `labels`, `ruleset`, `app-permissions` and `merge-settings`, each with the status ok, changed, drift or manual.
+
+To report without changing anything, run `ard setup --check`. It exits with code 2 when anything has drifted.
+
+## 4. Fix any manual rows
+
+A row that setup cannot fix or read for itself prints as `manual: <name>: <fix>`. The text after the name is the exact fix, so do what it says. The usual ones:
+
+- `ruleset`: if `main` has a ruleset, it must require a pull request and let only the ard App bypass it. ard commits its own files under `.ard/<issue#>/` straight to `main`, and without the bypass those pushes fail with a `GH013` ruleset rejection.
+- `app-permissions`: remove any permission the row names from the App.
+- `merge-settings`: turn off rebase merging, as the row says.
+
+Also audit the bot's commits. Set the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login, and add a workflow that fails when a bot commit changes anything outside a single `.ard/<issue#>/` directory. The example is [.github/workflows/bot-commits.yml](https://github.com/albertcbrown/ard/blob/main/.github/workflows/bot-commits.yml). The App cannot write workflows, so you add this one yourself.
+
+Rerun `ard setup` until no row is drift or manual. `ard config check` prints the resolved configuration and reports every problem with its file and key.
 
 ## 5. Store the model credential
 
 Set `CLAUDE_CODE_OAUTH_TOKEN` (a subscription token from `claude setup-token`) or `ANTHROPIC_API_KEY` in the environment of `ard serve`. By default the token wins when both are set; `ARD_AGENT_AUTH` set to `oauth` or `apikey` forces one. The value is passed to the agent job and is never logged. If you use a subscription, turn off extra usage in the account so a usage limit is not billed as overage.
 
-## 6. Start serving
+## 6. Dry run, then go live
 
 Try a dry run first. It logs every side effect without performing it:
 
