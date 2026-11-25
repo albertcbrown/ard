@@ -9,38 +9,42 @@ findings:
     severity: high
     blocking: true
     message: |
-      The issue's wrong-key and controller-restart scenarios are not written (the worker's report admits it).
-      Issue #321 asks for: a pod with a wrong key is refused, and a controller restart kills the orphan. plan.md step 6 also names WrongKey, TokenRevokedAfterPre, PostRefusesEarly, MissingResultIsGone, OversizeFails, ControllerRestart, NetworkFalseEgress and Ingress. TestKind runs only NetworkPolicyEnforced, Admission, HappyPath and ReadWriteOncePod. Add at least WrongKey and ControllerRestart (second harness run adopting and reaping the sleeping job), and the egress/ingress scenarios, or get the owner to narrow the issue.
+      The wrong-key and controller-restart scenarios that issue #321 asks for are still not written; the worker pushed no code change this round.
+      plan.md step 6 also names TokenRevokedAfterPre, PostRefusesEarly, MissingResultIsGone, OversizeFails, NetworkFalseEgress and Ingress. TestKind runs only NetworkPolicyEnforced, Admission, HappyPath and ReadWriteOncePod. Add WrongKey and ControllerRestart (a second harness run adopts and reaps the sleeping job) and the egress and ingress scenarios, or have the owner narrow the issue.
   - file: "internal/executor/kube/e2e/inner_integration_test.go"
     line: 100
     severity: high
     blocking: true
     message: |
-      HappyPath does not check that close-out commits to the remote, which the issue requires ("a job fetches, runs, uploads, and close-out commits").
-      It asserts only the pulled result (hello.txt and role file). The fixture git server also refuses receive-pack, so a commit/push can never be observed. Allow pushes for a valid token, or check the commit another way, and assert the commit content.
+      HappyPath still does not check that close-out commits to the remote, which the issue requires.
+      It asserts only the pulled result. The fixture git server refuses receive-pack, so a push cannot be observed. Allow pushes for a valid token, or check the commit another way, and assert the commit content.
   - file: "internal/executor/kube/e2e/inner_integration_test.go"
     line: 100
     severity: medium
     blocking: false
     message: |
-      plan.md step 5 creates testdata/stub-agent.sh (embedded, with modes hello, sleep, fifo, big, probe, marker). It does not exist; the stub is presumably inline. The missing modes are what the absent scenarios need. Add the file along with those scenarios.
+      plan.md step 5's testdata/stub-agent.sh (modes hello, sleep, fifo, big, probe, marker) still does not exist; the stub is inline. Add it together with the missing scenarios.
   - file: "internal/executor/kube/e2e/kind_integration_test.go"
     line: 142
     severity: medium
     blocking: false
     message: |
-      Images and versions are unpinned (registry:2 tag, kind's default node image, kindnet enforcement of ipBlock.except not verified), against plan.md step 2. A flaky or silently weaker run is likely. Pin the registry image digest and the node image, and test ipBlock.except, since the chart's egress rules depend on it.
+      Images and versions are still unpinned (registry:2, kind's default node image), against plan.md step 2, and kindnet's enforcement of ipBlock.except is not tested. Pin the digests and test it.
   - file: "internal/executor/kube/e2e/kind_integration_test.go"
     line: 154
     severity: low
     blocking: false
     message: |
-      The registry container is attached to the kind network after the cluster is created and containerd's certs.d is written without checking that config_path is enabled in the node's containerd. If not, pulls from localhost:5001 fail on first run. The worker flagged this; it needs a human run to confirm.
+      containerd's certs.d is written without checking that config_path is enabled in the node's containerd, so pulls from localhost:5001 may fail on first run. Needs a human run to confirm.
 ---
-Changes: the change is a compiling, opt-in scaffold, but it covers only a small part of the issue. The wrong-key and controller-restart scenarios and the close-out commit assertion are missing, and the cluster test was never run.
+Still changes: the head commit adds no code over the previous round (the worker's report says it changed nothing and is waiting for a human), so both blocking findings remain.
 
 ## Checks
-- `go vet -tags integration ./internal/executor/kube/e2e/`: clean. `gofmt -l` on the package: clean.
-- `make lint` was not re-run; the worker reports that a pre-existing gofmt parse error in internal/roles/testdata appears there.
-- Diff coverage: skipped. The tests need Docker, kind and a cluster and cannot run here. The entry points skip without ARD_KIND_E2E=1.
-- The Makefile edit (the `kind-e2e` target, with `.PHONY` updated) matches plan.md step 7.
+- Lint and diff coverage were not re-run: the code is identical to the previous round, and the tests need Docker, kind and a cluster. Last round `go vet -tags integration` and `gofmt -l` on the package were clean.
+
+## Previous findings
+- internal/executor/kube/e2e/kind_integration_test.go (missing wrong-key, restart, network scenarios): still present
+- internal/executor/kube/e2e/inner_integration_test.go (no close-out commit assertion): still present
+- internal/executor/kube/e2e/inner_integration_test.go (stub-agent.sh missing): still present
+- internal/executor/kube/e2e/kind_integration_test.go (unpinned images): still present
+- internal/executor/kube/e2e/kind_integration_test.go (containerd config_path): still present
