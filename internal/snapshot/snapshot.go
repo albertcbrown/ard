@@ -41,6 +41,7 @@ type Snapshot struct {
 	Ticks   []TickView
 	Limits  LimitsView
 	Issues  []IssueView
+	Queue   []QueueItem // issues waiting for a human to add ard:approved
 	Spend   SpendView
 	Events  []Event
 	Errors  []string
@@ -120,6 +121,20 @@ type IssueView struct {
 	CostUSD *float64 // total of all recorded steps; nil when none priced
 }
 
+// QueueItem is an issue in the approval queue: triage finished and the gate
+// is waiting for ard:approved. Strings are raw; the UI sanitises them.
+type QueueItem struct {
+	Issue   int
+	Title   string
+	Role    string // worker role that starts once approved
+	PlanURL string
+}
+
+// QueueSource is the in-memory approval queue.
+type QueueSource interface {
+	Queue() []QueueItem
+}
+
 // SpendView is today's spend against the daily caps.
 type SpendView struct {
 	RepoUSD   float64
@@ -171,14 +186,15 @@ type CapSource interface {
 // (or return nil), for example before startup hooks have run; Config may
 // return nil.
 type Sources struct {
-	Pool    func() PoolSource
-	Limits  func() LimitSource
-	State   StateSource
-	Control ControlSource
-	Caps    CapSource
-	Config  func() *config.Resolved
-	Ring    *Ring
-	Now     func() time.Time
+	Pool      func() PoolSource
+	Limits    func() LimitSource
+	State     StateSource
+	Control   ControlSource
+	Caps      CapSource
+	Config    func() *config.Resolved
+	Ring      *Ring
+	Approvals QueueSource // may be nil
+	Now       func() time.Time
 }
 
 // Taker takes snapshots. It is safe for concurrent use.
@@ -237,6 +253,9 @@ func (t *Taker) Take(ctx context.Context) Snapshot {
 		if l := t.s.Limits(); l != nil {
 			snap.Limits = limitsView(l, now)
 		}
+	}
+	if t.s.Approvals != nil {
+		snap.Queue = t.s.Approvals.Queue()
 	}
 	if t.s.Ring != nil {
 		snap.Events = t.s.Ring.Events()
