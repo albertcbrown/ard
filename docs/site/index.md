@@ -6,9 +6,9 @@ ard makes a GitHub repository maintain itself. One `ard` process per repository 
 
 ```mermaid
 flowchart TB
-    subgraph Flow[" "]
+    subgraph Row[" "]
         direction LR
-        S[Scanners] --> T
+        S[Scanners] --> Issue
         subgraph Issue
             direction LR
             subgraph Plan
@@ -24,9 +24,10 @@ flowchart TB
             A --> W
             R --> M
         end
+        Issue --> C[CI/CD]
     end
     Issue <-.-> H[Human review]
-    style Flow fill:none,stroke:none
+    style Row fill:none,stroke:none
 ```
 
 1. **Scanners** find problems (CVEs, lint, missing tests, docs gaps, secrets) and file deduplicated issues.
