@@ -5,15 +5,29 @@ attempt: 1
 verdict: approve
 findings:
   - file: "internal/committer/committer.go"
-    line: 413
+    line: 397
     severity: low
     blocking: false
     message: |
-      On a protected race, protectedRace logs `committer.retry` at Info with reason=protected_race, and the loop then logs the generic Debug `committer.retry` for the same retry. The retry is logged twice. Consider skipping the generic line for this case.
+      Still present: on a protected race, protectedRace logs `committer.retry` at Info and this generic Debug `committer.retry` logs the same retry again. Skip the generic line when the error is ErrProtected.
+  - file: "internal/committer/committer.go"
+    line: 394
+    severity: low
+    blocking: false
+    message: |
+      When a run of protected races uses up the maxPushes budget, the loop returns the raw `effects.ErrProtected`, not `committer.ErrProtected`. The closeout `errors.Is(err, committer.ErrProtected)` check then misses it, so the failure gets no `push_protected` cause. This is arguably right, since main did move, but it is undocumented. TestProtectedRaceBudget accepts either error. Either wrap the exhausted case or tighten the test and say which error is expected.
+  - file: "internal/worker/run.go"
+    line: 647
+    severity: low
+    blocking: false
+    message: |
+      The new `protected` kind in the worker push_failed mapping has no test. It only changes a log field.
 ---
-The change follows the issue: GH006 is classified as `ErrProtected`, retried within the `maxPushes` budget only when main moved, and otherwise failed as `push_protected` with the ruleset and `ard setup --check` hint. Branch lanes are never retried. The tests cover each of these paths. Approved.
+The previous round's low finding (duplicate retry log) is still present, and two new low items are noted. None of them blocks. The change still matches the issue: GH006 is retried only when main moved, branch lanes never retry, and a protection failure maps to `push_protected` with the ruleset and `ard setup --check` hint. Approved.
 
 ## Checks
-- Lint: `make lint` runs `go vet ./...`, which stops on a parse error in `internal/roles/testdata/docs/skips/src/_x.go`. The change does not touch that file, so the error was already there. I did not run the other lint steps separately.
-- Tests: `go test ./internal/committer ./internal/gitx ./internal/closeout` passes.
-- Diff coverage: not run with a profile. The new tests exercise `classifyPush`, `protectedRace` (race, not-moved and budget cases), the branch lane, the closeout cause and the worker kind mapping. The worker kind mapping at `internal/worker/run.go:642` has no test.
+- Lint: not re-run this round. Last round `make lint` stopped on a pre-existing vet parse error in `internal/roles/testdata/docs/skips/src/_x.go`, a file this change does not touch.
+- Tests and coverage: not re-run. I checked the new paths by reading the code and tests. `classifyPush`, `protectedRace` (race, not-moved, budget and mixed budgets), the branch lane and the closeout cause are all exercised by the new tests.
+
+## Previous findings
+- internal/committer/committer.go (double retry log): still present
