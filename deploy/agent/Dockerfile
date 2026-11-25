@@ -4,7 +4,7 @@
 # tools (jq, yq, osv-scanner, govulncheck, golangci-lint) plus shellcheck, so
 # every starter role runs on it under `executor: k8s` (#312 gap 7 (a)).
 #
-# Published publicly as ghcr.io/albertcbrown/ard-agent, beside the ard image
+# Published publicly as ghcr.io/albertcbrown/ard/agent, beside the ard image
 # (owner decision on #320): `ard-build` builds it for linux/amd64 and
 # linux/arm64, pushes it by digest, and the deploy pin carries its digest
 # (`agentImage.digest`) next to the ard image's. Locally, `make agent-image`

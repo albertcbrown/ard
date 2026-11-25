@@ -10,7 +10,7 @@
 # assume uid 65532 or HOME=/home/ard for them. `pre` copies /usr/local/bin/ard
 # into the agent container, so ard must stay static (CGO_ENABLED=0), and it
 # fetches with git, so git (>= 2.31, for GIT_CONFIG_COUNT) must stay. The agent
-# container's image is deploy/agent/Dockerfile (ghcr.io/albertcbrown/ard-agent).
+# container's image is deploy/agent/Dockerfile (ghcr.io/albertcbrown/ard/agent).
 #
 # Builds for both platforms on a host without QEMU/binfmt: every RUN is in a
 # stage on $BUILDPLATFORM (Go cross-compiles, per-arch binaries are downloaded

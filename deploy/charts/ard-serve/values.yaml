@@ -54,7 +54,7 @@ executor:
 
 # The agent container's image (#320), pinned by digest; required with executor k8s. pre and post run image above.
 agentImage:
-  repository: ghcr.io/albertcbrown/ard-agent
+  repository: ghcr.io/albertcbrown/ard/agent
   digest: ""
 
 # The kube-apiserver endpoints ard serve reaches (executor k8s): {cidr, port} each, e.g. {cidr: 172.18.0.2/32, port: 6443}.

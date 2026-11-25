@@ -64,7 +64,7 @@ internal/gitref/            ref-name checks shared by config and executor; leaf,
 internal/repopath/          owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
 internal/initcmd/           ard init: proposes the starter .ard/ as a PR on ard-init
 Dockerfile                  the ard image (ghcr.io/albertcbrown/ard): ard plus the cve tools, also the k8s job pods' pre/post image; no RUN on the target platform
-deploy/agent/               the ard-agent image (ghcr.io/albertcbrown/ard-agent): claude, git, Go and the starter roles' tools; the k8s agent container; no secrets
+deploy/agent/               the ard-agent image (ghcr.io/albertcbrown/ard/agent): claude, git, Go and the starter roles' tools; the k8s agent container; no secrets
 deploy/argocd/              ard-root app-of-apps chart (one Application per target repo); deploy/charts/ard-serve/ one ard serve
 deploy/imagescan/           `go run ./deploy/imagescan`: the no-secrets scan of `docker export` output, used by the image tests
 deploy/test-*.sh            chart, image and repo checks for the above (`make chart-test`, `make image-test`, `make agent-image-test`); test-release.sh is `make release-check`

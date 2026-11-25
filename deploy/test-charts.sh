@@ -28,7 +28,7 @@ AGENT_DIGEST="sha256:$(printf 'fedcba9876543210%.0s' 1 2 3 4)"
 # ---- ard-root with a pin and site values, as a deployment repository gives them -----------------------------------
 cat >"$work/pin.yaml" <<EOF
 image: {repository: ghcr.io/albertcbrown/ard, digest: "$DIGEST", commit: "$COMMIT"}
-agentImage: {repository: ghcr.io/albertcbrown/ard-agent, digest: "$AGENT_DIGEST"}
+agentImage: {repository: ghcr.io/albertcbrown/ard/agent, digest: "$AGENT_DIGEST"}
 EOF
 cat >"$work/site.yaml" <<EOF
 site:
@@ -239,7 +239,7 @@ kdep_ok() {
   [ "$(kctr '.ports // [] | length')" = "0" ] || return 1
   [ "$(kctr '.args | join(" ")')" = "serve --repo albertcbrown/ard --loops scanners,stale,reaper" ] || return 1
   [ "$(kctr '.env[] | select(.name | test("^ARD_K8S_")) | .name + "=" + .value' | sort | paste -sd' ' -)" = \
-    "ARD_K8S_AGENT_IMAGE=ghcr.io/albertcbrown/ard-agent@$AGENT ARD_K8S_INSTANCE=ard-albertcbrown-ard ARD_K8S_NAMESPACE=$JNS ARD_K8S_POD_IMAGE=ghcr.io/albertcbrown/ard@$DIGEST" ] || return 1
+    "ARD_K8S_AGENT_IMAGE=ghcr.io/albertcbrown/ard/agent@$AGENT ARD_K8S_INSTANCE=ard-albertcbrown-ard ARD_K8S_NAMESPACE=$JNS ARD_K8S_POD_IMAGE=ghcr.io/albertcbrown/ard@$DIGEST" ] || return 1
   [ "$(k '.kind == "PersistentVolumeClaim"' '.spec.accessModes | join(",")')" = "ReadWriteOncePod" ] || return 1
 }
 check "live k8s deployment: no --dry-run, projected token, ARD_K8S_* env, ReadWriteOncePod home" kdep_ok
@@ -290,7 +290,7 @@ refused "k8s without githubCIDRs" --set 'jobs.githubCIDRs=null'
 refused "live with ReadWriteOnce home" --set storage.accessMode=ReadWriteOnce
 refused "k8s without an agent digest" --set agentImage.digest=
 refused "agent image by tag" --set agentImage.digest=latest
-refused "agent image repository with a tag" --set agentImage.repository=ghcr.io/albertcbrown/ard-agent:v1
+refused "agent image repository with a tag" --set agentImage.repository=ghcr.io/albertcbrown/ard/agent:v1
 refused "equal agent and sidecar UIDs" --set jobs.sidecarUID=65532
 refused "non-integer UID" --set jobs.agentUID=root
 refused "non-integer result port" --set jobs.resultPort=http
@@ -303,7 +303,7 @@ refused "an instance name that is not a DNS label" --set instance.name=Bad_Name
 # ---- the agent image pin with executor local (#320) ----------------------------------------------------------------
 # pin.yaml carries an agentImage pin: ard-root passes it on, and executor local renders no ARD_K8S_* env for it.
 check "child passes the agent image pin to ard-serve" \
-  test "$(child '.spec.source.helm.valuesObject.agentImage.repository + "@" + .spec.source.helm.valuesObject.agentImage.digest')" = "ghcr.io/albertcbrown/ard-agent@$AGENT_DIGEST"
+  test "$(child '.spec.source.helm.valuesObject.agentImage.repository + "@" + .spec.source.helm.valuesObject.agentImage.digest')" = "ghcr.io/albertcbrown/ard/agent@$AGENT_DIGEST"
 check "executor local renders no ARD_K8S_* env even with an agent pin" \
   test "$(ctr '.env[] | select(.name | test("^ARD_K8S_")) | .name' | grep -c . || true)" = "0"
 check "ard-root without an agent pin passes none to the child" \
