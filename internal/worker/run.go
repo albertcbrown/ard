@@ -904,6 +904,9 @@ func (jb *job) finish(ctx context.Context, s step, w *closeout.WorkerResult, cau
 	for _, su := range jb.usage {
 		jb.recordUsage(ctx, su)
 	}
+	if w != nil {
+		w.Pushed = jb.pushed
+	}
 	res := s.res
 	// agentStep already recorded this step's readings; recording them again
 	// here could overwrite a newer reading with this older one.

@@ -40,6 +40,14 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 	untrusted := []string{agentjob.InputDir(n) + "/issue.md"}
 	inputs = append(inputs, executor.File{Path: agentjob.InputDir(n) + "/comments.md", Data: agentjob.Comments(comments)})
 	untrusted = append(untrusted, agentjob.InputDir(n)+"/comments.md")
+	// A bounced worker's network request, from the close-out record only.
+	if needs, ok, err := closeout.NetworkRequest(ctx, d.Store, n); err != nil {
+		log.Warn("triage.network_request_unreadable", "error", err)
+	} else if ok {
+		path := agentjob.InputDir(n) + "/network-request.md"
+		inputs = append(inputs, executor.File{Path: path, Data: closeout.RenderNetworkRequest(needs)})
+		untrusted = append(untrusted, path)
+	}
 
 	// 2. The claim record.
 	data, _ := json.Marshal(map[string]string{"admission_reason": string(c.reason), "labeled_by": labeledBy(c)})

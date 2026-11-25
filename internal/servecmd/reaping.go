@@ -61,6 +61,8 @@ func (w *wiring) closer() *closeout.Closer {
 	if w.Reader != nil {
 		getPR = w.Reader.GetPR
 	}
+	// Network is deliberately unset: the network bounce (#385) stays off until
+	// part 3 of #277 lands the lead re-arm, so needs-network ends needs-human.
 	w.cl = closeout.New(closeout.Deps{
 		Effects: w.Effects, Comments: w.Reader, Committer: closeoutCommitter{w}, Store: w.Store,
 		Roles: cfgRoles{w},

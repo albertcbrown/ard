@@ -2,6 +2,7 @@ package triage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -503,5 +504,62 @@ func TestRunningWorkerJobBlocksTriage(t *testing.T) {
 	h.mustTick()
 	if len(h.ex.prepared) != 0 || h.has(n, labels.Running(labels.StageTriage, "lead")) {
 		t.Error("triage was claimed while a worker job runs")
+	}
+}
+
+func (h *harness) seedWorkerCloseout(n int, bounced bool) {
+	h.t.Helper()
+	ctx := context.Background()
+	sj, err := h.store.CreateJob(ctx, state.NewJob{Stage: "worker", Role: "engineer", Issue: n})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	b, err := json.Marshal(closeout.Record{Version: closeout.RecordVersion, Phase: closeout.PhaseClosed,
+		Job: closeout.Job{ID: sj.ID, Stage: "worker", Role: "engineer", Issue: n},
+		Plan: closeout.Plan{Outcome: closeout.OutcomeNeedsNetwork, Bounced: bounced,
+			Network: []closeout.NetworkNeed{{What: "the spec", URL: "https://example.com/spec", Why: "to read it"}}}})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := h.store.SetCloseout(ctx, sj.ID, string(closeout.PhaseClosed), b); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := h.store.Complete(ctx, sj.ID, nil); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func TestClaimNetworkRequestInput(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		seed, bounce bool
+		want         bool
+	}{{"bounced record", true, true, true}, {"not bounced", true, false, false}, {"no record", false, false, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			n := h.human("Crash", "body text", lead)
+			h.labelledBy(n, lead, "maint", "maintain", t0.Add(time.Hour))
+			if tc.seed {
+				h.seedWorkerCloseout(n, tc.bounce)
+			}
+			h.mustTick()
+			if len(h.ex.prepared) != 1 {
+				t.Fatalf("prepared %d", len(h.ex.prepared))
+			}
+			path := fmt.Sprintf(".ard-input/%d/network-request.md", n)
+			var found bool
+			for _, f := range h.ex.prepared[0].Inputs {
+				if f.Path == path {
+					found = true
+					if !strings.Contains(string(f.Data), "https://example.com/spec") || !strings.HasPrefix(string(f.Data), "UNTRUSTED INPUT") {
+						t.Errorf("data = %q", f.Data)
+					}
+				}
+			}
+			args := strings.Join(h.ex.started[0].Args, " ")
+			if found != tc.want || strings.Contains(args, path) != tc.want {
+				t.Errorf("input present = %v, listed = %v, want %v", found, strings.Contains(args, path), tc.want)
+			}
+		})
 	}
 }

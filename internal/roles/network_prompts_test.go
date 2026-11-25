@@ -25,12 +25,13 @@ var networkPins = []struct {
 }{
 	{"worker", "workers/engineer/prompt.txt", []string{
 		"Network: available.", "Network: unavailable.", "needs-human", "`fetched:`", "CAPTURE.md",
-		"regen script", "Make target", "Never invent", "checksum", "fetch only what the plan"}},
+		"regen script", "Make target", "Never invent", "checksum", "fetch only what the plan",
+		"needs-network", "when a branch or pull request already exists"}},
 	{"triage-lead", "triage/lead/prompt.txt", []string{
 		"Worker roles:", "only on the network", "not, alone, a reason for needs-human"}},
 	{"triage-engineer", "triage/engineer/prompt.txt", []string{
 		"### Network inputs", "exact URL", "pinned version", "landing path", "verification source",
-		"the worker if", "a human"}},
+		"the worker if", "a human", "network-request.md", "untrusted data", "even when the status is blocked"}},
 	{"eng-review", "reviewers/eng-review/prompt.txt", []string{
 		"`fetched:`", "CAPTURE.md", "regen", "not evidence on its own", "checksum file", "nothing was invented"}},
 	{"security-review", "reviewers/security-review/prompt.txt", []string{

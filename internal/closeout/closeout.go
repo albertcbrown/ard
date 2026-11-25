@@ -22,7 +22,7 @@ import (
 // recordVersion stays 1 across the Reaper's additions (Job.Cause, Plan.Tail,
 // Plan.TailWithheld, Plan.KeepUntil) and the usage-limit ones (Cause.Family,
 // Cause.ResetsAt, OutcomeLimited) and the network one (Plan.Network,
-// OutcomeNeedsNetwork) and Job.Home: older records decode them as zero, and
+// OutcomeNeedsNetwork, Plan.Bounced, Job.Network, WorkerResult.Pushed) and Job.Home: older records decode them as zero, and
 // zero means the earlier behaviour.
 const recordVersion = 1
 
@@ -71,6 +71,9 @@ type Job struct {
 	// placement and whether the PR head moved. nil for every other job, and
 	// for a review closed out by the Reaper after a restart.
 	Review *ReviewContext
+	// Network is set by Prepare when the network bounce is enabled; nil means
+	// it is off and a needs-network worker ends needs-human.
+	Network *NetworkState `json:",omitempty"`
 	// Usage is the job's agent usage summed over its steps (from state). The
 	// zero value renders as "not reported".
 	Usage Usage
@@ -334,6 +337,12 @@ type Deps struct {
 	StagingDir string
 	Log        *slog.Logger
 	Now        func() time.Time
+	// Network enables the network bounce (#385): a first-job needs-network
+	// worker is sent to the triage engineer. nil leaves it off and the worker
+	// ends needs-human. Prepare reads it for the one-round loop guard.
+	Network interface {
+		CloseoutsOf(ctx context.Context, issue int, stage string) ([]state.Job, error)
+	}
 }
 
 func (d Deps) log() *slog.Logger {
@@ -816,6 +825,9 @@ func (c *Closer) finish(ctx context.Context, rec Record) error {
 	}
 	for _, l := range p.Remove {
 		if err := c.d.Effects.RemoveLabel(ctx, l.Number, l.Name); err != nil {
+			if p.Bounced && errors.Is(err, github.ErrNotFound) {
+				continue
+			}
 			return fmt.Errorf("remove %s on #%d: %w", l.Name, l.Number, err)
 		}
 	}
