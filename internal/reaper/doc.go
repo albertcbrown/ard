@@ -48,7 +48,7 @@
 // # Retries
 //
 // Every retry, automatic or human, is a new job with its own id. A named
-// transient cause (rate_limit, clone_failed, controller_restart) hands off to
+// transient cause (rate_limit, clone_failed, push_transient, controller_restart) hands off to
 // one automatic retry: the failed job gets no ard:executor:failed, keeps its
 // request label, and the next claim is linked to it through retry_of. An
 // automatic retry that fails again is marked failed.

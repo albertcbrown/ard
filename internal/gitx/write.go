@@ -3,9 +3,15 @@ package gitx
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/url"
 	"strings"
+
+	"github.com/bradleyfalzon/ghinstallation/v2"
+	gogh "github.com/google/go-github/v88/github"
 )
 
 // CommitOp commits what is already staged in Dir.
@@ -51,7 +57,8 @@ func (g *Git) Commit(ctx context.Context, op CommitOp) (string, error) {
 	return g.RevParse(ctx, op.Dir, "HEAD")
 }
 
-// Push pushes op.Ref. Typed errors: ErrNonFastForward, ErrStaleLease.
+// Push pushes op.Ref. Typed errors: ErrNonFastForward, ErrStaleLease and
+// ErrTransient (the push may have landed).
 func (g *Git) Push(ctx context.Context, op PushOp) error {
 	args := []string{"push", "--porcelain"}
 	if op.ForceWithLease != "" {
@@ -66,6 +73,9 @@ func (g *Git) Push(ctx context.Context, op PushOp) error {
 	if op.Token != nil {
 		tok, err := op.Token(ctx)
 		if err != nil {
+			if ctx.Err() == nil && tokenTransient(err) {
+				return fmt.Errorf("gitx: push token: %w: %v", ErrTransient, err)
+			}
 			return fmt.Errorf("gitx: push token: %w", err)
 		}
 		env = pushEnv(tok, op.Remote)
@@ -81,8 +91,58 @@ func (g *Git) Push(ctx context.Context, op PushOp) error {
 		return fmt.Errorf("gitx: push %s: %w", op.Ref, ErrStaleLease)
 	case strings.Contains(stderr, "non-fast-forward"), strings.Contains(stderr, "fetch first"):
 		return fmt.Errorf("gitx: push %s: %w", op.Ref, ErrNonFastForward)
+	case classifyTransient(stderr):
+		return fmt.Errorf("gitx: push %s: %w: %v", op.Ref, ErrTransient, err)
 	}
 	return fmt.Errorf("gitx: push %s: %w", op.Ref, err)
+}
+
+// transientMarkers are git messages (matched case-insensitively) that name a
+// failure likely to pass on its own.
+var transientMarkers = []string{
+	"remote: internal server error",
+	"returned error: 500", "returned error: 502", "returned error: 503", "returned error: 504",
+	"could not resolve host",
+	"connection reset",
+	"operation timed out",
+	"connection timed out",
+	"failed to connect",
+	"ssl_read",
+	"early eof",
+	"rpc failed",
+}
+
+// classifyTransient reports whether git's stderr names a transient failure.
+func classifyTransient(stderr string) bool {
+	s := strings.ToLower(stderr)
+	for _, m := range transientMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenTransient reports whether a token mint or refresh error comes from the
+// network or a 5xx, not from a refusal.
+func tokenTransient(err error) bool {
+	var ne net.Error
+	var sc interface{ StatusCode() int }
+	var he *ghinstallation.HTTPError
+	var er *gogh.ErrorResponse
+	switch {
+	case err == nil:
+		return false
+	case errors.As(err, &ne), errors.Is(err, io.ErrUnexpectedEOF):
+		return true
+	case errors.As(err, &he):
+		return he.Response != nil && he.Response.StatusCode >= 500
+	case errors.As(err, &er):
+		return er.Response != nil && er.Response.StatusCode >= 500
+	case errors.As(err, &sc):
+		return sc.StatusCode() >= 500
+	}
+	return false
 }
 
 // pushEnv passes the credential to git through the environment (never argv,
