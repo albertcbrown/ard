@@ -322,3 +322,34 @@ func TestMergeClosesLinkedIssues(t *testing.T) {
 		t.Errorf("timeline = %+v", tl)
 	}
 }
+
+func TestPolicySeeders(t *testing.T) {
+	ctx := context.Background()
+	f := fake.New()
+	f.SetRulesets(github.Ruleset{ID: 1, Rules: []string{"pull_request"}})
+	f.SetMergeSettings(github.MergeSettings{})
+	f.SetApp("ard", github.AppInfo{ID: 7, Permissions: map[string]string{"contents": "write"}})
+	f.SetVariable("ARD_VERSIONING", "on")
+	if rs, err := f.ListRulesets(ctx); err != nil || len(rs) != 1 {
+		t.Errorf("rulesets = %v, %v", rs, err)
+	}
+	if m, _ := f.GetMergeSettings(ctx); m.AllowRebaseMerge {
+		t.Errorf("merge = %+v", m)
+	}
+	if a, err := f.GetApp(ctx, "ard"); err != nil || a.ID != 7 || a.Slug != "ard" {
+		t.Errorf("app = %+v, %v", a, err)
+	}
+	if id, _ := f.AppID(ctx, "ard"); id != 7 {
+		t.Errorf("id = %d", id)
+	}
+	if v, ok, _ := f.GetVariable(ctx, "ARD_VERSIONING"); !ok || v != "on" {
+		t.Errorf("var = %q %v", v, ok)
+	}
+	if _, ok, _ := f.GetVariable(ctx, "NOPE"); ok {
+		t.Error("NOPE found")
+	}
+	f.FailNext("ListRulesets", github.ErrForbidden)
+	if _, err := f.ListRulesets(ctx); !errors.Is(err, github.ErrForbidden) {
+		t.Errorf("err = %v", err)
+	}
+}

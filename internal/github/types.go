@@ -284,3 +284,36 @@ type CheckRun struct {
 	Status      string // queued|in_progress|completed|waiting|requested|pending
 	Conclusion  string // set when Status is completed
 }
+
+// Ruleset is an active branch ruleset of a repository.
+type Ruleset struct {
+	ID          int64
+	Name        string
+	Target      string        // "branch"
+	Enforcement string        // "active"
+	Branches    []string      // ref_name include patterns, e.g. "~DEFAULT_BRANCH", "refs/heads/main"
+	Exclude     []string      // ref_name exclude patterns
+	Rules       []string      // rule types, e.g. "pull_request"
+	Bypass      []BypassActor // who may bypass
+}
+
+// BypassActor is one entry of a ruleset's bypass list.
+type BypassActor struct {
+	ActorType string // "Integration", "Team", "RepositoryRole", ...
+	ActorID   int64
+	Mode      string // "always" or "pull_request"
+}
+
+// MergeSettings are the merge methods a repository allows.
+type MergeSettings struct {
+	AllowRebaseMerge bool
+	AllowSquashMerge bool
+	AllowMergeCommit bool
+}
+
+// AppInfo is the public data of a GitHub App.
+type AppInfo struct {
+	ID          int64
+	Slug        string
+	Permissions map[string]string // permission name -> "read" | "write" | "admin"
+}
