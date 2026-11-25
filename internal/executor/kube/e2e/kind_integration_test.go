@@ -139,12 +139,13 @@ func (e *env) createCluster() {
 	// A leftover registry from a kept run is reused.
 	if out, _ := run(t, 30*time.Second, nil, "docker", "inspect", "-f", "{{.State.Running}}", registry); strings.TrimSpace(out) != "true" {
 		run(t, time.Minute, nil, "docker", "rm", "-f", registry)
-		must(t, 5*time.Minute, nil, "docker", "run", "-d", "--restart=always", "-p", "127.0.0.1:5001:5000", "--name", registry, "registry:2")
+		must(t, 5*time.Minute, nil, "docker", "run", "-d", "--restart=always", "-p", "127.0.0.1:5001:5000", "--name", registry, registryImage)
 	}
-	cfg := "kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n"
-	if img := os.Getenv("ARD_KIND_NODE_IMAGE"); img != "" {
-		cfg += "  image: " + img + "\n"
+	img := os.Getenv("ARD_KIND_NODE_IMAGE")
+	if img == "" {
+		img = kindNodeImage
 	}
+	cfg := "kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n  image: " + img + "\n"
 	f := filepath.Join(t.TempDir(), "kind.yaml")
 	if err := os.WriteFile(f, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
@@ -153,11 +154,26 @@ func (e *env) createCluster() {
 	// The nodes pull localhost:5001 from the registry container over the kind network.
 	run(t, time.Minute, nil, "docker", "network", "connect", "kind", registry)
 	for _, n := range strings.Fields(must(t, time.Minute, nil, "kind", "get", "nodes", "--name", e.cluster)) {
+		// kind node images since kind 0.20 (checked: kindNodeImage, kind v0.33.0) set
+		// config_path = "/etc/containerd/certs.d", so a hosts.toml there is enough and
+		// containerd needs no restart. Fail early with a clear message if a custom
+		// ARD_KIND_NODE_IMAGE does not, instead of a pull error later.
+		if _, err := run(t, time.Minute, nil, "docker", "exec", n, "grep", "-q", `config_path = "/etc/containerd/certs.d"`, "/etc/containerd/config.toml"); err != nil {
+			t.Fatalf("node %s: containerd config_path is not /etc/containerd/certs.d (node image %s); the localhost:5001 registry mirror would not apply", n, img)
+		}
 		must(t, time.Minute, nil, "docker", "exec", n, "mkdir", "-p", "/etc/containerd/certs.d/localhost:5001")
 		must(t, time.Minute, []byte("[host.\"http://"+registry+":5000\"]\n"), "docker", "exec", "-i", n, "sh", "-c",
 			"cat > /etc/containerd/certs.d/localhost:5001/hosts.toml")
 	}
 }
+
+// Pinned fixture images (no tags). kindNodeImage is the node image kind v0.33.0
+// lists for Kubernetes 1.37 (the chart needs at least 1.30); registryImage is
+// registry 2.8.3's index digest. ARD_KIND_NODE_IMAGE overrides the node image.
+const (
+	kindNodeImage = "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
+	registryImage = "registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+)
 
 var digestRE = regexp.MustCompile(`digest: (sha256:[0-9a-f]{64})`)
 
