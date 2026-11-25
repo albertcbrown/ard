@@ -780,3 +780,87 @@ func TestStarvationWarnsOncePerEpisode(t *testing.T) {
 		t.Fatalf("re-warned after a grant: %d warnings", n)
 	}
 }
+
+func TestRefusalsLimitedAndBudget(t *testing.T) {
+	ck := &clock{t: t0.Add(1000 * time.Hour)}
+	until := ck.t.Add(time.Hour)
+	p := New(Options{
+		Max: 1, Now: ck.now,
+		Limited: func(c Candidate) time.Time {
+			if c.Role == "lim" {
+				return until
+			}
+			return time.Time{}
+		},
+		Budget: func(c Candidate) (bool, string) { return c.Role == "bud", "cap" },
+	})
+	ds := p.Offer("w", time.Minute, []Candidate{
+		cand(ClassWorker, "lim", 1, 0), cand(ClassWorker, "lim", 2, 0),
+		cand(ClassWorker, "bud", 3, 0), cand(ClassWorker, "ok", 4, 0),
+	})
+	want := []Verdict{DeniedLimited, DeniedLimited, DeniedBudget, Granted}
+	if !eq(verdicts(ds), want) {
+		t.Fatalf("verdicts = %v, want %v", verdicts(ds), want)
+	}
+	st := p.Stats()
+	got := st.RefusedBy[ClassWorker]
+	if len(got) != 2 || got[0].Role != "bud" || got[0].Reason != DeniedBudget || got[0].Count != 1 ||
+		got[1].Role != "lim" || got[1].Reason != DeniedLimited || got[1].Count != 2 {
+		t.Fatalf("RefusedBy = %+v", got)
+	}
+	if st.WaitingBy[ClassWorker] != 0 {
+		t.Errorf("refusals must not count as demand: %v", st.WaitingBy)
+	}
+	// Re-offering does not double count.
+	p.Offer("w", time.Minute, []Candidate{cand(ClassWorker, "lim", 1, 0)})
+	if n := p.Stats().RefusedBy[ClassWorker]; len(n) != 2 {
+		t.Errorf("after re-offer: %+v", n)
+	}
+	// They expire.
+	ck.t = ck.t.Add(refusalTTL)
+	if n := p.Stats().RefusedBy; len(n) != 0 {
+		t.Errorf("expired refusals still reported: %+v", n)
+	}
+}
+
+func TestRefusalsDoNotReserve(t *testing.T) {
+	run := func(limited bool) []Verdict {
+		ck := &clock{t: t0.Add(1000 * time.Hour)}
+		o := Options{Max: 1, Now: ck.now}
+		if limited {
+			o.Limited = func(c Candidate) time.Time {
+				if c.Role == "lim" {
+					return ck.t.Add(time.Hour)
+				}
+				return time.Time{}
+			}
+		}
+		p := New(o)
+		p.Offer("a", time.Minute, []Candidate{cand(ClassTriage, "lim", 1, 0)})
+		return verdicts(p.Offer("b", time.Minute, []Candidate{cand(ClassWorker, "w", 2, 0)}))
+	}
+	if got := run(true); !eq(got, []Verdict{Granted}) {
+		t.Errorf("limited higher-class candidate held a slot back: %v", got)
+	}
+}
+
+func TestHeldSlots(t *testing.T) {
+	p, _ := newPool(3, Held{Candidate: cand(ClassWorker, "w", 1, 0), JobID: "J1"})
+	ds := p.Offer("t", time.Minute, []Candidate{cand(ClassTriage, "lead", 2, 0)})
+	ds[0].Slot.SetJobID("J2")
+	hs := p.HeldSlots()
+	if len(hs) != 2 || hs[1].Key != "worker/w/1" || !hs[1].Adopted || hs[1].JobID != "J1" || hs[0].Adopted || hs[0].JobID != "J2" || hs[0].Candidate.Role != "lead" {
+		t.Fatalf("HeldSlots = %+v", hs)
+	}
+}
+
+func TestWaitingRoles(t *testing.T) {
+	p, ck := newPool(1, Held{Candidate: cand(ClassWorker, "w", 1, 0), JobID: "J1"})
+	p.Offer("t", time.Minute, []Candidate{cand(ClassTriage, "lead", 2, 0), cand(ClassTriage, "lead", 3, 0), cand(ClassTriage, "eng", 4, 0)})
+	ck.t = ck.t.Add(10 * time.Second)
+	st := p.Stats()
+	if len(st.WaitingRoles) != 2 || st.WaitingRoles[0].Role != "eng" || st.WaitingRoles[1].Role != "lead" ||
+		st.WaitingRoles[1].Count != 2 || st.WaitingRoles[1].Oldest != 10*time.Second || st.WaitingBy[ClassTriage] != 3 {
+		t.Fatalf("WaitingRoles = %+v", st.WaitingRoles)
+	}
+}
