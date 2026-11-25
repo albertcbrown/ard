@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
+	"github.com/albertcbrown/ard/internal/wtlock"
 )
 
 var author = Identity{Name: "ard[bot]", Email: "1+ard[bot]@users.noreply.github.com"}
@@ -534,5 +535,57 @@ func TestIsAncestorAndParents(t *testing.T) {
 	}
 	if ps, err = g.Parents(ctx, clone, other); err != nil || len(ps) != 1 || ps[0] != base {
 		t.Errorf("parents = %v, %v", ps, err)
+	}
+}
+
+func TestFetchSerialisedWithWorktreeAdmin(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	remote, clone := gittest.NewRemote(t)
+	common, err := g.commonDir(ctx, clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := wtlock.Lock(ctx, common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- g.FetchRef(ctx, clone, "file://"+remote, "+refs/heads/main:refs/ard/upstream/main", nil)
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("fetch finished while the exclusive lock was held: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetch did not finish after unlock")
+	}
+}
+
+func TestFetchSharedWithFetch(t *testing.T) {
+	ctx := context.Background()
+	g := New("")
+	remote, clone := gittest.NewRemote(t)
+	common, err := g.commonDir(ctx, clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := wtlock.RLock(ctx, common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	short, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := g.FetchRef(short, clone, "file://"+remote, "+refs/heads/main:refs/ard/upstream/main", nil); err != nil {
+		t.Fatalf("fetch blocked by a shared holder: %v", err)
 	}
 }

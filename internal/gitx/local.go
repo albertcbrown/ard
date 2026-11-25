@@ -21,20 +21,49 @@ import (
 // under the shared lock, so one hung git cannot stall every lane.
 const worktreeAdminTimeout = 30 * time.Second
 
-// worktreeLock takes the process-wide worktree-administration lock for the
-// repository at repoDir, keyed by its common git directory.
-func (g *Git) worktreeLock(ctx context.Context, repoDir string) (func(), error) {
+// commonDir returns the absolute common git directory of repoDir.
+func (g *Git) commonDir(ctx context.Context, repoDir string) (string, error) {
 	out, _, err := g.run(ctx, repoDir, nil, "", nil, "rev-parse", "--git-common-dir")
 	if err != nil {
-		return nil, fmt.Errorf("gitx: worktree lock %s: %w", repoDir, err)
+		return "", err
 	}
 	dir := strings.TrimSpace(out)
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(repoDir, dir)
 	}
+	return dir, nil
+}
+
+// worktreeLock takes the process-wide worktree-administration lock
+// exclusively for the repository at repoDir, keyed by its common git
+// directory.
+func (g *Git) worktreeLock(ctx context.Context, repoDir string) (func(), error) {
+	dir, err := g.commonDir(ctx, repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: worktree lock %s: %w", repoDir, err)
+	}
 	unlock, err := wtlock.Lock(ctx, dir)
 	if err != nil {
 		return nil, fmt.Errorf("gitx: worktree lock %s: %w", repoDir, err)
+	}
+	return unlock, nil
+}
+
+// fetchLock takes the shared side of the same lock: a fetch reads every
+// <common-dir>/worktrees entry and aborts on one that is half added or
+// removed. When repoDir is not a repository yet there are no worktrees to
+// race, so it returns a no-op unlock.
+func (g *Git) fetchLock(ctx context.Context, repoDir string) (func(), error) {
+	dir, err := g.commonDir(ctx, repoDir)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("gitx: fetch lock %s: %w", repoDir, ctx.Err())
+		}
+		return func() {}, nil
+	}
+	unlock, err := wtlock.RLock(ctx, dir)
+	if err != nil {
+		return nil, fmt.Errorf("gitx: fetch lock %s: %w", repoDir, err)
 	}
 	return unlock, nil
 }
@@ -77,16 +106,16 @@ func (g *Git) Version(ctx context.Context) (major, minor int, err error) {
 
 // WorktreeAdd checks ref out detached at path. Detached, because the branch
 // may already be checked out elsewhere and git refuses a second checkout.
-// Serialised per repository with every other worktree add/remove in this
-// process (internal/wtlock).
+// Serialised per repository with every other worktree add/remove and every
+// fetch in this process (internal/wtlock, exclusive side).
 func (g *Git) WorktreeAdd(ctx context.Context, repoDir, path, ref string) error {
-	ctx, cancel := context.WithTimeout(ctx, worktreeAdminTimeout)
-	defer cancel()
 	unlock, err := g.worktreeLock(ctx, repoDir)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, worktreeAdminTimeout)
+	defer cancel()
 	if _, _, err := g.run(ctx, repoDir, nil, "", nil, "worktree", "add", "--detach", "--force", path, ref); err != nil {
 		return fmt.Errorf("gitx: worktree add %s: %w", path, err)
 	}
@@ -96,16 +125,21 @@ func (g *Git) WorktreeAdd(ctx context.Context, repoDir, path, ref string) error 
 // WorktreeRemove deletes the worktree at path, whatever state it is in, and
 // prunes stale registrations. A missing worktree is not an error. It is
 // cleanup, so it runs even when ctx is cancelled, bounded by a 30 s deadline.
-// Serialised per repository with every other worktree add/remove in this
-// process (internal/wtlock).
+// Serialised per repository with every other worktree add/remove and every
+// fetch in this process (internal/wtlock, exclusive side).
 func (g *Git) WorktreeRemove(ctx context.Context, repoDir, path string) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), worktreeAdminTimeout)
-	defer cancel()
-	unlock, err := g.worktreeLock(ctx, repoDir)
+	ctx = context.WithoutCancel(ctx)
+	// The lock wait is bounded generously (a fetch may hold the shared side
+	// for a long time); the 30 s deadline covers only the git commands.
+	lockCtx, lockCancel := context.WithTimeout(ctx, 10*time.Minute)
+	unlock, err := g.worktreeLock(lockCtx, repoDir)
+	lockCancel()
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, worktreeAdminTimeout)
+	defer cancel()
 	_, _, _ = g.run(ctx, repoDir, nil, "", nil, "worktree", "remove", "--force", path)
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("gitx: remove %s: %w", path, err)
@@ -139,6 +173,11 @@ func (g *Git) fetch(ctx context.Context, repoDir, url, refspec string, token Tok
 		}
 		env, secrets = pushEnv(tok, url), []string{tok}
 	}
+	unlock, err := g.fetchLock(ctx, repoDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--quiet"}
 	if shallow {
 		args = []string{"-c", "gc.auto=0", "fetch", "--depth=1", "--no-tags", "--no-write-fetch-head", "--quiet"}
