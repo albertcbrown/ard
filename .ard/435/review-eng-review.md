@@ -5,17 +5,20 @@ attempt: 1
 verdict: approve
 findings:
   - file: "internal/worker/prretry.go"
-    line: 114
+    line: 116
     severity: low
     blocking: false
     message: |
-      reopenPR does not check ctx.Err() after createWithRetry fails, unlike openPR in run.go.
+      reopenPR still calls failCreate without checking ctx.Err() after createWithRetry fails.
       On shutdown during backoff the job is failed with pr_create_failed and the record is
-      rewritten, instead of being left running for the Reaper. Add the same ctx.Err() guard
-      before failCreate.
+      rewritten, instead of being left running for the Reaper. openPR in run.go has this guard;
+      add the same check before failCreate.
 ---
-The change follows plan.md and the issue. CreatePR is retried with backoff, a failed create after a push records the close-out and ends with `pr_create_failed`, and removing the label reopens the PR without an agent when the branch is unchanged. The new paths have tests, and only a small shutdown edge case remains.
+The change follows plan.md and the issue: CreatePR is retried with backoff, a failed create after a push records the close-out and ends `pr_create_failed`, and removing the label reopens the PR without an agent. Approved. The one earlier finding is low severity and does not block.
 
 ## Checks
-- Lint: `make lint` printed dependency downloads and one parse error in `internal/roles/testdata/docs/skips/src/_x.go`, a file this change does not touch. I treat that as pre-existing and found no lint problems in the changed files.
-- Tests with coverage: `go test -cover ./internal/worker ./internal/state ./internal/closeout` passes (81.7%, 84.0%, 90.2%). The new tests cover retry then open, always failing, reopen, branch moved, existing PR, dry-run and no-push.
+- Lint: not re-run this round. The previous round's `make lint` showed only a pre-existing parse error in an untouched testdata file.
+- Tests: `go test ./internal/worker` passes. The new tests cover retry then open, non-transient failure, reopen, close-out commit tolerance, branch moved, existing PR, dry-run, no-push and cancelled sleep.
+
+## Previous findings
+- internal/worker/prretry.go (missing ctx.Err() guard in reopenPR): still present, now at line 116.
