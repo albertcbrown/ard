@@ -1,15 +1,19 @@
 # Pinned tool image for the security-review aid (docs/proposal.md, Reviewer
 # loop, step 3). Tools: gosec, gitleaks and semgrep, plus jq.
 #
-# Verification pending human: this file was written without network access.
-#   - The versions below were not rebuilt from this file. Build it, run the
-#     integration test (`go test -tags integration ./internal/roles -run
-#     SecurityReviewAid`) and confirm the versions are current before merge.
-#   - gosec and gitleaks are built from source with the image's Go (integrity
-#     from the Go module proxy and checksum database, as golangci-lint is in the
-#     lint scanner's image). Replace the versions by the ones the owner approves.
-#   - semgrep is installed from PyPI at a pinned version. Add --require-hashes
-#     with a hash-pinned requirements file once the hashes are verified.
+# Versions verified 2026-11-24 (each the newest release at least two weeks old):
+#   - gosec v2.30.0 (2026-10-23) and gitleaks v8.30.1 (2026-03-21) are built from
+#     source with the image's Go; `go install` verifies them against the Go
+#     checksum database (sum.golang.org):
+#       github.com/securego/gosec/v2 v2.30.0 h1:67aF6LHa7SAL6QEc4es857GrXTT50gUqmrl0XPhtDx0=
+#       github.com/zricethezav/gitleaks/v8 v8.30.1 h1:PmEvCfVI7ti9dV3s5aMZUY7sS2GxRvG3yzih7E+cS3w=
+#   - semgrep 1.185.0 (2026-11-10) is installed from PyPI. Its own wheels are
+#     manylinux_2_34_x86_64 sha256 0eb6aaadad5b957af96d1300487e10af1dc8016e8ef53072effb48cd4906c02b
+#     and manylinux_2_34_aarch64 sha256 8cffbaf80abb8e39abc6d7a86588dcf94b7ddc1f40e8e16e555a1116347be3ef;
+#     its dependencies are not hash-locked yet (needs a lock built with network
+#     access; follow-up).
+#   - Build it and run the integration test (`go test -tags integration
+#     ./internal/roles -run SecurityReviewAid`) before relying on the image.
 #   - jq's checksums are the ones in scanners/lint/Dockerfile.
 #
 # The image does NOT copy `aid`, `normalize.jq` or `rules/`: the executor
@@ -19,8 +23,8 @@
 ARG GO_IMAGE=golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d
 
 FROM ${GO_IMAGE} AS gotools
-ARG GOSEC_VERSION=v2.22.0
-ARG GITLEAKS_VERSION=v8.30.0
+ARG GOSEC_VERSION=v2.30.0
+ARG GITLEAKS_VERSION=v8.30.1
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} \
  && CGO_ENABLED=0 GOBIN=/out go install github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
 
@@ -46,7 +50,7 @@ RUN set -eu; \
 # gosec needs a Go toolchain to load packages, so it is copied from GO_IMAGE.
 ARG AGENT_IMAGE=ard-agent:dev
 FROM ${AGENT_IMAGE}
-ARG SEMGREP_VERSION=1.140.0
+ARG SEMGREP_VERSION=1.185.0
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-venv \
