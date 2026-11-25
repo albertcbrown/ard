@@ -213,11 +213,13 @@ func (t *tick) gateIssue(ctx context.Context, n int, busy bool) error {
 	is, err := l.d.Reader.GetIssue(ctx, n)
 	if err != nil {
 		if errors.Is(err, github.ErrNotFound) {
+			l.d.Approvals.Remove(n)
 			return nil
 		}
 		return fmt.Errorf("triage gate issue %d: re-read: %w", n, err)
 	}
-	if is.State != github.StateOpen || is.IsPR {
+	if is.State != github.StateOpen || is.IsPR || hasLabel(is.Labels, labels.NeedsHuman) {
+		l.d.Approvals.Remove(n)
 		return nil
 	}
 	worker, jobID, ok, err := closeout.LeadWorker(ctx, l.d.Store, n)
@@ -378,6 +380,7 @@ func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker stri
 	l := t.l
 	n := is.Number
 	if !hasLabel(is.Labels, labels.Approved) {
+		t.queueApproval(is, worker)
 		return false, t.askApproval(ctx, n, jobID, worker, rounds)
 	}
 	tl, err := l.d.Reader.ListTimeline(ctx, n)
@@ -431,8 +434,10 @@ func (t *tick) approved(ctx context.Context, is github.Issue, jobID, worker stri
 	}
 	if !ev.CreatedAt.After(doneAt) {
 		t.log.Info("triage.approval_stale", "issue", n)
+		t.queueApproval(is, worker)
 		return false, t.askApproval(ctx, n, jobID, worker, rounds)
 	}
+	l.d.Approvals.Remove(n)
 	return true, nil
 }
 
@@ -444,6 +449,12 @@ func (t *tick) gateEvent(ctx context.Context, issue int, verdict, reason, worker
 	if err := t.l.d.Store.AppendEvent(ctx, e); err != nil {
 		t.log.Warn("triage.event_failed", "issue", issue, "action", "gate", "error", err)
 	}
+}
+
+// queueApproval lists the issue for the command center's approve key.
+func (t *tick) queueApproval(is github.Issue, worker string) {
+	t.l.d.Approvals.Add(QueueItem{Issue: is.Number, Title: is.Title, Role: worker,
+		PlanURL: fmt.Sprintf("https://github.com/%s/blob/main/.ard/%d/plan.md", t.l.d.Repo, is.Number)})
 }
 
 // askApproval posts the one-per-lead-job "ready for approval" comment. It

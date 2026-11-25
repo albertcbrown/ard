@@ -246,3 +246,109 @@ func TestUpdateTickAndResize(t *testing.T) {
 	}
 	_ = fmt.Sprint(nm)
 }
+
+func keyMsg(s string) tea.KeyPressMsg {
+	if s == "esc" {
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	}
+	if s == "enter" {
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	}
+	return tea.KeyPressMsg{Code: rune(s[0]), Text: s}
+}
+
+func press(m Model, s string) (Model, tea.Cmd) {
+	n, cmd := m.Update(keyMsg(s))
+	return n.(Model), cmd
+}
+
+func approveModel(calls *[]int) Model {
+	s := fixed()
+	s.Queue = []snapshot.QueueItem{{Issue: 2, Title: "Fix \x1b[31mthe\x1b[0m thing\nsecond line", Role: "engineer", PlanURL: "https://github.com/o/r/blob/main/.ard/2/plan.md"}}
+	m := model(80, 24, s).WithApprove(func(n int) (string, error) {
+		*calls = append(*calls, n)
+		return fmt.Sprintf("approved #%d", n), nil
+	})
+	m.selected = 1 // issue #2
+	return m
+}
+
+func TestApproveConfirmGolden(t *testing.T) {
+	var calls []int
+	m, _ := press(approveModel(&calls), "a")
+	if m.confirmApprove == nil {
+		t.Fatal("confirm screen not open")
+	}
+	got := ansi.Strip(Render(m)) + "\n"
+	p := filepath.Join("testdata", "approve.golden")
+	if *update {
+		if err := os.WriteFile(p, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(want) {
+		t.Errorf("frame differs from %s:\n%s", p, got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "second line\n") && !strings.Contains(got, "thing second line") {
+		t.Errorf("title not sanitised:\n%s", got)
+	}
+}
+
+func TestApproveYRunsOnce(t *testing.T) {
+	var calls []int
+	m, _ := press(approveModel(&calls), "a")
+	m, cmd := press(m, "y")
+	if m.confirmApprove != nil || cmd == nil {
+		t.Fatal("y did not close the screen and run")
+	}
+	msg := cmd()
+	n, _ := m.Update(msg)
+	if len(calls) != 1 || calls[0] != 2 {
+		t.Fatalf("calls = %v", calls)
+	}
+	if got := ansi.Strip(Render(n.(Model))); !strings.Contains(got, "approved #2") {
+		t.Errorf("no result line:\n%s", got)
+	}
+}
+
+func TestApproveErrorShown(t *testing.T) {
+	m := approveModel(new([]int)).WithApprove(func(int) (string, error) { return "", fmt.Errorf("boom") })
+	m, _ = press(m, "a")
+	m, cmd := press(m, "y")
+	n, _ := m.Update(cmd())
+	if got := ansi.Strip(Render(n.(Model))); !strings.Contains(got, "failed: boom") {
+		t.Errorf("no error line:\n%s", got)
+	}
+}
+
+func TestApproveCancelKeys(t *testing.T) {
+	for _, k := range []string{"esc", "enter", "n", "x", "a"} {
+		var calls []int
+		m, _ := press(approveModel(&calls), "a")
+		m, cmd := press(m, k)
+		if cmd != nil || m.confirmApprove != nil || len(calls) != 0 {
+			t.Errorf("key %q: cmd=%v open=%v calls=%v", k, cmd != nil, m.confirmApprove != nil, calls)
+		}
+	}
+}
+
+func TestApproveIgnoredOffQueue(t *testing.T) {
+	var calls []int
+	m := approveModel(&calls)
+	m.selected = 0 // #1 is not in the queue
+	m, _ = press(m, "a")
+	if m.confirmApprove != nil {
+		t.Error("opened on a non-queue row")
+	}
+	e := model(80, 24, snapshot.Snapshot{}).WithApprove(func(int) (string, error) { return "", nil })
+	if e, _ = press(e, "a"); e.confirmApprove != nil {
+		t.Error("opened on an empty list")
+	}
+	if len(calls) != 0 {
+		t.Errorf("calls = %v", calls)
+	}
+}

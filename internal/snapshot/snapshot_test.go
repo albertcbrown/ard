@@ -391,3 +391,18 @@ func TestNoGitHubImport(t *testing.T) {
 		}
 	}
 }
+
+type fakeQueue []QueueItem
+
+func (q fakeQueue) Queue() []QueueItem { return q }
+
+func TestQueueFromSource(t *testing.T) {
+	want := []QueueItem{{Issue: 5, Title: "t", Role: "engineer", PlanURL: "u"}}
+	snap := taker(Sources{Approvals: fakeQueue(want)}).Take(context.Background())
+	if len(snap.Queue) != 1 || snap.Queue[0] != want[0] {
+		t.Fatalf("Queue = %+v", snap.Queue)
+	}
+	if s := taker(Sources{}).Take(context.Background()); s.Queue != nil {
+		t.Fatalf("Queue = %+v without a source", s.Queue)
+	}
+}
