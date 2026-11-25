@@ -70,6 +70,9 @@ type Plan struct {
 	Summary       string // redacted role file summary, for the comment
 	// Network is the redacted list of a needs-network worker.
 	Network []NetworkNeed
+	// Bounced is set when a needs-network worker is sent to the triage
+	// engineer instead of ending needs-human.
+	Bounced bool `json:",omitempty"`
 	// Review is set for a review that reached a verdict: close-out posts one
 	// PR review instead of a plain comment.
 	Review   *ReviewPlan
@@ -105,6 +108,18 @@ func Build(j Job, rf RoleFile, rs RoleSet) Plan {
 		p.Network = rf.Network
 		p.Terminal = []Label{{n, labels.NeedsHuman}}
 		p.Remove = []Label{run}
+		if bounce, why := NetworkRound(j, rs); bounce {
+			p.Bounced = true
+			p.Terminal = nil
+			p.Requests = []Label{{n, labels.Request(labels.StageTriage, "engineer")}}
+			p.Remove = []Label{
+				{n, labels.Done(labels.StageTriage, "engineer")},
+				{n, labels.Request(labels.StageWorker, j.Role)},
+				run,
+			}
+		} else {
+			p.Reason = why
+		}
 	case rf.Status != StatusDone:
 		p.Outcome = OutcomeNeedsHuman
 		p.Terminal = []Label{{n, labels.NeedsHuman}}
