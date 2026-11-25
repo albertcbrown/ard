@@ -14,6 +14,7 @@ import (
 	"github.com/albertcbrown/ard/internal/controller"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
+	"github.com/albertcbrown/ard/internal/labels"
 	"github.com/albertcbrown/ard/internal/reviewfix"
 	"github.com/albertcbrown/ard/internal/state"
 )
@@ -30,6 +31,7 @@ type Reader interface {
 	ListPRs(ctx context.Context, o github.ListPRsOpts) ([]github.PullRequest, error)
 	GetPR(ctx context.Context, n int) (github.PullRequest, error)
 	GetIssue(ctx context.Context, n int) (github.Issue, error)
+	SearchIssues(ctx context.Context, q string, o github.SearchOpts) ([]github.Issue, error)
 	ListComments(ctx context.Context, n int, since time.Time) ([]github.Comment, error)
 	ListReviews(ctx context.Context, n int) ([]github.Review, error)
 	GetPermission(ctx context.Context, login string) (github.Permission, error)
@@ -213,7 +215,7 @@ func (t *tick) isStopping() bool {
 	}
 }
 
-// candidates lists the open worker PRs of the App on main, oldest first.
+// candidates lists the open worker PRs of the App on main, by priority, then number.
 func (t *tick) candidates(ctx context.Context) ([]github.PullRequest, error) {
 	prs, err := t.l.d.Reader.ListPRs(ctx, github.ListPRsOpts{State: github.StateOpen, Base: "main"})
 	if err != nil {
@@ -229,8 +231,42 @@ func (t *tick) candidates(ctx context.Context) ([]github.PullRequest, error) {
 		}
 		out = append(out, pr)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	t.sortByPriority(ctx, out)
 	return out, nil
+}
+
+// sortByPriority orders prs by priority (ard:p0 first), then by number. A
+// PR's priority is the higher of its own labels and its issue's. One search
+// finds the issues labelled P0, P1 or P3; any other issue is P2. A failed
+// search is logged and leaves every issue at P2, so the PRs' own labels and
+// their numbers still order the queue.
+func (t *tick) sortByPriority(ctx context.Context, prs []github.PullRequest) {
+	byIssue := map[int]int{}
+	q := fmt.Sprintf("is:open is:issue label:%q,%q,%q", labels.P0, labels.P1, labels.P3)
+	hits, err := t.l.d.Reader.SearchIssues(ctx, q, github.SearchOpts{Max: 100})
+	if err != nil {
+		t.log.Warn("merge.priority_search_failed", "error", err)
+	}
+	for _, h := range hits {
+		byIssue[h.Number] = labels.Priority(h.Labels)
+	}
+	prio := make(map[int]int, len(prs))
+	for _, pr := range prs {
+		p := labels.Priority(pr.Labels)
+		if _, n, ok := parseBranch(pr.HeadRef); ok {
+			if ip, found := byIssue[n]; found {
+				p = min(p, ip)
+			}
+		}
+		prio[pr.Number] = p
+	}
+	sort.Slice(prs, func(i, j int) bool {
+		a, b := prs[i].Number, prs[j].Number
+		if prio[a] != prio[b] {
+			return prio[a] < prio[b]
+		}
+		return a < b
+	})
 }
 
 // forget drops head sightings of PRs that are no longer candidates.

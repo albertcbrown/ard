@@ -541,7 +541,7 @@ func joinableIssue(lbls []string, scanner, routeLbl string, p Parsed, group stri
 	have := map[string]bool{}
 	for _, l := range lbls {
 		lower := strings.ToLower(l)
-		if !strings.HasPrefix(lower, labels.Prefix) {
+		if !strings.HasPrefix(lower, labels.Prefix) || labels.IsPriority(lower) {
 			continue
 		}
 		if !want[lower] {

@@ -24,6 +24,8 @@ type candidate struct {
 	issue  github.Issue
 	rec    *state.Admission
 	reason intake.Reason
+	// priority is labels.Priority of the issue's labels (0 = ard:p0).
+	priority int
 }
 
 // candidates finds, per triage role (the lead first), the issues that request
@@ -64,6 +66,23 @@ func (t *tick) candidates(ctx context.Context) ([]candidate, []error) {
 			errs = append(errs, fmt.Errorf("triage role %s: search: %w", role.Name, err))
 			continue
 		}
+		// A P0 or P1 beyond the oldest 50 would never be seen, so search for
+		// those on their own and merge. A failure here only loses that reach.
+		hq, qerr := query.RoleQuery{
+			Type: query.TypeIssue, Request: labels.Request(labels.StageTriage, role.Name),
+			States: []string{labels.Running(labels.StageTriage, role.Name), labels.Done(labels.StageTriage, role.Name)},
+			Guards: []string{labels.ExecutorFailed, labels.NeedsHuman, labels.Hold},
+			AnyOf:  []string{labels.P0, labels.P1},
+		}.Build()
+		if qerr == nil {
+			var more []github.Issue
+			if more, qerr = l.d.Reader.SearchIssues(ctx, hq, github.SearchOpts{Sort: "created", Order: "asc", Max: 50}); qerr == nil {
+				hits = mergeHits(hits, more)
+			}
+		}
+		if qerr != nil {
+			t.log.Warn("triage.priority_search_failed", "role", role.Name, "error", qerr)
+		}
 		for _, hit := range hits {
 			if busy[hit.Number] {
 				continue
@@ -102,7 +121,7 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 		t.log.Info("triage.held", "issue", n, "role", role.Name, "waiting_for", dep)
 		return candidate{}, false, nil
 	}
-	c := candidate{role: role, issue: is}
+	c := candidate{role: role, issue: is, priority: labels.Priority(is.Labels)}
 	if strings.EqualFold(is.Author, t.self) { // scanner issues: the App rewrites its own bodies
 		c.reason = intake.ReasonAppAuthored
 		return c, true, nil
@@ -165,4 +184,19 @@ func later(a, b time.Time) time.Time {
 		return b
 	}
 	return a
+}
+
+// mergeHits appends the hits of more that are not already in hits.
+func mergeHits(hits, more []github.Issue) []github.Issue {
+	seen := make(map[int]bool, len(hits))
+	for _, h := range hits {
+		seen[h.Number] = true
+	}
+	for _, h := range more {
+		if !seen[h.Number] {
+			seen[h.Number] = true
+			hits = append(hits, h)
+		}
+	}
+	return hits
 }

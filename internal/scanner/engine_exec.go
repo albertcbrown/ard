@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/albertcbrown/ard/internal/labels"
 	"log/slog"
 	"path"
 	"path/filepath"
@@ -85,7 +86,7 @@ func (x *ExecEngine) Scan(ctx context.Context, cfg *config.Resolved, role config
 	if since.IsZero() {
 		since = d.Now()
 	}
-	decs := d.Pool().Offer("scanners", d.OfferTTL, []pool.Candidate{{Class: pool.ClassScanner, Role: role.Name, Since: since}})
+	decs := d.Pool().Offer("scanners", d.OfferTTL, []pool.Candidate{{Class: pool.ClassScanner, Role: role.Name, Since: since, Priority: labels.DefaultPriority}})
 	if len(decs) != 1 || decs[0].Verdict != pool.Granted || decs[0].Slot == nil {
 		why := "no decision"
 		if len(decs) == 1 {

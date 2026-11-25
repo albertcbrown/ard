@@ -113,3 +113,38 @@ func TestCandidatesRegateAnEditedHumanIssue(t *testing.T) {
 		t.Errorf("want a regate comment and needs-human on the issue: %v", cs)
 	}
 }
+
+func TestCandidatePriority(t *testing.T) {
+	tests := []struct {
+		name string
+		mut  func(*scenario)
+		want int
+	}{
+		{"unlabelled is P2", func(*scenario) {}, 2},
+		{"issue P0", func(s *scenario) { s.issue.Labels = append(s.issue.Labels, labels.P0) }, 0},
+		{"issue P3", func(s *scenario) { s.issue.Labels = append(s.issue.Labels, labels.P3) }, 3},
+		{"PR P0 on a P3 issue", func(s *scenario) {
+			s.pr.Labels = append(s.pr.Labels, labels.P0)
+			s.issue.Labels = append(s.issue.Labels, labels.P3)
+		}, 0},
+		{"PR P3 on a P1 issue", func(s *scenario) {
+			s.pr.Labels = append(s.pr.Labels, labels.P3)
+			s.issue.Labels = append(s.issue.Labels, labels.P1)
+		}, 1},
+		{"PR P1 and P3", func(s *scenario) { s.pr.Labels = append(s.pr.Labels, labels.P3, labels.P1) }, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.scenario(tc.mut)
+			tk := &tick{l: h.loop, cfg: h.cfg, log: quiet, self: self}
+			cands, errs := tk.candidates(context.Background())
+			if len(errs) != 0 || len(cands) != 1 {
+				t.Fatalf("cands %d, errs %v", len(cands), errs)
+			}
+			if cands[0].priority != tc.want {
+				t.Errorf("priority = %d, want %d", cands[0].priority, tc.want)
+			}
+		})
+	}
+}

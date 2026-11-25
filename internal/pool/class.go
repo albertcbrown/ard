@@ -8,8 +8,9 @@ package pool
 
 import "fmt"
 
-// Class is a job's priority class. Lower values fill first. The integer
-// values are persisted in state (jobs.priority): never reorder them.
+// Class is a job's priority class. Lower values fill first. Priority labels
+// order candidates within a class only and never cross classes. Nothing
+// persists the value, but keep the order: it is the fill order.
 type Class int
 
 // Priority classes, highest priority first.
