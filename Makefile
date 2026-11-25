@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test docs-check release-check
+.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test kind-e2e docs-check release-check
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ard ./cmd/ard
@@ -74,3 +74,9 @@ release-check:
 
 clean:
 	rm -rf bin
+
+# End-to-end test of the Kubernetes executor on a kind cluster it creates (or
+# ARD_KIND_CLUSTER). Needs Docker, kind (0.24 or later), kubectl, helm and network; about 4 CPU
+# and 8 GiB; ~10 minutes. Not part of `make test`. ARD_KIND_KEEP=1 keeps the cluster.
+kind-e2e:
+	ARD_KIND_E2E=1 go test -tags integration -run TestKind ./internal/executor/kube/e2e/ -timeout 30m -v
