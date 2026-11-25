@@ -3,12 +3,14 @@ package setupcmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/albertcbrown/ard/internal/cli"
+	"github.com/albertcbrown/ard/internal/github/fake"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
 )
 
@@ -23,6 +25,37 @@ func TestCommandBadConfigBeforeNetwork(t *testing.T) {
 	}
 	e := &cli.Env{Globals: cli.Globals{ConfigPath: cfg, Repo: "o/r"}, Log: quiet, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}
 	if err := Command(context.Background(), e, cli.SetupOpts{Check: true}); err == nil || !strings.HasPrefix(err.Error(), "setup:") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestCheckExitsTwoOnDrift(t *testing.T) {
+	f := fake.New()
+	var out bytes.Buffer
+	e := &cli.Env{Log: quiet, Stdout: &out, Stderr: &bytes.Buffer{}}
+	err := execute(context.Background(), e, deps(f), cli.SetupOpts{Check: true})
+	var ee *cli.ExitError
+	if !errors.As(err, &ee) || ee.Code != 2 {
+		t.Fatalf("err = %v, want ExitError code 2", err)
+	}
+	if got, _ := f.ListLabels(context.Background()); len(got) != 0 {
+		t.Errorf("check wrote labels: %v", got)
+	}
+	// Applying fixes the drift; a second check is clean.
+	if err := execute(context.Background(), e, deps(f), cli.SetupOpts{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if err := execute(context.Background(), e, deps(f), cli.SetupOpts{Check: true}); err != nil {
+		t.Errorf("check after apply: %v", err)
+	}
+}
+
+func TestExecuteManualStepsError(t *testing.T) {
+	d := deps(fake.New())
+	d.Permissions = func(context.Context) Row { return Row{Status: StatusManual, Detail: "fix it"} }
+	e := &cli.Env{Log: quiet, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}
+	err := execute(context.Background(), e, d, cli.SetupOpts{})
+	if err == nil || !strings.Contains(err.Error(), "manual steps needed") {
 		t.Errorf("err = %v", err)
 	}
 }

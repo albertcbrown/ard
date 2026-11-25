@@ -9,7 +9,7 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	help := []string{"Usage:", "serve", "config", "labels", "rebuild-state", "init", "version"}
+	help := []string{"Usage:", "serve", "config", "labels", "rebuild-state", "init", "setup", "version"}
 	tests := []struct {
 		name string
 		args []string
@@ -139,6 +139,28 @@ func TestRunHandlers(t *testing.T) {
 		}
 		if !opts.Force {
 			t.Error("InitOpts.Force = false, want true")
+		}
+	})
+
+	t.Run("setup --check and labels sync reach their handlers", func(t *testing.T) {
+		var setup []SetupOpts
+		synced := false
+		h := Handlers{
+			Setup:      func(_ context.Context, _ *Env, o SetupOpts) error { setup = append(setup, o); return nil },
+			LabelsSync: func(context.Context, *Env) error { synced = true; return nil },
+		}
+		var stdout, stderr strings.Builder
+		if code := Run([]string{"setup", "--check"}, &stdout, &stderr, h, "dev"); code != 0 {
+			t.Fatalf("setup --check exit = %d (stderr %q)", code, stderr.String())
+		}
+		if code := Run([]string{"setup"}, &stdout, &stderr, h, "dev"); code != 0 {
+			t.Fatalf("setup exit = %d", code)
+		}
+		if len(setup) != 2 || !setup[0].Check || setup[1].Check {
+			t.Errorf("SetupOpts = %+v", setup)
+		}
+		if code := Run([]string{"labels", "sync"}, &stdout, &stderr, h, "dev"); code != 0 || !synced {
+			t.Errorf("labels sync: exit %d, synced %v", code, synced)
 		}
 	})
 

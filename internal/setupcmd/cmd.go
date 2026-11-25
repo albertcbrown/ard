@@ -63,8 +63,15 @@ func Command(ctx context.Context, e *cli.Env, o cli.SetupOpts) error {
 		DryRun:      dry,
 		Log:         e.Log,
 	}
+	return execute(ctx, e, d, o)
+}
+
+// execute runs setup with the given dependencies and maps the report to
+// the command's outcome: exit 2 on drift under --check, an error when
+// manual steps are needed.
+func execute(ctx context.Context, e *cli.Env, d Deps, o cli.SetupOpts) error {
 	rep, err := Run(ctx, d, Opts{Check: o.Check}, e.Stdout)
-	Print(e.Stdout, rep, dry)
+	Print(e.Stdout, rep, d.DryRun)
 	if err != nil {
 		return err
 	}
