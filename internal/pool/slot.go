@@ -51,6 +51,8 @@ func (s *Slot) Release() bool {
 	s.released = true
 	if p.held[s.Key()] == s {
 		delete(p.held, s.Key())
+		p.log.Debug("pool.freed", "key", s.Key())
+		p.signalLocked()
 	}
 	p.log.Debug("pool.release", "key", s.Key(), "class", s.cand.Class.String(),
 		"role", s.cand.Role, "number", s.cand.Number, "job_id", s.jobID)

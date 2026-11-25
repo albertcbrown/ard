@@ -281,6 +281,18 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 			return c, nil
 		},
 		Pause: gate,
+		Freed: func() <-chan struct{} {
+			if p := w.pool.Load(); p != nil {
+				return p.Freed()
+			}
+			return nil
+		},
+		DemandLoops: func(t time.Time) []string {
+			if p := w.pool.Load(); p != nil {
+				return p.DemandLoops(t)
+			}
+			return nil
+		},
 		// Order matters: closeout-resume goes first, so a job whose close-out
 		// was interrupted is finished (or stays running and is adopted) before
 		// the pool is built; #16 needs the pool adopted before the first Offer.
