@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -103,6 +104,10 @@ type env struct {
 	ex   *Executor
 	srv  *httptest.Server
 	rt   *rewrite
+	// started counts start calls. Each later job gets its own issue so two
+	// jobs prepared in the same millisecond never share a log file name
+	// (<stage>-<role>-<timestamp>.log, created with O_EXCL).
+	started int
 
 	mu     sync.Mutex
 	clock  time.Time
@@ -185,7 +190,13 @@ func testCmd() executor.Command {
 func (e *env) start(id string) executor.Handle {
 	e.t.Helper()
 	ctx := context.Background()
-	h, err := e.ex.Prepare(ctx, testJob(id))
+	j := testJob(id)
+	if e.started > 0 {
+		j.Issue += e.started
+		j.Inputs = []executor.File{{Path: fmt.Sprintf(".ard/%d/issue.md", j.Issue), Data: []byte("hi")}}
+	}
+	e.started++
+	h, err := e.ex.Prepare(ctx, j)
 	if err != nil {
 		e.t.Fatal(err)
 	}
