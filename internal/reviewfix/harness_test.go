@@ -38,9 +38,14 @@ type stubGit struct {
 	head     string
 	ancestor bool
 	parents  []string
+
+	notOnMain bool  // IsAncestor(x, mainCheckRef) answers false
+	fetchErr  error // FetchRef answer
 }
 
-func (g *stubGit) FetchRef(context.Context, string, string, string, gitx.TokenFunc) error { return nil }
+func (g *stubGit) FetchRef(context.Context, string, string, string, gitx.TokenFunc) error {
+	return g.fetchErr
+}
 func (g *stubGit) RevParse(context.Context, string, string) (string, error) {
 	if g.tip != "" {
 		return g.tip, nil
@@ -51,7 +56,10 @@ func (g *stubGit) CodeChanged(context.Context, string, string, string, ...string
 	return g.changed, nil
 }
 
-func (g *stubGit) IsAncestor(context.Context, string, string, string) (bool, error) {
+func (g *stubGit) IsAncestor(_ context.Context, _, _, of string) (bool, error) {
+	if of == mainCheckRef && g.notOnMain {
+		return false, nil
+	}
 	return g.ancestor, nil
 }
 func (g *stubGit) Parents(context.Context, string, string) ([]string, error) {
