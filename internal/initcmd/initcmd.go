@@ -1,6 +1,7 @@
-// Package initcmd implements `ard init`: propose the starter .ard/ tree
-// (internal/roles.FS) as a PR on branch ard-init, and sync the label
-// catalogue. It never writes the working tree or main.
+// Package initcmd implements `ard init`: write the starter .ard/ tree
+// (internal/roles.FS) into the local checkout, or with --pr propose it as a
+// PR on branch ard-init. It never writes main and never deletes a file.
+// Labels are synced by `ard setup`.
 package initcmd
 
 import (
@@ -17,8 +18,7 @@ import (
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
-	"github.com/albertcbrown/ard/internal/labels"
-	"github.com/albertcbrown/ard/internal/labels/labelsync"
+	"github.com/albertcbrown/ard/internal/setupcmd"
 )
 
 // prTitle is the title of the PR init opens.
@@ -37,6 +37,9 @@ type deps struct {
 
 // Init is the handler behind `ard init`.
 func Init(ctx context.Context, e *cli.Env, o cli.InitOpts) error {
+	if !o.PR {
+		return runLocal(ctx, e, o, localPermissions(e))
+	}
 	return run(ctx, e, o, func(ctx context.Context, root string) (deps, error) {
 		repo, err := resolveRepo(ctx, e.Repo, root)
 		if err != nil {
@@ -63,6 +66,33 @@ func Init(ctx context.Context, e *cli.Env, o cli.InitOpts) error {
 		}
 		return d, nil
 	})
+}
+
+// localPermissions runs the permission check for local mode. Local mode
+// needs no GitHub App, so anything that stops the check is only reported.
+func localPermissions(e *cli.Env) permFunc {
+	return func(ctx context.Context, root string) (setupcmd.Row, error) {
+		repo, err := resolveRepo(ctx, e.Repo, root)
+		if err != nil {
+			return setupcmd.Row{}, err
+		}
+		auth, err := github.AuthFromEnv(os.Getenv, os.ReadFile)
+		if err != nil {
+			return setupcmd.Row{}, err
+		}
+		fx, rd, err := effects.Open(ctx, effects.Options{
+			DryRun: true,
+			GitHub: github.Config{Repo: repo, Auth: auth, Log: e.Log},
+			Log:    e.Log,
+		})
+		if err != nil {
+			return setupcmd.Row{}, err
+		}
+		if c, ok := fx.(interface{ Close() error }); ok {
+			defer c.Close()
+		}
+		return setupcmd.CheckPermissions(ctx, rd, repo), nil
+	}
 }
 
 // checkAuth refuses a personal token for a live run, as serve does.
@@ -114,6 +144,10 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 	}
 	if d.Close != nil {
 		defer d.Close()
+	}
+	// 3b. The shared permission check: in --pr mode a failure stops the run.
+	if row := setupcmd.CheckPermissions(ctx, d.Reader, d.Repo); row.Status != setupcmd.StatusOK {
+		return fmt.Errorf("ard init: permissions: %s", row.Detail)
 	}
 	// 4. Who commits.
 	id, err := d.Reader.Identity(ctx)
@@ -184,22 +218,8 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 	if err != nil {
 		return fmt.Errorf("ard init: the resulting configuration is invalid, nothing was written:\n%w", err)
 	}
-	want, err := labels.Desired(labels.SpecFrom(res))
-	if err != nil {
-		return fmt.Errorf("ard init: %w", err)
-	}
 
-	// 7. Labels first: a failure leaves nothing pushed, so a rerun is clean.
-	rep, err := labelsync.Sync(ctx, d.Reader, d.Effects, want, e.Log)
-	if err != nil && rep.Failed == nil {
-		return fmt.Errorf("ard init: %w", err)
-	}
-	labelsync.Print(e.Stdout, rep, e.DryRun)
-	if err != nil {
-		return fmt.Errorf("ard init: %w", err)
-	}
-
-	// 8. Propose.
+	// 7. Propose.
 	var pr github.PullRequest
 	if len(toWrite) > 0 {
 		pres, err := in.Propose(ctx, base, toWrite)
@@ -223,7 +243,7 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 	printOps(e, ops)
 	printLeftAlone(e, pl)
 
-	// 9. Open the PR.
+	// 8. Open the PR.
 	pr, err = d.Effects.CreatePR(ctx, github.NewPR{
 		Title: prTitle, Body: initBody(pl, res), Head: committer.InitBranch, Base: "main",
 	})
@@ -231,12 +251,13 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 		return fmt.Errorf("ard init: branch %s pushed but opening the PR failed: %w; open it by hand, or delete the branch and rerun", committer.InitBranch, err)
 	}
 
-	// 10. Report.
+	// 9. Report.
 	if e.DryRun {
 		fmt.Fprintf(e.Stdout, "dry-run: would open a PR from %s\n", committer.InitBranch)
 	} else {
 		fmt.Fprintf(e.Stdout, "opened PR #%d: %s\n", pr.Number, pr.URL)
 	}
+	fmt.Fprintln(e.Stdout, "next: merge the PR, then run `ard setup`")
 	e.Log.InfoContext(ctx, "init.done", "repo", d.Repo.String(), "base", base, "files", len(toWrite), "pr", pr.Number, "dry_run", e.DryRun)
 	return nil
 }
