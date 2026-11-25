@@ -11,13 +11,12 @@ findings:
       fetchLock treats any `rev-parse --git-common-dir` failure (other than ctx cancellation) as "not a repository yet" and fetches unlocked.
       A transient rev-parse failure on a real clone would skip the lock silently. Acceptable per plan.md, but consider limiting the unlocked fallback to the case where the directory has no git data.
 ---
-The change makes fetches take the shared side of the clone lock and worktree add/remove take the exclusive side. That fixes the race in the issue. The lock logic is sound and the new tests cover both sides and the gitx wiring. Approved.
+Fetches now take the shared side of the clone lock and worktree add/remove take the exclusive side, which fixes the race in the issue. The lock logic is sound and the tests cover both sides and the gitx wiring. Approved.
 
 ## Checks
-- Lint: no repository lint entry point was run this round. The code is unchanged from the previous round, where `make lint` reported only a pre-existing testdata error in a file this change did not touch.
-- Tests: `go test -race -count=2 ./internal/wtlock ./internal/gitx` passes.
+- Lint: not re-run this round. The code is unchanged from the previous round, where `make lint` reported only a pre-existing testdata error in a file this change did not touch.
+- Tests: `go test -race -count=1 ./internal/wtlock ./internal/gitx` passes. `go test -race -count=20 ./internal/committer -run TestBranchesStress` passes.
 - Diff coverage: no coverage profile was made. The added functions are all called by the new tests.
 
 ## Previous findings
 - internal/gitx/local.go (fetchLock fallback): still present, low and non-blocking.
-- internal/wtlock/wtlock_test.go (test names differ from plan.md): no longer applicable. The cases are covered in TestRLockBlocksLock and TestRLockShared.
