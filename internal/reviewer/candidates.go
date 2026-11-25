@@ -20,6 +20,8 @@ type candidate struct {
 	pr    github.PullRequest
 	issue github.Issue
 	since time.Time
+	// priority is the higher of the PR's and its issue's labels.Priority.
+	priority int
 }
 
 // Skip reasons, fixed text for the review.skip log line.
@@ -72,6 +74,24 @@ func (t *tick) candidates(ctx context.Context) ([]candidate, []error) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("review role %s: search: %w", role.Name, err))
 			continue
+		}
+		// A PR labelled P0 or P1 beyond the oldest 50 would never be seen, so
+		// search for those too. A P0 label only on the linked issue is not
+		// searched for: that gap is accepted (see doc.go).
+		hq, qerr := query.RoleQuery{
+			Type: query.TypePR, Request: labels.Request(labels.StageReview, role.Name),
+			States: []string{labels.Running(labels.StageReview, role.Name), labels.Done(labels.StageReview, role.Name), labels.Changes(role.Name)},
+			Guards: []string{labels.ExecutorFailed, labels.NeedsHuman, labels.Hold, labels.TestsFailed},
+			AnyOf:  []string{labels.P0, labels.P1},
+		}.Build()
+		if qerr == nil {
+			var more []github.Issue
+			if more, qerr = l.d.Reader.SearchIssues(ctx, hq, github.SearchOpts{Sort: "created", Order: "asc", Max: 50}); qerr == nil {
+				hits = mergeHits(hits, more)
+			}
+		}
+		if qerr != nil {
+			t.log.Warn("review.priority_search_failed", "role", role.Name, "error", qerr)
 		}
 		for _, hit := range hits {
 			c, ok, err := t.consider(ctx, role, hit, workerBusy)
@@ -143,7 +163,8 @@ func (t *tick) consider(ctx context.Context, role config.Role, hit github.Issue,
 	if err != nil || !ok {
 		return candidate{}, false, err
 	}
-	return candidate{role: role, pr: pr, issue: is, since: hit.CreatedAt}, true, nil
+	return candidate{role: role, pr: pr, issue: is, since: hit.CreatedAt,
+		priority: labels.Priority(append(append([]string(nil), is.Labels...), pr.Labels...))}, true, nil
 }
 
 func hasAny(have []string, want []string) bool {
@@ -162,4 +183,19 @@ func hasLabel(have []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// mergeHits appends the hits of more that are not already in hits.
+func mergeHits(hits, more []github.Issue) []github.Issue {
+	seen := make(map[int]bool, len(hits))
+	for _, h := range hits {
+		seen[h.Number] = true
+	}
+	for _, h := range more {
+		if !seen[h.Number] {
+			seen[h.Number] = true
+			hits = append(hits, h)
+		}
+	}
+	return hits
 }

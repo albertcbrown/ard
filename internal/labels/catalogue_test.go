@@ -25,8 +25,8 @@ func TestDesiredGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 47 {
-		t.Errorf("len = %d, want 47", len(got))
+	if len(got) != 51 {
+		t.Errorf("len = %d, want 51", len(got))
 	}
 	var b strings.Builder
 	for _, l := range got {
@@ -52,8 +52,8 @@ func TestDesiredEmptySpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 9 {
-		t.Fatalf("len = %d, want the nine statics", len(got))
+	if len(got) != 13 {
+		t.Fatalf("len = %d, want the thirteen statics", len(got))
 	}
 	for i := 1; i < len(got); i++ {
 		if got[i-1].Name >= got[i].Name {
@@ -112,14 +112,14 @@ func TestDesiredIntake(t *testing.T) {
 		wantErr  []string
 		noErr    string // must not appear in the error
 	}{
-		{name: "default", spec: Spec{}, wantLen: 9},
-		{name: "pending", spec: Spec{Intake: "ard:pending"}, wantLen: 9},
-		{name: "pending upper", spec: Spec{Intake: "ARD:PENDING"}, wantLen: 9},
-		{name: "custom", spec: Spec{Intake: "ard:intake"}, wantName: "ard:intake", wantLen: 10},
+		{name: "default", spec: Spec{}, wantLen: 13},
+		{name: "pending", spec: Spec{Intake: "ard:pending"}, wantLen: 13},
+		{name: "pending upper", spec: Spec{Intake: "ARD:PENDING"}, wantLen: 13},
+		{name: "custom", spec: Spec{Intake: "ard:intake"}, wantName: "ard:intake", wantLen: 14},
 		{name: "clash static", spec: Spec{Intake: "ard:needs-human"}, wantErr: []string{"intake.label", "uses itself"}, noErr: "duplicate"},
 		{name: "clash stage", spec: Spec{Intake: "ard:worker:engineer", Workers: []string{"engineer"}}, wantErr: []string{"intake.label"}, noErr: "duplicate"},
 		{name: "clash and bad role", spec: Spec{Intake: "ard:needs-human", Workers: []string{"Foo"}}, wantErr: []string{"intake.label", `worker "Foo"`}},
-		{name: "50 runes", spec: Spec{Intake: "ard:" + strings.Repeat("é", 46)}, wantName: "ard:" + strings.Repeat("é", 46), wantLen: 10},
+		{name: "50 runes", spec: Spec{Intake: "ard:" + strings.Repeat("é", 46)}, wantName: "ard:" + strings.Repeat("é", 46), wantLen: 14},
 		{name: "51 runes", spec: Spec{Intake: "ard:" + strings.Repeat("é", 47)}, wantErr: []string{"intake.label: label"}},
 		{name: "too long", spec: Spec{Intake: "ard:" + strings.Repeat("a", 47)}, wantErr: []string{"intake.label: label"}},
 	}

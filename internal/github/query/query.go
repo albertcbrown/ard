@@ -24,6 +24,9 @@ type RoleQuery struct {
 	Request string   // included label, always quoted
 	States  []string // excluded role-state labels, always quoted
 	Guards  []string // excluded static labels, bare unless they need quoting
+	// AnyOf, when set, requires at least one of these labels (GitHub's
+	// comma form, label:"a","b"). Always quoted.
+	AnyOf []string
 }
 
 // Build renders the query string.
@@ -39,6 +42,16 @@ func (q RoleQuery) Build() (string, error) {
 		return "", err
 	}
 	parts = append(parts, `label:"`+q.Request+`"`)
+	if len(q.AnyOf) > 0 {
+		quoted := make([]string, len(q.AnyOf))
+		for i, a := range q.AnyOf {
+			if err := check(a); err != nil {
+				return "", err
+			}
+			quoted[i] = `"` + a + `"`
+		}
+		parts = append(parts, "label:"+strings.Join(quoted, ","))
+	}
 	for _, s := range q.States {
 		if err := check(s); err != nil {
 			return "", err

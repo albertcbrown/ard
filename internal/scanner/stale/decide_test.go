@@ -44,6 +44,9 @@ func TestDecide(t *testing.T) {
 			i.Labels = []string{labels.Scanner("cve"), labels.Running(labels.StageTriage, "lead")}
 		}), nil, nil, reasonNotCand},
 		{"scanner label plus other ard label", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve"), labels.Prefix + "other"} }), nil, nil, reasonNotCand},
+		{"scanner label plus priority label", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve"), labels.P0} }), nil, nil, reasonClose},
+		{"pending plus priority label", old(labels.P1), nil, nil, reasonClose},
+		{"priority label only", mod(func(i *github.Issue) { i.Labels = []string{labels.P0} }), nil, nil, reasonNotCand},
 		{"scanner label plus non-ard label", mod(func(i *github.Issue) { i.Labels = []string{labels.Scanner("cve"), "bug"} }), nil, nil, reasonClose},
 		{"no ard label at all", mod(func(i *github.Issue) { i.Labels = []string{"bug"} }), nil, nil, reasonNotCand},
 		{"no scanner label", mod(func(i *github.Issue) { i.Labels = []string{labels.Pending} }), nil, nil, reasonNotCand},

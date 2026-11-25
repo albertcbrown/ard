@@ -1279,7 +1279,13 @@ func (ts searchTerms) match(it *item) bool {
 				ok = it.isPR
 			}
 		case "label":
-			ok = hasLabel(it.issue.Labels, t.value)
+			// GitHub's comma form, label:"a","b", means any of the labels.
+			for _, v := range strings.Split(t.value, ",") {
+				if hasLabel(it.issue.Labels, strings.Trim(v, `"`)) {
+					ok = true
+					break
+				}
+			}
 		case "closed":
 			day, _ := time.Parse("2006-01-02", strings.TrimPrefix(t.value, "<"))
 			ok = it.issue.ClosedAt != nil && it.issue.ClosedAt.UTC().Before(day)

@@ -28,8 +28,8 @@ func catalogue(t *testing.T) []labels.Label {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(want) != 47 {
-		t.Fatalf("catalogue has %d labels, want 47", len(want))
+	if len(want) != 51 {
+		t.Fatalf("catalogue has %d labels, want 51", len(want))
 	}
 	return want
 }
@@ -74,7 +74,7 @@ func TestSyncLive(t *testing.T) {
 		f := fake.New()
 		w := effects.NewLive(f, nil, quiet)
 		rep, err := Sync(ctx, f, w, want, quiet)
-		if err != nil || len(rep.Create) != 47 || len(f.Writes()) != 47 {
+		if err != nil || len(rep.Create) != 51 || len(f.Writes()) != 51 {
 			t.Fatalf("first run: err=%v creates=%d writes=%d", err, len(rep.Create), len(f.Writes()))
 		}
 		before := len(f.Writes())
@@ -82,7 +82,7 @@ func TestSyncLive(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(f.Writes()) != before || len(rep.Unchanged) != 47 || len(rep.Create)+len(rep.Update) != 0 {
+		if len(f.Writes()) != before || len(rep.Unchanged) != 51 || len(rep.Create)+len(rep.Update) != 0 {
 			t.Errorf("second run wrote %d, unchanged %d, plan %+v", len(f.Writes())-before, len(rep.Unchanged), rep.Plan)
 		}
 	})
@@ -147,8 +147,8 @@ func TestSyncLive(t *testing.T) {
 			}
 		}
 		got, _ := f.ListLabels(ctx)
-		if len(got) != 46 {
-			t.Errorf("repo has %d labels, want 46", len(got))
+		if len(got) != 50 {
+			t.Errorf("repo has %d labels, want 50", len(got))
 		}
 	})
 
@@ -171,7 +171,7 @@ func TestSyncDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep, err := Sync(ctx, f, d, catalogue(t), quiet)
-	if err != nil || len(rep.Create) != 47 {
+	if err != nil || len(rep.Create) != 51 {
 		t.Fatalf("err=%v creates=%d", err, len(rep.Create))
 	}
 	if n := len(f.Writes()); n != 0 {

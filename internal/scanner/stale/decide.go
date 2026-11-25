@@ -58,7 +58,7 @@ func staleCandidate(is github.Issue) bool {
 	n := 0
 	for _, l := range is.Labels {
 		l = strings.ToLower(l)
-		if !strings.HasPrefix(l, labels.Prefix) {
+		if !strings.HasPrefix(l, labels.Prefix) || labels.IsPriority(l) {
 			continue
 		}
 		p, ok := labels.Parse(l)

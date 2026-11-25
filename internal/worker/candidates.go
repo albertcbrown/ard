@@ -18,6 +18,8 @@ import (
 type candidate struct {
 	role  config.Role
 	issue github.Issue
+	// priority is labels.Priority of the issue's labels (0 = ard:p0).
+	priority int
 }
 
 // candidates finds, per worker role, the issues that request it and pass the
@@ -51,6 +53,23 @@ func (t *tick) candidates(ctx context.Context) ([]candidate, []error) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("worker role %s: search: %w", role.Name, err))
 			continue
+		}
+		// A P0 or P1 beyond the oldest 50 would never be seen, so search for
+		// those on their own and merge. A failure here only loses that reach.
+		hq, qerr := query.RoleQuery{
+			Type: query.TypeIssue, Request: labels.Request(labels.StageWorker, role.Name),
+			States: []string{labels.Running(labels.StageWorker, role.Name), labels.Done(labels.StageWorker, role.Name)},
+			Guards: []string{labels.ExecutorFailed, labels.NeedsHuman, labels.Hold},
+			AnyOf:  []string{labels.P0, labels.P1},
+		}.Build()
+		if qerr == nil {
+			var more []github.Issue
+			if more, qerr = l.d.Reader.SearchIssues(ctx, hq, github.SearchOpts{Sort: "created", Order: "asc", Max: 50}); qerr == nil {
+				hits = mergeHits(hits, more)
+			}
+		}
+		if qerr != nil {
+			t.log.Warn("worker.priority_search_failed", "role", role.Name, "error", qerr)
 		}
 		for _, hit := range hits {
 			if busy[hit.Number] {
@@ -94,7 +113,7 @@ func (t *tick) consider(ctx context.Context, role config.Role, n int) (candidate
 	if err != nil || !ok {
 		return candidate{}, false, err
 	}
-	return candidate{role: role, issue: is}, true, nil
+	return candidate{role: role, issue: is, priority: labels.Priority(is.Labels)}, true, nil
 }
 
 // recheck is the admission re-check, shared with the reviewer (package agentjob).
@@ -120,4 +139,19 @@ func hasLabel(have []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// mergeHits appends the hits of more that are not already in hits.
+func mergeHits(hits, more []github.Issue) []github.Issue {
+	seen := make(map[int]bool, len(hits))
+	for _, h := range hits {
+		seen[h.Number] = true
+	}
+	for _, h := range more {
+		if !seen[h.Number] {
+			seen[h.Number] = true
+			hits = append(hits, h)
+		}
+	}
+	return hits
 }

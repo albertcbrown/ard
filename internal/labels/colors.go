@@ -36,6 +36,10 @@ var staticStyles = map[string]style{
 	Approved:       {"bfdadc", "ard: human go-ahead for the worker to start"},
 	Keep:           {"cfd3d7", "ard: keep failed-job resources past 24 h"},
 	Pause:          {"5c5c5c", "ard: on the status issue, stops all new claims"},
+	P0:             {"b60205", "ard priority 0 (highest); unlabelled counts as P2"},
+	P1:             {"d93f0b", "ard priority 1; unlabelled counts as P2"},
+	P2:             {"fbca04", "ard priority 2 (the default when unlabelled)"},
+	P3:             {"c2e0c6", "ard priority 3 (lowest)"},
 }
 
 // intakeStyle is the custom intake label's style. It shares ard:pending's

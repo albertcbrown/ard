@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -194,8 +195,18 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 	cands, errs := t.candidates(ctx)
 
 	if dry {
+		sort.SliceStable(cands, func(i, j int) bool {
+			a, b := cands[i], cands[j]
+			if a.priority != b.priority {
+				return a.priority < b.priority
+			}
+			if !a.since.Equal(b.since) {
+				return a.since.Before(b.since)
+			}
+			return a.pr.Number < b.pr.Number
+		})
 		for _, c := range cands {
-			log.Info("review.would_claim", "pr", c.pr.Number, "issue", c.issue.Number, "role", c.role.Name)
+			log.Info("review.would_claim", "pr", c.pr.Number, "issue", c.issue.Number, "role", c.role.Name, "priority", c.priority)
 		}
 		l.offer(cfg, nil)
 		return errors.Join(errs...)
@@ -203,7 +214,7 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 
 	pcs := make([]pool.Candidate, len(cands))
 	for i, c := range cands {
-		pcs[i] = pool.Candidate{Class: pool.ClassReview, Role: c.role.Name, Number: c.pr.Number, Since: c.since}
+		pcs[i] = pool.Candidate{Class: pool.ClassReview, Role: c.role.Name, Number: c.pr.Number, Since: c.since, Priority: c.priority}
 	}
 	decs := l.offer(cfg, pcs)
 	stopped := false

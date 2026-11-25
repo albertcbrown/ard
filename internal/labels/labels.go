@@ -51,9 +51,52 @@ const (
 	Pause          = "ard:pause"
 )
 
-// Static lists the nine static labels in a fixed order.
+// The priority labels. Humans set them; ard never does. Unlabelled counts as
+// P2 and several labels count as the highest (see Priority).
+const (
+	P0 = "ard:p0"
+	P1 = "ard:p1"
+	P2 = "ard:p2"
+	P3 = "ard:p3"
+)
+
+// DefaultPriority is the priority of an item with no priority label.
+const DefaultPriority = 2
+
+// Static lists the thirteen static labels in a fixed order.
 func Static() []string {
-	return []string{Pending, ExecutorFailed, NeedsHuman, NeedsApproval, Hold, Approved, TestsFailed, Keep, Pause}
+	return []string{Pending, ExecutorFailed, NeedsHuman, NeedsApproval, Hold, Approved, TestsFailed, Keep, Pause, P0, P1, P2, P3}
+}
+
+// Priorities lists the priority labels, highest priority first.
+func Priorities() []string { return []string{P0, P1, P2, P3} }
+
+// IsPriority reports whether l is one of the priority labels
+// (case-insensitively).
+func IsPriority(l string) bool {
+	for _, p := range Priorities() {
+		if strings.EqualFold(l, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// Priority returns 0..3 for the highest priority label in ls (P0 is 0). With
+// no priority label it returns DefaultPriority (2).
+func Priority(ls []string) int {
+	best := -1
+	for _, l := range ls {
+		for i, p := range Priorities() {
+			if strings.EqualFold(l, p) && (best < 0 || i < best) {
+				best = i
+			}
+		}
+	}
+	if best < 0 {
+		return DefaultPriority
+	}
+	return best
 }
 
 // Name builds ard:<stage>:<role>[:<state>]. Request(StageTriage, "lead") is
