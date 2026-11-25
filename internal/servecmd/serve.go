@@ -77,11 +77,11 @@ var gitBin = ""
 
 // Serve is the handler behind `ard serve`.
 func Serve(ctx context.Context, e *cli.Env, o cli.ServeOpts) error {
-	return serveLoops(ctx, e, buildDeps, o.Loops, o.K8s)
+	return serveLoops(ctx, e, buildDeps, o.Loops, o.K8s, o.UI)
 }
 
 func serve(ctx context.Context, e *cli.Env, build builder) error {
-	return serveLoops(ctx, e, build, nil, cli.K8sOpts{})
+	return serveLoops(ctx, e, build, nil, cli.K8sOpts{}, uiOff)
 }
 
 // loopNames lists the names of loops, for the serve.loops log line.
@@ -128,7 +128,7 @@ var dockerProbe = func(ctx context.Context) ([]byte, error) {
 	return exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
 }
 
-func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []string, k8s cli.K8sOpts) error {
+func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []string, k8s cli.K8sOpts, uiMode string) error {
 	if _, err := selectLoops(nil, wantLoops); err != nil {
 		return err
 	}
@@ -165,6 +165,31 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	}
 	defer leader.Release()
 
+	// The command center draws on the terminal, so while it runs every log
+	// line goes to serve.log instead (#414).
+	useUI, err := uiWanted(uiMode, os.Stdin, e.Stdout, os.Getenv)
+	if err != nil {
+		return &cli.ExitError{Code: 2, Err: fmt.Errorf("ard serve: %w", err)}
+	}
+	var (
+		baseLog = e.Log.Handler()
+		errOut  = e.Stderr
+		logPath string
+	)
+	if useUI {
+		lf, path, err := openServeLog(home, repo)
+		if err != nil {
+			return fmt.Errorf("ard serve: open serve log: %w", err)
+		}
+		defer lf.Close()
+		fl, err := cli.NewLogger(e.Globals.LogLevel, lf)
+		if err != nil {
+			return err
+		}
+		baseLog, errOut, logPath = fl.Handler(), lf, path
+		defer func() { fmt.Fprintln(e.Stderr, "logs:", path) }()
+	}
+
 	stateDir, err := state.Dir(filepath.Join(home, ".ard"), repo.String(), e.DryRun)
 	if err != nil {
 		return err
@@ -188,7 +213,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	// The ring keeps the newest log records for the command center; the tee
 	// passes every record to the existing handler unchanged.
 	events := snapshot.NewRing(snapshotEvents)
-	log := slog.New(snapshot.NewTee(e.Log.Handler(), events, nil))
+	log := slog.New(snapshot.NewTee(baseLog, events, nil))
 	// The controller's own bare clone: every config fetch, committer lane and
 	// executor worktree uses it, never the operator's checkout (#113).
 	clone, err := openClone(ctx, gitx.New(""), home, repo, d.RemoteURL, d.Token, log)
@@ -249,7 +274,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 	if perr != nil {
 		log.Error("serve.config_error_paths", "error", perr)
 	}
-	loader := &cfgLoader{paths: paths, src: src, fx: d.Effects, log: log, stderr: e.Stderr, agentImage: agentImage != "", issue: func() int { return int(w.statusIssue.Load()) }}
+	loader := &cfgLoader{paths: paths, src: src, fx: d.Effects, log: log, stderr: errOut, agentImage: agentImage != "", issue: func() int { return int(w.statusIssue.Load()) }}
 
 	// An origin/main whose config cannot be loaded does not abort startup:
 	// serve starts paused, tells the status issue, and retries every tick.
@@ -366,6 +391,9 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 		startSHA = cfg.SHA
 	}
 	log.Info("serve.start", "repo", repo.String(), "dry_run", e.DryRun, "pause_file", pausePath, "config_sha", startSHA)
+	if useUI {
+		return runWithUI(ctx, cc.Run, w.snap.Take, repo.String(), logPath, os.Stdin, e.Stdout)
+	}
 	return cc.Run(ctx)
 }
 

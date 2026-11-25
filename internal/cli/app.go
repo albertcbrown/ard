@@ -47,6 +47,8 @@ type Handlers struct {
 type ServeOpts struct {
 	// Loops names the controller loops to run; empty means every loop (#187).
 	Loops []string
+	// UI is "" (draw the command center on a terminal), "on" (--ui) or "off" (--no-ui) (#414).
+	UI string
 	// K8s holds the cluster settings of the Kubernetes executor (#318). They
 	// are read only when the config says executor: k8s.
 	K8s K8sOpts

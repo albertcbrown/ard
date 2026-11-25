@@ -1,0 +1,50 @@
+ard serve  o/r
+2026-11-25 12:00:00Z  pool 2/4  spend $3.50 of $20.00
+logs: /home/u/.ard/logs/o/r/serve.log
+Needs you
+paused workers: label 
+limit opus until 14:00Z
+error state: boom
+Running (1)
+#414   worker:engineer 5m00s/1h00m $1.25
+Waiting
+worker:engineer 3 slot oldest 1m30s
+Limits
+5h  42% allowed resets 13:00Z
+Issues (page 1/2)
+#1     triage:engineer done  jobs 1  $1.25
+#2     triage:engineer done  jobs 1  $1.25
+#3     triage:engineer done  jobs 1  $1.25
+#4     triage:engineer done  jobs 1  $1.25
+#5     triage:engineer done  jobs 1  $1.25
+#6     triage:engineer done  jobs 1  $1.25
+#7     triage:engineer done  jobs 1  $1.25
+#8     triage:engineer done  jobs 1  $1.25
+#9     triage:engineer done  jobs 1  $1.25
+#10    triage:engineer done  jobs 1  $1.25
+#11    triage:engineer done  jobs 1  $1.25
+#12    triage:engineer done  jobs 1  $1.25
+#13    triage:engineer done  jobs 1  $1.25
+#14    triage:engineer done  jobs 1  $1.25
+#15    triage:engineer done  jobs 1  $1.25
+#16    triage:engineer done  jobs 1  $1.25
+#17    triage:engineer done  jobs 1  $1.25
+#18    triage:engineer done  jobs 1  $1.25
+#19    triage:engineer done  jobs 1  $1.25
+#20    triage:engineer done  jobs 1  $1.25
+#21    triage:engineer done  jobs 1  $1.25
+#22    triage:engineer done  jobs 1  $1.25
+#23    triage:engineer done  jobs 1  $1.25
+#24    triage:engineer done  jobs 1  $1.25
+#25    triage:engineer done  jobs 1  $1.25
+#26    triage:engineer done  jobs 1  $1.25
+#27    triage:engineer done  jobs 1  $1.25
+#28    triage:engineer done  jobs 1  $1.25
+#29    triage:engineer done  jobs 1  $1.25
+#30    triage:engineer done  jobs 1  $1.25
+#31    triage:engineer done  jobs 1  $1.25
+Next tick
+triage     ticks 7 last 12:00:00Z
+Recent events
+12:00:00 INFO serve.start repo=o/r
+? help  j/k select  o open  q quit
