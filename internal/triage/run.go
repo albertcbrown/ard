@@ -115,6 +115,8 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		log.Error("triage.prepare_failed", "error", err)
 		if errors.Is(err, executor.ErrClone) {
 			finish(executor.Handle{}, executor.Status{}, agent.Result{}, transient(closeout.CauseCloneFail, "could not clone the repository", true))
+		} else if errors.Is(err, executor.ErrInputsTooLarge) {
+			finish(executor.Handle{}, executor.Status{}, agent.Result{}, transient(closeout.CauseInputsTooLarge, executor.InputsTooLargeDetail, false))
 		} else {
 			finish(executor.Handle{}, executor.Status{}, agent.Result{}, transient(closeout.CauseNoProcess, "could not prepare the job", false))
 		}

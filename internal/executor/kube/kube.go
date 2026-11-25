@@ -385,6 +385,11 @@ func (e *Executor) revoke(ctx context.Context, lj *liveJob) error {
 	return e.o.Tokens.RevokeToken(ctx, tok)
 }
 
+// Prune deletes host log files older than olderThan, as the local executor does.
+func (e *Executor) Prune(ctx context.Context, olderThan time.Duration) error {
+	return e.o.WS.Prune(ctx, olderThan)
+}
+
 // Secrets returns the live read-token values, for the redaction set.
 func (e *Executor) Secrets() []string {
 	e.mu.Lock()

@@ -104,6 +104,10 @@ const (
 	CauseNoProcess CauseKind = "no_process"         // never started, or its process vanished in this run
 	CauseRateLimit CauseKind = "rate_limit"         // the agent reported a transient API error
 	CauseCloneFail CauseKind = "clone_failed"       // a loop's Prepare failed at git or clone
+	CauseEvicted   CauseKind = "evicted"            // the Kubernetes pod was evicted, deleted or never scheduled
+	// CauseInputsTooLarge: the job's untrusted inputs exceed what a pod
+	// manifest carries. Never retried.
+	CauseInputsTooLarge CauseKind = "inputs_too_large"
 	// CauseUsageLimit: the run stopped at a subscription usage limit. It is
 	// not a failure and never hands off to the automatic retry (Retry is
 	// false); the issue is re-claimed after the reset.

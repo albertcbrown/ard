@@ -401,6 +401,16 @@ func TestAgentFailures(t *testing.T) {
 			t.Errorf("cause = %+v", c)
 		}
 	})
+	t.Run("oversized inputs close out as inputs_too_large", func(t *testing.T) {
+		h := newHarness(t)
+		h.issue("t")
+		h.ex.prepErr = fmt.Errorf("prepare: %w", executor.ErrInputsTooLarge)
+		h.mustTick()
+		c := h.only().Opts.Cause
+		if c.Kind != closeout.CauseInputsTooLarge || c.Retry {
+			t.Errorf("cause = %+v", c)
+		}
+	})
 	t.Run("other prepare failure does not retry", func(t *testing.T) {
 		h := newHarness(t)
 		h.issue("t")

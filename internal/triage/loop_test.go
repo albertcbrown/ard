@@ -311,6 +311,16 @@ func TestClaimFailures(t *testing.T) {
 			t.Error("the cause detail leaks the error text")
 		}
 	})
+	t.Run("oversized inputs are inputs_too_large and not retried", func(t *testing.T) {
+		h := newHarness(t)
+		h.gh.SeedIssue(github.Issue{Title: "t", Author: self, Labels: []string{lead}, CreatedAt: t0})
+		h.ex.prepareErr = fmt.Errorf("%w: too big", executor.ErrInputsTooLarge)
+		h.mustTick()
+		got := h.fin.got()
+		if len(got) != 1 || got[0].Cause.Kind != closeout.CauseInputsTooLarge || got[0].Cause.Retry || got[0].Cause.Detail != executor.InputsTooLargeDetail {
+			t.Fatalf("finish = %+v", got)
+		}
+	})
 	t.Run("another prepare error is no_process", func(t *testing.T) {
 		h := newHarness(t)
 		h.gh.SeedIssue(github.Issue{Title: "t", Author: self, Labels: []string{lead}, CreatedAt: t0})
