@@ -192,3 +192,26 @@ func TestResolveNextLimit(t *testing.T) {
 		t.Fatalf("now = %v, skipped = %v", now, skipped)
 	}
 }
+
+func TestBuildNeedsNetwork(t *testing.T) {
+	rf := RoleFile{Status: StatusNeedsNetwork, Network: []NetworkNeed{{What: "w", URL: "https://example.com/a", Why: "y"}}}
+	for name, w := range map[string]*WorkerResult{"with result": {PR: 9, Tests: TestsPassed}, "reaper, no result": nil} {
+		t.Run(name, func(t *testing.T) {
+			j := Job{Stage: StageWorker, Role: "engineer", Issue: 7, Worker: w}
+			p := Build(j, rf, testRoles)
+			if p.Outcome != OutcomeNeedsNetwork || len(p.Network) != 1 || p.Worker != "" || len(p.Requests) != 0 || len(p.Deferred) != 0 {
+				t.Fatalf("plan %+v", p)
+			}
+			if !reflect.DeepEqual(lbls(p.Terminal), []string{"7:ard:needs-human"}) || !reflect.DeepEqual(lbls(p.Remove), []string{"7:ard:worker:engineer:running"}) {
+				t.Errorf("labels %v %v", lbls(p.Terminal), lbls(p.Remove))
+			}
+		})
+	}
+	if p := Build(Job{Stage: StageTriage, Role: "lead", Issue: 7}, rf, testRoles); p.Outcome != OutcomeNeedsHuman || p.Network != nil {
+		t.Errorf("triage: %+v", p)
+	}
+	done := Job{Stage: StageWorker, Role: "engineer", Issue: 7, PR: 9, Worker: &WorkerResult{PR: 9, Tests: TestsPassed}}
+	if p := Build(done, RoleFile{Status: StatusDone}, testRoles); p.Outcome != OutcomeDone {
+		t.Errorf("done: %q", p.Outcome)
+	}
+}

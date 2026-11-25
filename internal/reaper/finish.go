@@ -367,7 +367,7 @@ func StepUsageOf(res agent.Result) (state.StepUsage, bool) {
 // and ignores errors: close-out is already done and retention retries later.
 func (f *Finisher) Tidy(ctx context.Context, sj state.Job, h executor.Handle, out closeout.Outcome) {
 	switch out {
-	case closeout.OutcomeFailed, closeout.OutcomeRetry, closeout.OutcomeLimited, closeout.OutcomeNeedsHuman:
+	case closeout.OutcomeFailed, closeout.OutcomeRetry, closeout.OutcomeLimited, closeout.OutcomeNeedsHuman, closeout.OutcomeNeedsNetwork:
 		if h.JobID != "" && f.Cleaner != nil {
 			if err := f.Cleaner.Cleanup(ctx, h, executor.CleanupOptions{KeepWorktree: true}); err != nil {
 				f.log().Warn("reaper.cleanup", "job", sj.ID, "error", err)

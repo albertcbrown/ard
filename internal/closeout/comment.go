@@ -69,7 +69,7 @@ func cutSummary(s string) string {
 
 func headerWord(p Plan) string {
 	switch p.Outcome {
-	case OutcomeNeedsHuman:
+	case OutcomeNeedsHuman, OutcomeNeedsNetwork:
 		if p.Status == StatusBlocked {
 			return "blocked"
 		}
@@ -153,6 +153,16 @@ func RenderComment(r Record, repo github.Repo, dryRun bool) string {
 	}
 	if p.Reason != "" {
 		b.WriteString("\n" + codeSpan(p.Reason, maxReasonRunes) + "\n")
+	}
+	if len(p.Network) > 0 {
+		b.WriteString("\nNetwork inputs needed:\n")
+		for _, n := range p.Network {
+			fmt.Fprintf(&b, "- %s: %s · %s", sanitize(n.What), codeSpan(n.URL, MaxNetworkURL), sanitize(n.Why))
+			if n.Verify != "" {
+				b.WriteString(" · verify: " + sanitize(n.Verify))
+			}
+			b.WriteString("\n")
+		}
 	}
 	var lines []string
 	if len(p.Requests) > 0 {
