@@ -190,3 +190,48 @@ func TestConflictMarkersLeftNeedsHuman(t *testing.T) {
 		t.Errorf("finish options %+v, want a marker hold", fc.Opts.Worker)
 	}
 }
+
+func TestConflictRoundDiffGuardOwnChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		ownBig  bool // the PR itself adds more than diff_max_lines
+		wantRun bool
+	}{
+		{"main's own changes are not counted", false, true},
+		{"the PR's own oversize changes are rejected", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.cfg.Roles[0].DiffWarnLines, h.cfg.Roles[0].DiffMaxLines = 10, 20
+			n, _, _ := conflictSetup(t, h, []string{"a.txt"}, true)
+			// Main alone brings in far more lines than diff_max_lines.
+			writeFile(t, h.clone, "main-big.txt", strings.Repeat("m\n", 100))
+			gittest.Run(t, h.clone, "add", "-A")
+			gittest.Run(t, h.clone, "commit", "-q", "-m", "main big")
+			gittest.Run(t, h.clone, "push", "-q", "origin", "main")
+			requestConflictRound(t, h, n)
+			files := map[string]string{"a.txt": "resolved\n"}
+			if tc.ownBig {
+				files["own-big.txt"] = strings.Repeat("o\n", 100)
+			}
+			h.agentWrites(files, roleDone, nil)
+			h.code.shas[0] = h.commitFiles(files)
+			h.mustTick()
+			if tc.wantRun {
+				if h.code.n() != 1 {
+					t.Fatalf("commit requests = %d, want 1; hold %+v", h.code.n(), h.only().Opts.Worker)
+				}
+				if _, ok := h.code.files[0]["main-big.txt"]; ok {
+					t.Error("main's file was declared as the PR's own change")
+				}
+				return
+			}
+			if h.code.n() != 0 {
+				t.Fatalf("commit requests = %d, want none", h.code.n())
+			}
+			if w := h.only().Opts.Worker; w == nil || !strings.Contains(w.Hold, "changed lines, limit 20") {
+				t.Errorf("finish options %+v, want a line-limit hold", w)
+			}
+		})
+	}
+}
