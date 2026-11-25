@@ -101,6 +101,9 @@ type Deps struct {
 	// entry at that SHA (no content). nil for either holds a network round.
 	MainSHA   func(ctx context.Context) (string, error)
 	MainEntry func(ctx context.Context, sha, path string) (TreeEntry, bool, error)
+	// Approvals, when set, lists the issues waiting for ard:approved so the
+	// command center can offer to approve them. nil = not tracked.
+	Approvals *ApprovalQueue
 }
 
 // Loop is the triage loop. It implements controller.Loop.
