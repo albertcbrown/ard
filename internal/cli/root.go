@@ -47,6 +47,9 @@ lands it once every review passes.`,
 		newRebuildState(app),
 		newInit(app),
 		newSetup(app),
+		newJobPre(app),
+		newJobExec(app),
+		newJobPost(app),
 		newVersion(app),
 	)
 	return root
