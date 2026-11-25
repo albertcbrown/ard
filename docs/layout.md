@@ -65,6 +65,8 @@ internal/initcmd/           ard init: proposes the starter .ard/ as a PR on ard-
 Dockerfile                  the ard image (ghcr.io/albertcbrown/ard): ard plus the cve tools; no RUN on the target platform
 deploy/argocd/              ard-root app-of-apps chart (one Application per target repo); deploy/charts/ard-serve/ one ard serve
 deploy/test-*.sh            chart, image and repo checks for the above (`make chart-test`, `make image-test`); test-release.sh is `make release-check`
+deploy/testdata/chart/      the default (executor local) ard-serve render that `make chart-test` requires byte for byte
+deploy/github-cidrs.sh      human-run: prints the chart's jobs.githubCIDRs from api.github.com/meta
 .goreleaser.yaml            GoReleaser v2 config: four-target archives, checksums and the Homebrew cask (checked by `make release-check`)
 docs/proposal.md            design source of truth
 docs/layout.md              this file: every directory and package

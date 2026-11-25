@@ -12,6 +12,12 @@ this chart (an admission policy on the Argo CD tracking id does that, since a ch
 {{- if not (regexMatch "^[0-9a-f]{40}$" ($img.commit | default "")) }}
 {{- fail (printf "image.commit must be a 40-character sha, got %q" $img.commit) }}
 {{- end }}
+{{- $agent := .Values.agentImage | default dict -}}
+{{- if $agent.digest }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $agent.digest) }}
+{{- fail (printf "agentImage.digest must be sha256:<64 hex>, got %q" $agent.digest) }}
+{{- end }}
+{{- end }}
 {{- range .Values.instances }}
 {{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$" .name) }}
 {{- fail (printf "instance name %q must be a DNS label of at most 42 characters" .name) }}
@@ -37,6 +43,12 @@ spec:
         {{- $v := deepCopy ($.Values.site | default dict) }}
         {{- $_ := set $v "instance" (dict "name" .name "repo" .repo "dryRun" .dryRun) }}
         {{- $_ := set $v "image" (dict "repository" $img.repository "digest" $img.digest) }}
+        {{- with .executor }}
+        {{- $_ := set $v "executor" . }}
+        {{- end }}
+        {{- if $agent.digest }}
+        {{- $_ := set $v "agentImage" (dict "repository" $agent.repository "digest" $agent.digest) }}
+        {{- end }}
         {{- toYaml $v | nindent 8 }}
   destination:
     server: {{ $.Values.destination.server }}
