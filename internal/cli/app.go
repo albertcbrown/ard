@@ -60,7 +60,11 @@ type InitOpts struct {
 
 // SetupOpts is the parsed flag set of `ard setup`.
 type SetupOpts struct {
-	Check bool
+	Check       bool
+	CreateGHApp bool   // --create-gh-app: create the App with the manifest flow
+	AppName     string // --app-name
+	KeyFile     string // --key-file
+	Force       bool   // --force: overwrite an existing key file
 }
 
 // ErrNotImplemented is returned (wrapped) by stub commands whose handler

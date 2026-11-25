@@ -34,6 +34,14 @@ func Command(ctx context.Context, e *cli.Env, o cli.SetupOpts) error {
 	if err != nil {
 		return err
 	}
+	if o.CreateGHApp {
+		if err := CreateApp(ctx, e, repo, CreateAppOpts{Name: o.AppName, KeyPath: o.KeyFile, Force: o.Force}); err != nil {
+			return err
+		}
+		if e.DryRun {
+			return nil
+		}
+	}
 	auth, err := github.AuthFromEnv(os.Getenv, os.ReadFile)
 	if err != nil {
 		return fmt.Errorf("setup: %w", err)
