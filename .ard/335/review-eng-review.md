@@ -4,9 +4,12 @@ status: done
 attempt: 1
 verdict: approve
 ---
-The change adds the `pymdown-extensions>=10.21.3` floor and its comment to `docs/site/requirements.txt`, as plan.md describes and following the certifi convention. It matches the issue, and I found no problems.
+After the merge from main, the existing `pymdown-extensions>=11.0.1` floor already covers GHSA-62q4-447f-wv8h (fixed in 10.21.3). The change now only adds a comment that records this. The earlier `>=10.21.3` line is gone, and the issue is satisfied. Approved.
 
 ## Checks
-- Lint: skipped. The change is two lines in a requirements file, and no lint entry point applies to it.
+- Lint: skipped. The change is one comment line in a requirements file, and no lint entry point applies.
 - Diff coverage: skipped. The change adds no code.
-- Docs build: I did not rerun it. The worker's report says a fresh-venv install had no resolver conflict and `mkdocs build --strict` passed.
+- Docs build: not rerun. The change is a comment, so it cannot affect resolution.
+
+## Previous findings
+- Round 1 had no findings. The `>=10.21.3` floor it approved was replaced by the stricter `>=11.0.1` already on main. I checked the current file.
