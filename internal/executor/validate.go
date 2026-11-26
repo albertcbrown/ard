@@ -40,6 +40,8 @@ func (j Job) Validate() error {
 		return bad("trusted input is only valid for a scanner job")
 	case j.History && j.Stage != "scanner":
 		return bad("history is only valid for a scanner job")
+	case j.Output && j.Stage != "scanner":
+		return bad("output is only valid for a scanner job")
 	case j.Network != NetworkOn && j.Network != NetworkAdvisory && j.Network != NetworkNone:
 		return bad("network %q", j.Network)
 	case j.Timeout <= 0:

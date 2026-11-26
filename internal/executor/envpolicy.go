@@ -37,6 +37,9 @@ func ArdEnv(h Handle) []string {
 	if h.View.History != "" {
 		e = append(e, "ARD_HISTORY="+h.View.History)
 	}
+	if h.View.Out != "" {
+		e = append(e, "ARD_OUT="+h.View.Out)
+	}
 	return e
 }
 
