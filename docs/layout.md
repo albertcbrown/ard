@@ -23,7 +23,7 @@ internal/agent/             Adapter interface, Spec/Result types, Registry (pure
 internal/agent/claude/      Claude Code adapter (`claude -p`, stream-json parser)
 internal/modelauth/         picks the one model credential (OAuth token or API key) from the controller env and carries its value to the executor; never logged
 internal/state/             SQLite controller and scanner state (sqlitex, scannerdb)
-internal/scanner/           scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
+internal/scanner/           scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, AgentEngine (prompt.txt scanners, not yet wired), Engines, the scanners Loop, rebuild
 internal/costblock/         the issue body's ard-owned cost block: render, strict parse, strip (admission), splice, per-issue Locks; leaf, stdlib only
 internal/tarball/          safe streaming tar.gz pack/unpack through os.Root; leaf, stdlib only
 internal/jobpod/           controller-pod contract of the k8s executor: paths, Secret items, input manifest, result route, key helpers; imports only executor and gitref
