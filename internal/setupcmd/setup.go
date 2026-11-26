@@ -38,8 +38,14 @@ type Deps struct {
 	// setting checks for Repo. They only read.
 	Policy PolicyReader
 	Repo   github.Repo
-	DryRun bool
-	Log    *slog.Logger
+	// Variables writes ARD_BOT_LOGIN with the operator's token; Confirm asks
+	// before a different existing value is replaced (nil means no).
+	Variables VariableWriter
+	Confirm   func(prompt string) (bool, error)
+	// WorkflowAt reads the bot-commits workflow on origin/main.
+	WorkflowAt func(ctx context.Context) ([]byte, bool, error)
+	DryRun     bool
+	Log        *slog.Logger
 }
 
 const (
@@ -81,7 +87,21 @@ func Run(ctx context.Context, d Deps, o Opts, out io.Writer) (Report, error) {
 		rep.Rows = append(rep.Rows, rows...)
 	}
 	// Apply only when every check is green; label drift alone is fixable.
+	// The workflow and bot login rows have their own fixes and do not block.
 	blocked := !rep.Green()
+	if d.WorkflowAt != nil {
+		rep.Rows = append(rep.Rows, checkWorkflow(ctx, d.WorkflowAt))
+	}
+	if d.Policy != nil {
+		b, err := checkBotLogin(ctx, d)
+		if err != nil {
+			return rep, err
+		}
+		if b.row.Status == StatusDrift && !o.Check && !blocked {
+			b.row = applyBotLogin(ctx, d, b)
+		}
+		rep.Rows = append(rep.Rows, b.row)
+	}
 	have, err := d.Reader.ListLabels(ctx)
 	if err != nil {
 		return rep, fmt.Errorf("setup: list labels: %w", err)

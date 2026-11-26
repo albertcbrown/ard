@@ -15,6 +15,9 @@ func newSetup(app *App) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.run(cmd, func(ctx context.Context, e *Env) error {
+				if o.PrintWorkflow && (o.Check || o.CreateGHApp || o.AppName != "" || o.KeyFile != "" || o.Force) {
+					return fmt.Errorf("setup: --print-workflow cannot be combined with other flags")
+				}
 				if o.CreateGHApp && o.Check {
 					return fmt.Errorf("setup: --create-gh-app cannot be combined with --check")
 				}
@@ -33,6 +36,7 @@ func newSetup(app *App) *cobra.Command {
 	f.BoolVar(&o.CreateGHApp, "create-gh-app", false, "create ard's GitHub App with the manifest flow, then run the checks")
 	f.StringVar(&o.AppName, "app-name", "", "App name for --create-gh-app (default ard-<owner>-<repo>)")
 	f.StringVar(&o.KeyFile, "key-file", "", "private key path for --create-gh-app (default ~/.ard/keys/<slug>.pem)")
+	f.BoolVar(&o.PrintWorkflow, "print-workflow", false, "print the bot-commits workflow embedded in ard and exit")
 	f.BoolVar(&o.Force, "force", false, "overwrite an existing key file")
 	return cmd
 }
