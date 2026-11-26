@@ -259,3 +259,18 @@ func TestAppAuthDiscoveryRedirectIsRepoMoved(t *testing.T) {
 		t.Errorf("error leaks the query: %v", err)
 	}
 }
+
+func TestTokenAuthNeverFormats(t *testing.T) {
+	tok := "ghp_" + strings.Repeat("k", 36)
+	ta := &TokenAuth{Value: tok, Source: "gh"}
+	var a Auth = ta
+	for _, v := range []any{ta, a} {
+		got := fmt.Sprintf("%v|%+v|%#v|%s", v, v, v, v)
+		if strings.Contains(got, tok) {
+			t.Errorf("formatting %T leaks the token: %s", v, got)
+		}
+	}
+	if s := fmt.Sprintf("%v", ta); s != "token(gh)" {
+		t.Errorf("String = %q", s)
+	}
+}

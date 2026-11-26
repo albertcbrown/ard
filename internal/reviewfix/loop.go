@@ -395,8 +395,19 @@ func (t *tick) mergeIncludes(ctx context.Context, base, head string) (bool, erro
 	if err != nil || len(ps) < 2 {
 		return false, err
 	}
-	return d.Git.IsAncestor(ctx, d.RepoDir, base, head)
+	if ok, err := d.Git.IsAncestor(ctx, d.RepoDir, base, head); err != nil || !ok {
+		return false, err
+	}
+	// The second parent must be a commit of main: a merge of anything else
+	// does not resolve a conflict with main.
+	if err := d.Git.FetchRef(ctx, d.RepoDir, d.RemoteURL, "+refs/heads/main:"+mainCheckRef, d.Token); err != nil {
+		return false, fmt.Errorf("fetch main: %w", err)
+	}
+	return d.Git.IsAncestor(ctx, d.RepoDir, ps[1], mainCheckRef)
 }
+
+// mainCheckRef is where the loop keeps the fetched tip of main in RepoDir.
+const mainCheckRef = "refs/ard/reviewfix-main"
 
 // capPath hands the issue to a human: one comment (never finding text), the
 // needs-human label, then the capped event. A crash replays the first two.

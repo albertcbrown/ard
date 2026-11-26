@@ -145,3 +145,49 @@ func scanString(t *testing.T, in string) []Finding {
 	}
 	return f
 }
+
+func TestScannerAWSExample(t *testing.T) {
+	suffix := "EX" + "AMPLE"
+	exID := "AK" + "IA" + "IOSFODNN7" + suffix
+	exASIA := "AS" + "IA" + "ABCDEFGHI" + suffix
+	exSecret := "wJalrXUtnFEMI/K7MDENG/bPxRfiCY" + "EXAMPLE" + "KEY"
+	real := "AK" + "IA" + "QZ7K2M9TXW4HPN6B"
+	longEx := "AK" + "IA" + "ABCDEFGHIJKLM" + suffix
+	cases := []struct {
+		name string
+		in   string
+		want int
+		col  int
+	}{
+		{"example id", exID, 0, 0},
+		{"asia example", exASIA, 0, 0},
+		{"example secret", "aws_secret_access_key = " + exSecret, 0, 0},
+		{"real id", "key " + real, 1, 5},
+		{"example then real", exID + " " + real, 1, 22},
+		{"real then example", real + " " + exID, 1, 1},
+		{"example plus X", exID + "X", 0, 0},
+		{"too long example plus real", longEx + " " + real, 1, 0},
+		{"lowercase suffix", "AK" + "IA" + "ABCDEFGHI" + "example", 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, err := Builtin().Scan(context.Background(), strings.NewReader(c.in+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.name == "too long example plus real" {
+				// the 23-char token is not a valid id; only the real one counts
+				if len(f) != 1 {
+					t.Fatalf("findings = %v", f)
+				}
+				return
+			}
+			if len(f) != c.want {
+				t.Fatalf("findings = %v, want %d", f, c.want)
+			}
+			if c.want == 1 && (f[0].Rule != "aws-access-key" || f[0].Col != c.col) {
+				t.Errorf("finding = %+v, want col %d", f[0], c.col)
+			}
+		})
+	}
+}

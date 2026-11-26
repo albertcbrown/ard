@@ -14,6 +14,8 @@ type rule struct {
 	// these. Empty means always run (the generic rule filters itself).
 	kw      [][]byte
 	generic bool
+	// skip, when set, exempts an individual match from being a finding.
+	skip func(match []byte) bool
 }
 
 func kws(s ...string) [][]byte {
@@ -27,7 +29,7 @@ func kws(s ...string) [][]byte {
 var rules = []rule{
 	{id: "github-token", re: regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,255}\b`), kw: kws("ghp_", "gho_", "ghu_", "ghs_", "ghr_")},
 	{id: "github-fine-grained", re: regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{50,255}\b`), kw: kws("github_pat_")},
-	{id: "aws-access-key", re: regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), kw: kws("AKIA", "ASIA")},
+	{id: "aws-access-key", re: regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), kw: kws("AKIA", "ASIA"), skip: awsExample},
 	{id: "slack-token", re: regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,250}`), kw: kws("xox")},
 	{id: "slack-webhook", re: regexp.MustCompile(`hooks\.slack\.com/services/[A-Za-z0-9/]{20,200}`), kw: kws("hooks.slack.com")},
 	{id: "private-key", re: regexp.MustCompile(`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----`), kw: kws("PRIVATE KEY")},
@@ -41,6 +43,14 @@ var rules = []rule{
 	// are always judged by entropy, so the rule stays fail-closed.
 	{id: "generic-assignment", generic: true,
 		re: regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|passw(?:or)?d|auth)["']?\s{0,16}[:=]\s{0,16}(["']?)([A-Za-z0-9_\-+/=.]{16,250})`)},
+}
+
+// awsExample reports whether an aws-access-key match is one of AWS's published
+// placeholder ids: 20 characters ending in the example suffix. It judges one
+// match, never a line. The documented placeholder secret key needs no code:
+// generic-assignment already skips values containing "example".
+func awsExample(m []byte) bool {
+	return len(m) == 20 && bytes.HasSuffix(m, []byte("EXA"+"MPLE"))
 }
 
 const entropyThreshold = 3.5

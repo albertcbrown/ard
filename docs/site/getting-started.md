@@ -4,7 +4,7 @@ This takes a repository from nothing to a first triaged issue. Run the `ard` com
 
 ## 1. Create and install the GitHub App
 
-ard acts as a GitHub App, never as a personal token. The quickest way to create one with the right permissions is the manifest flow:
+ard acts as a GitHub App, or as a personal access token (`ARD_GITHUB_TOKEN`), or, when neither is set, as the token of a logged-in `gh` CLI (kept in memory for the session). A token acts as its user: protected-path PRs then need approval from a different write-access user, and the bot-commit audit cannot tell ard's commits from yours. Use a fine-grained, single-repo token with an expiry. `ard serve` checks the credentials against the repository before any loop starts. The App is the default path; the quickest way to create one with the right permissions is the manifest flow:
 
 ```sh
 ard setup --create-gh-app --dry-run   # preview the manifest and URL; creates nothing

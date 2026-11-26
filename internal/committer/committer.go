@@ -289,6 +289,9 @@ type snap struct {
 	// the first attempt refuses to overwrite a declared path that changed
 	// between base and the fetched head.
 	base string
+	// mergeParent, when set, makes the commit a two-parent merge (runMerge).
+	mergeParent string
+	issue       int // the code lane's issue, for the path guard
 }
 
 func (s snap) wantMode(path string) string {
@@ -437,67 +440,8 @@ func (l *lane) attempt(ctx context.Context, s snap, base string, create bool) (r
 		return res, false, err
 	}
 	declared, msg := s.declared, s.msg
-	var writes, deletes, execs []string
-	for _, f := range s.files {
-		full := filepath.Join(l.wt, filepath.FromSlash(f.path))
-		// Defence in depth behind CheckCodePath/CheckPath: never touch a
-		// path that resolves outside the worktree.
-		if rel, err := filepath.Rel(l.wt, full); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-			ge := &GuardError{}
-			ge.add(f.path, "escapes the worktree")
-			return res, false, ge
-		}
-		if err := checkParents(l.wt, f.path); err != nil {
-			return res, false, err
-		}
-		if f.del {
-			if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return res, false, fmt.Errorf("remove %s: %w", f.path, err)
-			}
-			deletes = append(deletes, f.path)
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			return res, false, fmt.Errorf("mkdir for %s: %w", f.path, err)
-		}
-		data := f.data
-		if f.merge != nil {
-			cur, rerr := os.ReadFile(full)
-			if rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-				return res, false, fmt.Errorf("read %s: %w", f.path, rerr)
-			}
-			merged, merr := f.merge(cur, rerr == nil, f.data)
-			if merr != nil {
-				return res, false, fmt.Errorf("%w: %s: %v", ErrMerge, f.path, merr)
-			}
-			data = merged
-		}
-		if err := os.WriteFile(full, data, 0o644); err != nil {
-			return res, false, fmt.Errorf("write %s: %w", f.path, err)
-		}
-		// WriteFile keeps the mode of an existing file, so set it explicitly.
-		if err := os.Chmod(full, fileMode(f.exec)); err != nil {
-			return res, false, fmt.Errorf("chmod %s: %w", f.path, err)
-		}
-		writes = append(writes, f.path)
-		if f.exec {
-			execs = append(execs, f.path)
-		}
-	}
-	if len(writes) > 0 {
-		if err := l.g.AddForce(ctx, l.wt, writes...); err != nil {
-			return res, false, err
-		}
-	}
-	if len(deletes) > 0 {
-		if err := l.g.RmCached(ctx, l.wt, deletes...); err != nil {
-			return res, false, err
-		}
-	}
-	if len(execs) > 0 {
-		if err := l.g.SetExec(ctx, l.wt, execs...); err != nil {
-			return res, false, err
-		}
+	if err := l.apply(ctx, s); err != nil {
+		return res, false, err
 	}
 	changes, err := l.g.StagedChanges(ctx, l.wt)
 	if err != nil {
@@ -544,6 +488,73 @@ func (l *lane) attempt(ctx context.Context, s snap, base string, create bool) (r
 		return res, errors.Is(err, effects.ErrNonFastForward) || errors.Is(err, effects.ErrStaleLease), err
 	}
 	return Result{SHA: cr.SHA, Synthetic: cr.Synthetic}, false, nil
+}
+
+// apply writes and stages the snapshot's files in the worktree.
+func (l *lane) apply(ctx context.Context, s snap) error {
+	var writes, deletes, execs []string
+	for _, f := range s.files {
+		full := filepath.Join(l.wt, filepath.FromSlash(f.path))
+		// Defence in depth behind CheckCodePath/CheckPath: never touch a
+		// path that resolves outside the worktree.
+		if rel, err := filepath.Rel(l.wt, full); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			ge := &GuardError{}
+			ge.add(f.path, "escapes the worktree")
+			return ge
+		}
+		if err := checkParents(l.wt, f.path); err != nil {
+			return err
+		}
+		if f.del {
+			if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove %s: %w", f.path, err)
+			}
+			deletes = append(deletes, f.path)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			return fmt.Errorf("mkdir for %s: %w", f.path, err)
+		}
+		data := f.data
+		if f.merge != nil {
+			cur, rerr := os.ReadFile(full)
+			if rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+				return fmt.Errorf("read %s: %w", f.path, rerr)
+			}
+			merged, merr := f.merge(cur, rerr == nil, f.data)
+			if merr != nil {
+				return fmt.Errorf("%w: %s: %v", ErrMerge, f.path, merr)
+			}
+			data = merged
+		}
+		if err := os.WriteFile(full, data, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", f.path, err)
+		}
+		// WriteFile keeps the mode of an existing file, so set it explicitly.
+		if err := os.Chmod(full, fileMode(f.exec)); err != nil {
+			return fmt.Errorf("chmod %s: %w", f.path, err)
+		}
+		writes = append(writes, f.path)
+		if f.exec {
+			execs = append(execs, f.path)
+		}
+	}
+	if len(writes) > 0 {
+		if err := l.g.AddForce(ctx, l.wt, writes...); err != nil {
+			return err
+		}
+	}
+	if len(deletes) > 0 {
+		if err := l.g.RmCached(ctx, l.wt, deletes...); err != nil {
+			return err
+		}
+	}
+	if len(execs) > 0 {
+		if err := l.g.SetExec(ctx, l.wt, execs...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // fetch updates the private upstream ref and returns its SHA.

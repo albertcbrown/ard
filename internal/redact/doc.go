@@ -20,6 +20,11 @@
 // cannot hide a credential: every scan rule anchors on a token prefix that no
 // path contains, and a placeholder matches no rule.
 //
+// One exemption loosens the scan: an aws-access-key match of exactly 20
+// characters ending in the suffix "EXAMPLE" (AWS's published placeholder ids)
+// is not a finding. It is judged per match, so it cannot hide another key on
+// the same line. Redaction is unaffected.
+//
 // Contract for the close-out (#20) and the reaper (#37):
 //
 //   - Commit a log only when Redactor.Log returns err == nil and !Flagged, and

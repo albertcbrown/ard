@@ -16,6 +16,10 @@ type CommitOp struct {
 	Dir     string   // worktree; callers stage first
 	Message string   // full message including trailers
 	Author  Identity // used as author and committer; never global config
+	// Parents, when set, is the full parent list of the commit, first parent
+	// first; HEAD is not consulted and an index equal to HEAD is still
+	// committed (a merge whose tree equals a parent's is a real commit).
+	Parents []string
 }
 
 // TokenFunc mints a push credential. It is called once per push.
@@ -34,14 +38,19 @@ func (g *Git) Commit(ctx context.Context, op CommitOp) (string, error) {
 	if op.Author.Name == "" || op.Author.Email == "" {
 		return "", fmt.Errorf("gitx: commit in %s: author name and email are required", op.Dir)
 	}
-	if _, _, err := g.run(ctx, op.Dir, nil, "", nil, "diff", "--cached", "--quiet"); err == nil {
-		return "", ErrNothingToCommit
-	} else if !isExit(err, 1) {
-		return "", fmt.Errorf("gitx: check index in %s: %w", op.Dir, err)
+	if len(op.Parents) == 0 {
+		if _, _, err := g.run(ctx, op.Dir, nil, "", nil, "diff", "--cached", "--quiet"); err == nil {
+			return "", ErrNothingToCommit
+		} else if !isExit(err, 1) {
+			return "", fmt.Errorf("gitx: check index in %s: %w", op.Dir, err)
+		}
 	}
 	env := []string{
 		"GIT_AUTHOR_NAME=" + op.Author.Name, "GIT_AUTHOR_EMAIL=" + op.Author.Email,
 		"GIT_COMMITTER_NAME=" + op.Author.Name, "GIT_COMMITTER_EMAIL=" + op.Author.Email,
+	}
+	if len(op.Parents) > 0 {
+		return g.commitParents(ctx, op, env)
 	}
 	// Hooks are disabled and signing is off so a commit never depends on the
 	// host's git configuration.
@@ -52,6 +61,29 @@ func (g *Git) Commit(ctx context.Context, op CommitOp) (string, error) {
 		return "", fmt.Errorf("gitx: commit in %s: %w", op.Dir, err)
 	}
 	return g.RevParse(ctx, op.Dir, "HEAD")
+}
+
+// commitParents writes the staged index as a commit with exactly op.Parents
+// and moves HEAD to it.
+func (g *Git) commitParents(ctx context.Context, op CommitOp, env []string) (string, error) {
+	tree, _, err := g.run(ctx, op.Dir, nil, "", nil, "write-tree")
+	if err != nil {
+		return "", fmt.Errorf("gitx: write-tree in %s: %w", op.Dir, err)
+	}
+	args := []string{"-c", "commit.gpgsign=false", "commit-tree", strings.TrimSpace(tree)}
+	for _, p := range op.Parents {
+		args = append(args, "-p", p)
+	}
+	args = append(args, "-F", "-")
+	out, _, err := g.run(ctx, op.Dir, env, op.Message, nil, args...)
+	if err != nil {
+		return "", fmt.Errorf("gitx: commit-tree in %s: %w", op.Dir, err)
+	}
+	sha := strings.TrimSpace(out)
+	if _, _, err := g.run(ctx, op.Dir, nil, "", nil, "reset", "--soft", "--quiet", sha); err != nil {
+		return "", fmt.Errorf("gitx: move HEAD to %s: %w", sha, err)
+	}
+	return sha, nil
 }
 
 // Push pushes op.Ref. Typed errors: ErrNonFastForward, ErrStaleLease,

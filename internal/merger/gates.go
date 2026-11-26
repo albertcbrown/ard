@@ -34,7 +34,10 @@ func closingRef(body string, issue int) bool {
 
 // approvalCheck is what approved needs from the outside.
 type approvalCheck struct {
-	self       string // the App's login
+	// self is ard's own login: the App's bot, or under a personal access token
+	// the token's user. Reviews by self never count as approval, so with a token
+	// a protected-path PR needs approval from a different write-access user.
+	self       string
 	permission func(ctx context.Context, login string) (github.Permission, error)
 	covers     func(ctx context.Context, reviewedAt string) (bool, error)
 }

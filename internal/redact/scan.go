@@ -119,6 +119,9 @@ func scanLine(data []byte, line, base int, emit func(Finding)) {
 			continue
 		}
 		for _, m := range ru.re.FindAllIndex(data, -1) {
+			if ru.skip != nil && ru.skip(data[m[0]:m[1]]) {
+				continue
+			}
 			emit(Finding{ru.id, line, base + m[0] + 1})
 		}
 	}
