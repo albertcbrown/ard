@@ -39,15 +39,10 @@ func AgentCommand(reg *agent.Registry, cfg *config.Resolved, role config.Role, s
 	if err != nil {
 		return executor.Command{}, err
 	}
-	if budget <= 0 {
-		if budget = role.MaxBudgetUSD; budget == 0 {
-			budget = cfg.MaxBudgetUSD
-		}
-	}
 	spec := agent.Spec{
 		Stage: stage, Role: role.Name, Issue: n,
 		PromptFile: h.View.Role + "/prompt.txt", Untrusted: untrusted,
-		ConfigDir: h.View.ConfigDir, Model: role.Model, MaxBudgetUSD: budget, Auth: cred.Auth, Network: role.Network,
+		ConfigDir: h.View.ConfigDir, Model: role.Model, MaxBudgetUSD: jobBudget(cfg, role, budget), Auth: cred.Auth, Network: role.Network,
 	}
 	if stage == agent.StageTriage {
 		for _, w := range cfg.RolesOf(config.KindWorker) {
@@ -62,6 +57,51 @@ func AgentCommand(reg *agent.Registry, cfg *config.Resolved, role config.Role, s
 		return executor.Command{}, err
 	}
 	return Command(ac, cred)
+}
+
+// ScannerFindingsFile is the file, inside the job's output dir, an LLM
+// scanner writes its findings to.
+const ScannerFindingsFile = "findings.jsonl"
+
+// ScannerCommand builds the agent invocation for an LLM scanner run: the
+// role's adapter, h.View.Role+"/prompt.txt", Stage scanner, Issue 0, the
+// output file h.View.Out+"/findings.jsonl", the sidecar as a read dir, the
+// per-job config dir, the role's model and its max_budget_usd (else cfg's).
+// It fails (wrapping agent.ErrInvalidSpec) when h.View.Out is "": the job
+// was prepared without Output.
+func ScannerCommand(reg *agent.Registry, cfg *config.Resolved, role config.Role, h executor.Handle, cred modelauth.Credential) (executor.Command, error) {
+	if h.View.Out == "" {
+		return executor.Command{}, fmt.Errorf("scanner %s: job has no output dir: %w", role.Name, agent.ErrInvalidSpec)
+	}
+	a, err := reg.Get(role.Agent)
+	if err != nil {
+		return executor.Command{}, err
+	}
+	spec := agent.Spec{
+		Stage: agent.StageScanner, Role: role.Name,
+		PromptFile: h.View.Role + "/prompt.txt", OutputFile: h.View.Out + "/" + ScannerFindingsFile,
+		ConfigDir: h.View.ConfigDir, Model: role.Model, MaxBudgetUSD: jobBudget(cfg, role, 0), Auth: cred.Auth, Network: role.Network,
+	}
+	if h.View.Sidecar != "" {
+		spec.ReadDirs = []string{h.View.Sidecar}
+	}
+	ac, err := a.Command(spec)
+	if err != nil {
+		return executor.Command{}, err
+	}
+	return Command(ac, cred)
+}
+
+// jobBudget is budget when positive, else the role's max_budget_usd, else
+// cfg's.
+func jobBudget(cfg *config.Resolved, role config.Role, budget float64) float64 {
+	if budget > 0 {
+		return budget
+	}
+	if role.MaxBudgetUSD != 0 {
+		return role.MaxBudgetUSD
+	}
+	return cfg.MaxBudgetUSD
 }
 
 // ExecJob fills the role-derived fields of an executor job: RoleDir,

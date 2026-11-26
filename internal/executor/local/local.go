@@ -162,6 +162,14 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 			h = executor.Handle{}
 		}
 	}()
+	if j.Output {
+		// Inside home, so Discard on failure and Cleanup remove it. The job
+		// may write here even when its worktree is read-only.
+		if h.OutDir, err = makeOutDir(h.Home); err != nil {
+			return h, err
+		}
+		h.View.Out = h.OutDir
+	}
 	useDocker := j.Dockerfile != ""
 	if !useDocker && l.agentImage != "" && !j.TrustedInput {
 		useDocker = true
@@ -187,6 +195,9 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		if h.SidecarDir != "" {
 			h.View.Sidecar = "/sidecar"
 		}
+		if h.OutDir != "" {
+			h.View.Out = "/out"
+		}
 	} else if j.ReadOnly {
 		// Last: nothing else may need to write into the worktree.
 		if err = workspace.ChmodReadOnly(h.Worktree); err != nil {
@@ -194,6 +205,21 @@ func (l *Local) Prepare(ctx context.Context, j executor.Job) (h executor.Handle,
 		}
 	}
 	return h, nil
+}
+
+// outDirName is the job's output dir inside its home (Job.Output).
+const outDirName = "out"
+
+// makeOutDir creates the empty output dir inside home, 0700 past the umask.
+func makeOutDir(home string) (string, error) {
+	p := filepath.Join(home, outDirName)
+	if err := os.Mkdir(p, 0o700); err != nil {
+		return "", fmt.Errorf("create output dir: %w", err)
+	}
+	if err := os.Chmod(p, 0o700); err != nil {
+		return "", fmt.Errorf("create output dir: %w", err)
+	}
+	return p, nil
 }
 
 // WorktreePath is where a job's worktree lives.

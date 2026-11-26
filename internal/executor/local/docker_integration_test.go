@@ -66,6 +66,23 @@ func TestDockerRun(t *testing.T) {
 		t.Errorf("View.Sidecar = %q", sh.View.Sidecar)
 	}
 
+	// A read-only scanner job with Output writes /out ($ARD_OUT), not /work.
+	os.WriteFile(filepath.Join(f.roleDir, "out.sh"), []byte("#!/bin/sh\n[ \"$ARD_OUT\" = /out ] && echo ok > \"$ARD_OUT/f\" && ! touch /work/y\n"), 0o755)
+	oj := f.job(time.Minute)
+	oj.Stage, oj.Issue, oj.ReadOnly, oj.Output = "scanner", 0, true, true
+	oj.Dockerfile = filepath.Join(f.roleDir, "Dockerfile")
+	oh, ost := f.run(t, oj, executor.Command{Path: "/role/out.sh"})
+	if ost.State != executor.Exited || ost.ExitCode != 0 {
+		t.Errorf("output job: %+v log %q", ost, readFile(t, oh.LogPath))
+	}
+	if oh.View.Out != "/out" || readFile(t, filepath.Join(oh.OutDir, "f")) != "ok\n" {
+		t.Errorf("View.Out %q, host out file missing", oh.View.Out)
+	}
+	if _, err := os.Stat(filepath.Join(oh.Worktree, "y")); err == nil {
+		t.Error("write to read-only /work reached the host")
+	}
+	f.l.Cleanup(ctx, oh, executor.CleanupOptions{})
+
 	j := f.job(time.Second)
 	j.Dockerfile = filepath.Join(f.roleDir, "Dockerfile")
 	os.WriteFile(filepath.Join(f.roleDir, "sleep.sh"), []byte("#!/bin/sh\nsleep 300\n"), 0o755)

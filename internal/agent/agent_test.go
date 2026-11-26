@@ -55,6 +55,40 @@ func TestValidateAuth(t *testing.T) {
 	}
 }
 
+func TestValidateOutputFile(t *testing.T) {
+	scanner := func() agent.Spec {
+		return agent.Spec{Stage: agent.StageScanner, Role: "arch", PromptFile: "/p", ConfigDir: "/c",
+			OutputFile: "/out/findings.jsonl", MaxBudgetUSD: 1, Auth: agent.AuthAPIKey}
+	}
+	triage := func() agent.Spec {
+		return agent.Spec{Stage: agent.StageTriage, Role: "lead", Issue: 1, PromptFile: "/p", ConfigDir: "/c", MaxBudgetUSD: 1, Auth: agent.AuthAPIKey}
+	}
+	tests := []struct {
+		name string
+		spec func() agent.Spec
+		mod  func(*agent.Spec)
+		ok   bool
+	}{
+		{"scanner issue 0 abs output", scanner, func(*agent.Spec) {}, true},
+		{"scanner issue 1", scanner, func(s *agent.Spec) { s.Issue = 1 }, false},
+		{"scanner no output", scanner, func(s *agent.Spec) { s.OutputFile = "" }, false},
+		{"scanner relative output", scanner, func(s *agent.Spec) { s.OutputFile = "out/findings.jsonl" }, false},
+		{"scanner unclean output", scanner, func(s *agent.Spec) { s.OutputFile = "/out/../x" }, false},
+		{"scanner untrusted", scanner, func(s *agent.Spec) { s.Untrusted = []string{"a.md"} }, false},
+		{"triage", triage, func(*agent.Spec) {}, true},
+		{"triage output", triage, func(s *agent.Spec) { s.OutputFile = "/out/findings.jsonl" }, false},
+		{"triage issue 0", triage, func(s *agent.Spec) { s.Issue = 0 }, false},
+	}
+	for _, tc := range tests {
+		s := tc.spec()
+		tc.mod(&s)
+		err := s.Validate()
+		if tc.ok != (err == nil) || (!tc.ok && !errors.Is(err, agent.ErrInvalidSpec)) {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+	}
+}
+
 func TestRoleFilePath(t *testing.T) {
 	tests := []struct {
 		issue       int
