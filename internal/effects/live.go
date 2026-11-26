@@ -14,6 +14,9 @@ type Live struct {
 	w   github.Writer
 	g   *gitx.Git
 	log *slog.Logger
+
+	operatorToken func(ctx context.Context) (string, error)
+	ghCfg         github.Config // base URL and transport for operator-token calls
 }
 
 var _ Effects = (*Live)(nil)
@@ -24,6 +27,13 @@ func NewLive(w github.Writer, g *gitx.Git, log *slog.Logger) *Live {
 		log = slog.Default()
 	}
 	return &Live{w: w, g: g, log: log}
+}
+
+// WithOperator sets how SetRepoVariable gets the operator's token and the
+// client settings (base URL) it uses. It returns l.
+func (l *Live) WithOperator(tok func(ctx context.Context) (string, error), cfg github.Config) *Live {
+	l.operatorToken, l.ghCfg = tok, cfg
+	return l
 }
 
 func (l *Live) DryRun() bool { return false }

@@ -1023,3 +1023,22 @@ func deref[T ~string](p *T) string {
 	}
 	return string(*p)
 }
+
+// SetVariable creates or updates an Actions repository variable. It is
+// deliberately not part of Writer: only the effect layer calls it, with the
+// operator's token, because the App cannot write variables.
+func (h *HTTP) SetVariable(ctx context.Context, name, value string) error {
+	v := &gogh.ActionsVariable{Name: name, Value: value}
+	_, err := h.gh.Actions.UpdateRepoVariable(ctx, h.o(), h.r(), v)
+	if err == nil {
+		return nil
+	}
+	err = h.fail(ctx, "set variable "+name, 0, err)
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if _, err := h.gh.Actions.CreateRepoVariable(ctx, h.o(), h.r(), v); err != nil {
+		return h.fail(ctx, "create variable "+name, 0, err)
+	}
+	return nil
+}

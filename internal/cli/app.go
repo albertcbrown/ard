@@ -84,11 +84,12 @@ type InitOpts struct {
 
 // SetupOpts is the parsed flag set of `ard setup`.
 type SetupOpts struct {
-	Check       bool
-	CreateGHApp bool   // --create-gh-app: create the App with the manifest flow
-	AppName     string // --app-name
-	KeyFile     string // --key-file
-	Force       bool   // --force: overwrite an existing key file
+	Check         bool
+	CreateGHApp   bool   // --create-gh-app: create the App with the manifest flow
+	AppName       string // --app-name
+	KeyFile       string // --key-file
+	Force         bool   // --force: overwrite an existing key file
+	PrintWorkflow bool   // --print-workflow: print the embedded bot-commits workflow and exit
 }
 
 // JobPreOpts is the parsed flag set of `ard job-pre`.

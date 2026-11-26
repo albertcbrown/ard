@@ -196,6 +196,20 @@ func TestRunHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("setup --print-workflow", func(t *testing.T) {
+		var got SetupOpts
+		h := Handlers{Setup: func(_ context.Context, _ *Env, o SetupOpts) error { got = o; return nil }}
+		var stdout, stderr strings.Builder
+		if code := Run([]string{"setup", "--print-workflow"}, &stdout, &stderr, h, "dev"); code != 0 || !got.PrintWorkflow {
+			t.Fatalf("exit %d, opts %+v", code, got)
+		}
+		for _, extra := range []string{"--check", "--create-gh-app"} {
+			if code := Run([]string{"setup", "--print-workflow", extra}, &stdout, &stderr, h, "dev"); code == 0 {
+				t.Errorf("--print-workflow %s accepted", extra)
+			}
+		}
+	})
+
 	t.Run("serve --loops reaches the handler", func(t *testing.T) {
 		var got []string
 		h := Handlers{Serve: func(_ context.Context, _ *Env, o ServeOpts) error { got = o.Loops; return nil }}
