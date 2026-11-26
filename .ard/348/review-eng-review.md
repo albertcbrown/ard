@@ -5,19 +5,23 @@ attempt: 1
 verdict: approve
 findings:
   - file: "internal/setupcmd/botlogin.go"
-    line: 28
+    line: 456
     severity: low
     message: |
-      The printed fix `gh variable set ... --body ard-x[bot]` is unquoted. In zsh the `[bot]` glob makes the command fail with "no matches found".
-      Quote the value, for example `--body 'ard-x[bot]'`.
+      The printed fix `gh variable set ... --body ard-x[bot]` is still unquoted. In zsh the `[bot]` glob makes the command fail with "no matches found".
+      Quote the value, for example `--body 'ard-x[bot]'`, and update the test's expected string in botlogin_test.go.
   - file: "internal/setupcmd/botlogin_test.go"
     severity: low
     message: |
-      plan.md names TestBotLoginNeverFromConfig and an oversized-workflow edge case. Neither test is present. The code never reads config for the value, so the risk is small.
+      plan.md names TestBotLoginNeverFromConfig, and that test is still missing. The code never reads config for the value, so the risk is small.
 ---
-The change follows plan.md: SetRepoVariable is on the effect layer only, ARD_BOT_LOGIN comes from the App identity, a different value needs confirmation, `--print-workflow` is handled before any config or credentials, and setup never commits. Only two low findings, so approved.
+This round's code is unchanged from the last one and still follows plan.md, so I approve it. The two low findings from the previous round remain, and neither blocks.
 
 ## Checks
-- `go build ./...` passes. The tests of internal/setupcmd, internal/effects, internal/cli and internal/github pass.
-- `make lint`: the only output is a parse error in `internal/roles/testdata/docs/skips/src/_x.go`, a file this change did not touch. Nothing was reported on the changed files.
-- Diff coverage: no coverage profile run. I read the tests and they cover the main paths (absent, equal, different with and without confirmation, check-only, dry-run, not a bot, no token, forbidden read, workflow match and mismatch, and the print-workflow flag).
+- `go test ./internal/setupcmd ./internal/effects ./internal/cli` passes.
+- Lint: I did not re-run it. The last round's `make lint` reported nothing on the changed files.
+- Diff coverage: I did not run a coverage profile. The tests exercise the added paths.
+
+## Previous findings
+- internal/setupcmd/botlogin.go (unquoted `--body` value): still present, now at line 456.
+- internal/setupcmd/botlogin_test.go (TestBotLoginNeverFromConfig missing): still present. A "too big" workflow case now exists in workflow_test.go.
