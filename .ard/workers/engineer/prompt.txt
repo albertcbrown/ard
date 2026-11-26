@@ -8,7 +8,9 @@ The user message gives the issue number (N below) and lists input files:
 comments) and, in a fix round, .ard-input/N/test-output.log (the command
 that failed, its exit code and the end of its output). In a review round
 it also lists .ard-input/N/review-feedback.md: the findings ard's reviewers
-made on your pull request, then the pull request's comments. Also read
+made on your pull request, then the pull request's comments. In a
+conflict round it lists .ard-input/N/conflict.md instead: the files that
+conflict when main is merged into your branch. Also read
 .ard/N/plan.md and .ard/N/issue.md when they exist, whether or not the
 user message lists them.
 
@@ -136,9 +138,12 @@ when plan.md's steps name it; a human must approve those changes.
    round: your earlier change is already in the working directory. If it
    lists .ard-input/N/review-feedback.md, this is a review round: your pull
    request's code is already in the working directory, and you fix each
-   blocking finding in it (see step 6). Also when git log shows earlier
-   commits for issue N, read them with git log and git show before you
-   edit, and build on them.
+   blocking finding in it (see step 6). If it lists
+   .ard-input/N/conflict.md, this is a conflict round: the controller has
+   merged main into your branch, uncommitted, and left conflict markers in
+   the files it lists (git status shows any it leaves out). Also when git
+   log shows earlier commits for issue N, read them with git log and git
+   show before you edit, and build on them.
 3. Decide the status:
    - needs-human when:
      - there is no plan and the issue does not say clearly what to change;
@@ -176,11 +181,21 @@ when plan.md's steps name it; a human must approve those changes.
    judge a blocking finding wrong, leave that code as it is and say why
    under Open issues; do not answer needs-human only because a reviewer
    asked for a change.
+   In a conflict round, resolve each conflicted file and change nothing
+   the merge does not need. Where both sides add things (list entries,
+   cases, paragraphs), keep both. Remove every marker line (seven <, =, >
+   or | at the start of a line); a marker left in a conflicted file holds
+   the change for a human. Do not run git merge, not even --abort: the
+   controller commits the merge with main as its second parent. Rerun the
+   tests. Answer needs-human when both sides change the same logic in
+   different ways and the right result is not clear. The diff limits count
+   only your branch's changes against main.
 7. Run `git -c core.excludesFile=/dev/null status --porcelain
    --untracked-files=all`. The controller's check ignores your global
    git excludes, so this shows what it will see. Every changed or
    untracked file must belong to the change, and nothing under "What the
-   controller rejects" may be there.
+   controller rejects" may be there. In a conflict round the changes
+   merged from main show too; leave them.
 8. Write .ard/N/worker-engineer.md last. On blocked or needs-human, leave
    your code edits as they are; the controller discards them.
 
@@ -214,6 +229,9 @@ Code checks this file. Any deviation fails the job.
   "## Review findings" section before "## Open issues": one bullet per
   finding, naming its file and line, saying "fixed:" and what changed, or
   "not changed:" and why.
+- In a conflict round, describe the whole change too, and add a
+  "## Conflicts" section before "## Open issues": one bullet per
+  conflicted file, saying how you resolved it.
 - On blocked or needs-human, the body is one to three sentences saying
   why, then "## Open issues".
 - Keep the body under 3,000 characters. Do not quote the issue's text,
