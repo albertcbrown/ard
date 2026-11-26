@@ -136,7 +136,56 @@ matched against a strict pattern first. */ -}}
 
 {{- define "ard-serve.guard" -}}
 {{- include "ard-serve.k8sGuard" . -}}
+{{- include "ard-serve.roleImagesGuard" . -}}
 {{- if not (regexMatch "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" .Values.instance.repo) -}}
 {{- fail (printf "instance.repo must be owner/name, got %q" .Values.instance.repo) -}}
 {{- end -}}
+{{- end -}}
+
+{{- define "ard-serve.roleImages" -}}{{ if and (include "ard-serve.k8s" .) .Values.roleImages.enabled }}true{{ end }}{{- end -}}
+
+{{- define "ard-serve.buildNamespace" -}}
+{{- .Values.roleImages.buildNamespace | default (printf "ard-build-%s" .Values.instance.name) -}}
+{{- end -}}
+
+{{- /* The registry host of roleImages.repository: the dockerconfigjson key. */ -}}
+{{- define "ard-serve.roleRegistry" -}}{{ first (splitList "/" .Values.roleImages.repository) }}{{- end -}}
+
+{{- /* Checks the role image values (#448). Each value reaches a NetworkPolicy, CEL or a Secret template. */ -}}
+{{- define "ard-serve.roleImagesGuard" -}}
+{{- $ri := .Values.roleImages -}}
+{{- if $ri.enabled -}}
+{{- if not (include "ard-serve.k8s" .) -}}
+{{- fail "roleImages.enabled needs executor.kind: k8s: the local executor builds role Dockerfiles with Docker" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9.-]+\\.[a-z]+(:[0-9]+)?(/[a-z0-9._-]+)+$" (toString $ri.repository)) -}}
+{{- fail (printf "roleImages.repository must be <registry host>/<path> without a tag, got %q" (toString $ri.repository)) -}}
+{{- end -}}
+{{- $ns := include "ard-serve.buildNamespace" . -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $ns) -}}
+{{- fail (printf "roleImages.buildNamespace must be a DNS label, got %q" $ns) -}}
+{{- end -}}
+{{- if has $ns (list .Release.Namespace (include "ard-serve.jobsNamespace" .)) -}}
+{{- fail (printf "roleImages.buildNamespace %q must differ from the release and jobs namespaces" $ns) -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$" (toString $ri.builder.image)) -}}
+{{- fail (printf "roleImages.builder.image must be <repository>@sha256:<64 hex>, got %q" (toString $ri.builder.image)) -}}
+{{- end -}}
+{{- if not (regexMatch "^[1-9][0-9]{0,4}$" (toString $ri.builder.uid)) -}}
+{{- fail (printf "roleImages.builder.uid must be a positive integer, got %q" (toString $ri.builder.uid)) -}}
+{{- end -}}
+{{- if has (toString $ri.builder.uid) (list (toString .Values.jobs.agentUID) (toString .Values.jobs.sidecarUID)) -}}
+{{- fail "roleImages.builder.uid must differ from jobs.agentUID and jobs.sidecarUID" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-.]{0,251}[a-z0-9])?$" (toString $ri.pushSecret.secretName)) -}}
+{{- fail (printf "roleImages.pushSecret.secretName must be a Secret name, got %q" (toString $ri.pushSecret.secretName)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* Every builder pod carries these (#449). */ -}}
+{{- define "ard-serve.buildSelector" -}}
+app.kubernetes.io/part-of: ard
+app.kubernetes.io/component: ard-build
+app.kubernetes.io/instance: {{ include "ard-serve.name" . }}
 {{- end -}}

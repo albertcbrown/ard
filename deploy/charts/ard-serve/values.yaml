@@ -110,3 +110,42 @@ jobs:
     default: {memory: 1Gi, ephemeral-storage: 256Mi}
     defaultRequest: {cpu: 100m, memory: 64Mi, ephemeral-storage: 64Mi}
     max: {memory: 8Gi, ephemeral-storage: 16Gi}
+
+# Role images (#245, #448; executor k8s only). Off by default: then a role Dockerfile is ignored under k8s and every
+# role runs agentImage. On: ard serve builds a role's Dockerfile in the cluster when a job needs it (#449), in a build
+# namespace this chart creates, and pushes <repository>/<type>-<name> to a public registry; job pods then pull it by
+# digest with no imagePullSecrets. The builder is rootless BuildKit; its pods hold the push credential and nothing else
+# in the cluster does. See docs/runbooks/role-images.md.
+roleImages:
+  enabled: false
+  repository: ghcr.io/albertcbrown/ard   # images are <repository>/<type>-<name>; the packages must be public
+  buildNamespace: ""       # empty: ard-build-<instance.name>
+  builder:
+    # moby/buildkit rootless, pinned by digest (v0.35.0-rootless). The admission policy admits exactly this image.
+    image: docker.io/moby/buildkit@sha256:5987568f92dafbfb679879de59c1cd8d26597f5f6635c314e166164e2615870c
+    uid: 1000              # the image's rootless user
+    resources:
+      requests: {cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi}
+      limits: {memory: 4Gi, ephemeral-storage: 16Gi}
+  # The registry push credential: a kubernetes.io/dockerconfigjson Secret in the build namespace, mounted only into
+  # builder pods. Either create it yourself, or let External Secrets build it from one store item's username and
+  # token fields (externalSecret.enabled).
+  pushSecret:
+    secretName: ard-role-image-push
+    externalSecret:
+      enabled: false
+      storeKind: ClusterSecretStore
+      storeName: ""        # required when enabled
+      itemId: ""           # required when enabled
+      itemTitle: ""        # written as a comment beside the key
+      usernameProperty: username
+      tokenProperty: token
+      refreshInterval: 4h
+  quota:
+    pods: "2"
+    secrets: "6"
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.memory: 8Gi
+    requests.ephemeral-storage: 16Gi
+    limits.ephemeral-storage: 32Gi
