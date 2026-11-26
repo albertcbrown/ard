@@ -9,6 +9,7 @@ import (
 	"github.com/albertcbrown/ard/internal/effects"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/github/fake"
+	"github.com/albertcbrown/ard/internal/labels"
 )
 
 type varRec struct {
@@ -73,7 +74,7 @@ func TestBotLoginDifferentAsksFirst(t *testing.T) {
 			if len(v.calls) != c.writes {
 				t.Fatalf("writes = %d", len(v.calls))
 			}
-			if c.writes == 0 && (r.Status != StatusManual || !contains(r.Detail, "gh variable set ARD_BOT_LOGIN -R o/r --body ard-test[bot]")) {
+			if c.writes == 0 && (r.Status != StatusManual || !contains(r.Detail, "gh variable set ARD_BOT_LOGIN -R o/r --body 'ard-test[bot]'")) {
 				t.Errorf("row %+v", r)
 			}
 		})
@@ -155,5 +156,19 @@ func TestBotLoginForbiddenRead(t *testing.T) {
 	}
 	if r := row(t, rep, botLoginVar); r.Status != StatusManual || len(v.calls) != 0 {
 		t.Errorf("row %+v calls %v", r, v.calls)
+	}
+}
+
+func TestBotLoginNeverFromConfig(t *testing.T) {
+	// A different login already set (as config or a stale value might say)
+	// and a decoy login in Desired must not influence the value written.
+	f := policyFake()
+	f.SetVariable(botLoginVar, "config-says[bot]")
+	v := &varRec{}
+	d := botDeps(f, v, func(string) (bool, error) { return true, nil })
+	d.Desired = append(d.Desired, labels.Label{Name: "config-says[bot]"})
+	runBot(t, d, Opts{})
+	if len(v.calls) != 1 || v.calls[0][2] != "ard-test[bot]" {
+		t.Errorf("calls %v", v.calls)
 	}
 }

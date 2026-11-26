@@ -26,7 +26,7 @@ type botLogin struct {
 }
 
 func (d Deps) setCmd(want string) string {
-	return fmt.Sprintf("gh variable set %s -R %s --body %s", botLoginVar, d.Repo, want)
+	return fmt.Sprintf("gh variable set %s -R %s --body '%s'", botLoginVar, d.Repo, want)
 }
 
 // checkBotLogin compares ARD_BOT_LOGIN with the App's login. The wanted
