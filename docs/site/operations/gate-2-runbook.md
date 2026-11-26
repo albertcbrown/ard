@@ -55,8 +55,8 @@ CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Private/claude setup-token/credential") 
 export CLAUDE_CODE_OAUTH_TOKEN
 ```
 
-`ARD_GITHUB_TOKEN` must stay unset: a personal token makes the client
-read-only and is refused outside `--dry-run`.
+`ARD_GITHUB_TOKEN` must stay unset for this run: setting it together with the
+App variables is an error, and a token would act as your user, not the App.
 
 ## Stage A: smoke run on ard-scratch
 

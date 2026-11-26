@@ -14,6 +14,7 @@ import (
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/executor/local"
+	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx"
 	"github.com/albertcbrown/ard/internal/labels"
 )
@@ -41,6 +42,7 @@ func Check(ctx context.Context, e *cli.Env, o cli.ConfigCheckOpts) error {
 	} else if res, loadErr, err = loadRef(ctx, root, o.Ref); err != nil {
 		return err
 	}
+	fmt.Fprintln(e.Stderr, "ard config check: github auth: "+authSummary())
 	agentImage := os.Getenv("ARD_AGENT_IMAGE")
 	if agentImage != "" {
 		if ie := executor.CheckImageRef(agentImage); ie != nil {
@@ -118,4 +120,20 @@ func loadRef(ctx context.Context, root, ref string) (res *config.Resolved, loadE
 	res, loadErr = config.LoadFS(os.DirFS(snap), root)
 	res.SHA = sha
 	return res, loadErr, nil
+}
+
+// authSummary says which identity ard serve would use, from the presence of
+// environment variables only. It never runs gh or the network and prints no
+// value.
+func authSummary() string {
+	auth, err := github.AuthFromEnv(os.Getenv, os.ReadFile)
+	switch {
+	case errors.Is(err, github.ErrNoCredentials):
+		return "none (ard serve will try gh)"
+	case err != nil:
+		return "invalid (" + err.Error() + ")"
+	case auth.Kind() == github.AuthApp:
+		return "app (acts as the App's bot)"
+	}
+	return "token (ARD_GITHUB_TOKEN; acts as the token's user)"
 }

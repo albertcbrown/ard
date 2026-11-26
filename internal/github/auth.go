@@ -29,8 +29,8 @@ var EnvNames = []string{
 	"ARD_GITHUB_TOKEN",
 }
 
-// Auth supplies credentials. This package does not decide policy: `ard serve`
-// must refuse AuthToken unless --dry-run is set.
+// Auth supplies credentials. Both a GitHub App and a personal access token
+// work for live runs; `ard serve` checks them with Connect at startup.
 type Auth interface {
 	Kind() AuthKind
 	// Transport wraps base so requests carry credentials. It makes no request.
@@ -208,9 +208,25 @@ func (a *AppAuth) appsTransport(base http.RoundTripper) (http.RoundTripper, erro
 	return t, nil
 }
 
-// TokenAuth is a personal access token. Development only, and the caller must
-// restrict it to dry-run.
-type TokenAuth struct{ Value string }
+// TokenAuth is a personal access token. Actions are taken as the token's user.
+// Source says where it came from ("env" or "gh"). It never formats its value.
+type TokenAuth struct {
+	Value  string
+	Source string
+}
+
+// String and GoString keep the token out of %v, %+v, %#v and %s output.
+func (a *TokenAuth) String() string { return "token(" + a.sourceName() + ")" }
+
+// GoString is the %#v form; see String.
+func (a *TokenAuth) GoString() string { return a.String() }
+
+func (a *TokenAuth) sourceName() string {
+	if a == nil || a.Source == "" {
+		return "env"
+	}
+	return a.Source
+}
 
 // NewTokenAuth wraps a token.
 func NewTokenAuth(token string) *TokenAuth { return &TokenAuth{Value: token} }
@@ -256,7 +272,7 @@ func AuthFromEnv(getenv func(string) string, readFile func(string) ([]byte, erro
 	case !anyApp && token == "":
 		return nil, ErrNoCredentials
 	case !anyApp:
-		return &TokenAuth{Value: token}, nil
+		return &TokenAuth{Value: token, Source: "env"}, nil
 	}
 	if appID == "" {
 		return nil, errors.New("github: ARD_GITHUB_APP_ID is required for GitHub App auth")
