@@ -1,0 +1,240 @@
+{{- /* Role images (#245, #448): the namespace where ard serve builds role Dockerfiles with rootless BuildKit (#449).
+Kept apart from the jobs namespace: builder pods hold the registry push credential, which no job pod may reach, and
+need what Pod Security restricted (and baseline) forbids: rootless BuildKit runs with seccomp and AppArmor Unconfined
+so it can create user namespaces. The namespace therefore enforces privileged, warns and audits at baseline, and a
+ValidatingAdmissionPolicy admits only the builder pod shape instead:
+  - the ard-build ServiceAccount with no token; no host namespaces, shared process namespace, ephemeral containers or
+    image pull secrets;
+  - exactly one container, buildkit, running roleImages.builder.image (that exact reference), as roleImages.builder.uid,
+    not privileged, no added capabilities;
+  - volumes emptyDir or Secret, and the only Secrets are the push credential and the pod's own (named after the pod,
+    for the per-build read token); no envFrom.
+NetworkPolicies: default-deny; builder pods reach cluster DNS and the internet minus the ranges ard serve also excepts
+(base images, package downloads, GitHub for the build context, the registry); nothing gets in.
+A ResourceQuota bounds the builds together; a LimitRange gives builder containers roleImages.builder.resources by
+default. The controller's Role here is the jobs namespace's: pods create/delete/get/list, pods/log get, secrets create/delete. */ -}}
+{{- if include "ard-serve.roleImages" . }}
+{{- $ns := include "ard-serve.buildNamespace" . }}
+{{- $ri := .Values.roleImages }}
+{{- $name := printf "%s-build" (include "ard-serve.name" .) }}
+{{- $uid := int $ri.builder.uid }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.30
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.30
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ard-build
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ard-build-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ard-serve.buildSelector" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- include "ard-serve.exceptRanges" . | nindent 14 }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ard-build
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- range $k, $v := $ri.quota }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ard-build
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default:
+        {{- toYaml $ri.builder.resources.limits | nindent 8 }}
+      defaultRequest:
+        {{- toYaml $ri.builder.resources.requests | nindent 8 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ard-serve.name" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, delete, get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ard-serve.name" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "ard-serve.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ard-serve.name" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [UPDATE]
+        resources: [pods/ephemeralcontainers]
+  variables:
+    - name: spec
+      expression: object.spec
+    - name: volumes
+      expression: "has(object.spec.volumes) ? object.spec.volumes : []"
+    - name: podUID
+      expression: >-
+        has(object.spec.securityContext) && has(object.spec.securityContext.runAsUser)
+        ? object.spec.securityContext.runAsUser : -1
+  validations:
+    - expression: "has(variables.spec.serviceAccountName) && variables.spec.serviceAccountName == 'ard-build'"
+      message: builder pods run as the ard-build ServiceAccount
+    - expression: "has(variables.spec.automountServiceAccountToken) && variables.spec.automountServiceAccountToken == false"
+      message: builder pods set automountServiceAccountToken false
+    - expression: "!has(variables.spec.shareProcessNamespace) || variables.spec.shareProcessNamespace == false"
+      message: builder pods do not share a process namespace
+    - expression: >-
+        !(has(variables.spec.hostNetwork) && variables.spec.hostNetwork) &&
+        !(has(variables.spec.hostPID) && variables.spec.hostPID) &&
+        !(has(variables.spec.hostIPC) && variables.spec.hostIPC)
+      message: builder pods use no host namespace
+    - expression: "!has(variables.spec.imagePullSecrets) || size(variables.spec.imagePullSecrets) == 0"
+      message: builder pods have no imagePullSecrets
+    - expression: "!has(variables.spec.ephemeralContainers) || size(variables.spec.ephemeralContainers) == 0"
+      message: builder pods have no ephemeral containers
+    - expression: "!has(variables.spec.initContainers) || size(variables.spec.initContainers) == 0"
+      message: builder pods have no init containers
+    - expression: "size(object.spec.containers) == 1 && object.spec.containers[0].name == 'buildkit'"
+      message: builder pods have exactly the container buildkit
+    - expression: "object.spec.containers.all(c, has(c.image) && c.image == '{{ $ri.builder.image }}')"
+      message: builder pods run roleImages.builder.image
+    - expression: "variables.volumes.all(v, has(v.emptyDir) || has(v.secret))"
+      message: builder pod volumes are emptyDir or Secret only (no hostPath, projected token, CSI or PVC)
+    - expression: >-
+        variables.volumes.all(v, !has(v.secret) ||
+        v.secret.secretName in ['{{ $ri.pushSecret.secretName }}', object.metadata.name])
+      message: builder pods mount only the push credential and their own Secret
+    - expression: "object.spec.containers.all(c, !has(c.envFrom) || size(c.envFrom) == 0)"
+      message: builder containers use no envFrom
+    - expression: >-
+        object.spec.containers.all(c, !has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) ||
+        e.valueFrom.secretKeyRef.name == object.metadata.name))
+      message: secretKeyRef names only the pod's own Secret
+    - expression: >-
+        object.spec.containers.all(c,
+        (has(c.securityContext) && has(c.securityContext.runAsUser) ? c.securityContext.runAsUser : variables.podUID)
+        == {{ $uid }})
+      message: the builder runs as uid {{ $uid }}
+    - expression: >-
+        object.spec.containers.all(c, !has(c.securityContext) ||
+        ((!has(c.securityContext.privileged) || c.securityContext.privileged == false) &&
+        (!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) ||
+        size(c.securityContext.capabilities.add) == 0)))
+      message: the builder is not privileged and adds no capabilities
+    - expression: >-
+        has(object.metadata.labels) &&
+        'app.kubernetes.io/part-of' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/part-of'] == 'ard' &&
+        'app.kubernetes.io/component' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/component'] == 'ard-build' &&
+        'app.kubernetes.io/instance' in object.metadata.labels &&
+        object.metadata.labels['app.kubernetes.io/instance'] == '{{ include "ard-serve.name" . }}'
+      message: builder pods carry the ard build labels
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ard-serve.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $ns }}
+{{- end }}
