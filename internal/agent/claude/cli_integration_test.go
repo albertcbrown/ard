@@ -115,6 +115,35 @@ func workerArgvAuth(t *testing.T, work string, auth agent.Auth) agent.Command {
 	return c
 }
 
+// scannerArgv returns the scanner-stage command with a sidecar read dir and
+// its output file in out.
+func scannerArgv(t *testing.T, sidecar, out string) agent.Command {
+	t.Helper()
+	bin, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude not on PATH")
+	}
+	prompt := filepath.Join(t.TempDir(), "prompt.txt")
+	writeFile(t, prompt, "test")
+	c, err := New(Options{Binary: bin}).Command(agent.Spec{Stage: agent.StageScanner, Role: "arch",
+		PromptFile: prompt, ReadDirs: []string{sidecar}, OutputFile: filepath.Join(out, "findings.jsonl"),
+		ConfigDir: t.TempDir(), MaxBudgetUSD: 0.01, Auth: agent.AuthAPIKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// readOnlyDir makes dir and everything in it a-w until the test ends, as the
+// executor does to a scanner's worktree.
+func readOnlyDir(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("chmod", "-R", "a-w", dir).CombinedOutput(); err != nil {
+		t.Fatalf("chmod: %v %s", err, out)
+	}
+	t.Cleanup(func() { exec.Command("chmod", "-R", "u+w", dir).Run() })
+}
+
 // runCLI runs argv in work with a from-scratch environment and returns stdout
 // and the exit code. HOME is its own empty directory, never the worktree.
 func runCLI(t *testing.T, work string, c agent.Command, argv []string, extraEnv ...string) ([]byte, int) {
@@ -300,6 +329,42 @@ func TestCLIAcceptsFlags(t *testing.T) {
 	}
 	if res.OK || !res.IsError || res.TerminalReason != "api_error" {
 		t.Errorf("unexpected %+v", res)
+	}
+}
+
+// The scanner argv (two --add-dir, no issue) against a read-only cwd and a
+// loopback fake that answers 400: the CLI accepts every flag and the cwd and
+// reaches the fake, so the run ends on the fake's API error, not a flag error.
+func TestCLIAcceptsScannerFlags(t *testing.T) {
+	work, markers := plantRepo(t)
+	sidecar, out := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(sidecar, "spec.md"), "spec\n")
+	c := scannerArgv(t, sidecar, out)
+	readOnlyDir(t, work)
+	url, bodies := fakeAPI(t)
+	stdout, code := runCLI(t, work, c, c.Argv, "ANTHROPIC_API_KEY=dummy-not-a-key", "ANTHROPIC_BASE_URL="+url)
+	if len(bodies()) == 0 {
+		t.Fatalf("no request reached the fake API (exit %d):\n%s", code, stdout)
+	}
+	in := cliInitEvent(t, stdout)
+	checkIsolated(t, in, markers)
+	tv, _ := flag(c.Argv, "--tools")
+	asked := strings.Split(tv, ",")
+	got := slices.Clone(in.Tools)
+	slices.Sort(asked)
+	slices.Sort(got)
+	if !slices.Equal(got, asked) {
+		t.Errorf("init tools %v, adapter asked for %v", got, asked)
+	}
+	res, err := New(Options{}).Parse(bytes.NewReader(stdout), code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OK || !res.IsError || res.TerminalReason != "api_error" {
+		t.Errorf("want the fake's API error, got %+v", res)
+	}
+	if ents, _ := os.ReadDir(out); len(ents) != 0 {
+		t.Errorf("out dir not empty: %v", ents)
 	}
 }
 

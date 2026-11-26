@@ -81,6 +81,10 @@ func (l *Local) runArgv(h executor.Handle, cmd executor.Command, stdin bool) []s
 	if h.View.ConfigDir != "" {
 		a = append(a, "-v", filepath.Join(h.Home, workspace.ConfigDirName)+":/ard-config")
 	}
+	if h.OutDir != "" {
+		// Writable even when the worktree is :ro (Job.Output).
+		a = append(a, "-v", h.OutDir+":/out")
+	}
 	a = append(a, "-w", "/work", "-e", "HOME=/tmp", "-e", "GOFLAGS=-buildvcs=false", "-e", "LANG=C.UTF-8", "-e", "GIT_TERMINAL_PROMPT=0")
 	for _, kv := range executor.ArdEnv(h) {
 		a = append(a, "-e", kv)

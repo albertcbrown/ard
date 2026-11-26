@@ -3,6 +3,7 @@ package claude
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -86,6 +87,12 @@ func (a *Adapter) Command(s agent.Spec) (agent.Command, error) {
 	argv = append(argv, "--disallowed-tools="+deny)
 	for _, d := range s.ReadDirs {
 		argv = append(argv, "--add-dir="+d)
+	}
+	if s.Stage == agent.StageScanner {
+		// The CLI's Write and Edit tools reach only cwd and the added dirs,
+		// and a scanner's cwd is read-only: this is where its findings go.
+		// Bash is not confined by it.
+		argv = append(argv, "--add-dir="+filepath.Dir(s.OutputFile))
 	}
 	if s.Model != "" {
 		argv = append(argv, "--model="+s.Model)

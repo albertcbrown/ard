@@ -48,11 +48,12 @@ const (
 type Spec struct {
 	Stage        string   // one of the Stage* constants; named in the user message; every stage gets the same default tool profile
 	Role         string   // ^[a-z0-9][a-z0-9-]*$
-	Issue        int      // >= 1; output file is RoleFilePath(Issue, Stage, Role)
+	Issue        int      // >= 1 (0 for StageScanner); output file is RoleFilePath(Issue, Stage, Role)
 	PromptFile   string   // absolute runtime path of the role's prompt.txt from the role mount
 	Untrusted    []string // slash paths relative to the job's cwd, max 64
 	ReadDirs     []string // absolute extra dirs the agent may read
 	ConfigDir    string   // absolute, per-job, empty, outside the worktree
+	OutputFile   string   // absolute; the file a scanner-stage run writes its findings to; required for StageScanner, forbidden otherwise
 	Model        string   // "" = CLI default
 	MaxBudgetUSD float64  // > 0, finite
 	MaxTurns     int      // 0 = omit the flag
@@ -244,8 +245,25 @@ func (s Spec) Validate() error {
 	if !roleRE.MatchString(s.Role) {
 		return invalid("Role", fmt.Sprintf("%q", s.Role))
 	}
-	if s.Issue < 1 {
-		return invalid("Issue", "must be >= 1")
+	if s.Stage == StageScanner {
+		// A scanner reads the whole repository, all of it untrusted, and
+		// writes only its output file; it has no issue.
+		switch {
+		case s.Issue != 0:
+			return invalid("Issue", "must be 0 for a scanner")
+		case len(s.Untrusted) > 0:
+			return invalid("Untrusted", "a scanner lists none: the whole repository is untrusted")
+		}
+		if err := absPath("OutputFile", s.OutputFile); err != nil {
+			return err
+		}
+	} else {
+		switch {
+		case s.Issue < 1:
+			return invalid("Issue", "must be >= 1")
+		case s.OutputFile != "":
+			return invalid("OutputFile", "only a scanner has one")
+		}
 	}
 	if s.Auth != AuthAPIKey && s.Auth != AuthOAuthToken {
 		return invalid("Auth", fmt.Sprintf("%q", s.Auth))

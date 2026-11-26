@@ -65,6 +65,10 @@ type Job struct {
 	// (Docker only; host mode does not enforce it),
 	// at Paths.History (and $ARD_HISTORY). Only valid with Stage "scanner".
 	History bool
+	// Output: create an empty, job-owned output directory the job can write
+	// even when ReadOnly (Paths.Out, $ARD_OUT). Only valid with Stage
+	// "scanner": an LLM scanner writes its findings there.
+	Output bool
 	// RoleSource is where the role directory lives in the config repository
 	// at the config commit. Only the Kubernetes executor reads it: its pod
 	// fetches the role itself instead of mounting RoleDir.
@@ -94,10 +98,11 @@ type File struct {
 //
 // History is the bare clone with all fetched refs, read-only (enforced only by
 // the Docker mount; host mode gives the writable live clone); empty when the
-// job has no History. A Kubernetes executor must supply a read-only copy
+// job has no History. Out is the job's writable output dir (host: <home>/out;
+// Docker: /out); empty when the job has no Output. A Kubernetes executor must supply a read-only copy
 // (for example an init container running git clone --mirror, or a bundle
 // volume) at the same place.
-type Paths struct{ Work, Role, Sidecar, ConfigDir, History string }
+type Paths struct{ Work, Role, Sidecar, ConfigDir, History, Out string }
 
 // Command is what to run. Paths must come from Handle.View.
 type Command struct {
@@ -136,6 +141,7 @@ type Handle struct {
 	SidecarSHA          string  // the commit the job sees; "" = no sidecar
 	TrustedInput        bool    // copied from Job by Prepare
 	HistoryDir          string  // host path of the git history mounted read-only, "" = none
+	OutDir              string  // host path of the job's output dir (Job.Output), "" = none or stored before it existed
 	// Scrubbed lists the Job.Scrub paths Prepare removed from the worktree.
 	// Close-out trusts an unchanged role file only if it is listed here.
 	Scrubbed []string
