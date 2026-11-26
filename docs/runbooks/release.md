@@ -2,6 +2,17 @@
 
 `.github/workflows/version.yml` tags every first-parent merge to `main` as `vX.Y.Z` and creates a notes-only release. This runbook covers setup and recovery. Names come from the workflow.
 
+## How a merge becomes a release
+
+1. A merge to `main` makes `version.yml` push the next `vX.Y.Z` tag and create a notes-only release for it.
+2. The `v*` tag push starts `release.yml`. GoReleaser builds four archives and `checksums.txt` and uploads them to that existing release (`release.mode: keep-existing`).
+3. GoReleaser then commits `Casks/ard.rb` to `albertcbrown/homebrew-tap`, using `TAP_GITHUB_TOKEN`.
+4. Check it: `brew update && brew install --cask albertcbrown/tap/ard`, then `ard version`.
+
+The one-time setup (release App, variables, `release` environment, tag ruleset, tap and token) is below; nothing publishes until it is done and `ARD_VERSIONING` is `on`.
+
+**One release at a time.** `release.yml` uses `concurrency: release` with `cancel-in-progress: false`, so a second run queues behind the first and never cancels an upload in progress.
+
 ## Seed tag
 
 An admin creates the annotated seed tag once, on a commit on `main`:
@@ -139,3 +150,17 @@ Label a PR `semver:minor` or `semver:major`; with neither it is a patch, and wit
 - A failed run stops at the first failure. Rerun it: the plan is rebuilt from the tags that exist, and a tag without a release gets a release-only backfill row.
 - Never delete or move a tag. If a tag is wrong, fix forward with the next version.
 - `ard version` prints the tag after `make build` on a tagged commit, and after `go install github.com/albertcbrown/ard/cmd/ard@vX.Y.Z`.
+
+### A failed release.yml run
+
+`goreleaser release --clean` rebuilds everything from the tag, and with `release.mode: keep-existing` it adds files to the existing release instead of replacing its notes, so rerunning is the normal fix.
+
+- Read the failed step. "no release for vX.Y.Z" means `version.yml` has not created the release yet; rerun `version.yml` first.
+- Rerun the failed run (`gh run rerun <run-id> -R albertcbrown/ard --failed`). If a newer tag has since been pushed, a rerun of an older tag's push run skips ("not the newest tag"); use `gh workflow run release.yml -R albertcbrown/ard -f tag=vX.Y.Z` instead.
+- A push error on the tap means `TAP_GITHUB_TOKEN` has expired or lacks contents: write on `albertcbrown/homebrew-tap`. Replace it (see Homebrew release), then rerun.
+- If the assets uploaded but the cask did not update, rerun the same way; the cask is regenerated from the tag.
+- A bad release is never fixed by moving its tag. Fix forward with the next version.
+
+### Gatekeeper
+
+The binary is not signed or notarized. The cask clears the quarantine flag after install, in its `hooks.post.install` stanza (an `xattr -dr com.apple.quarantine` on the installed `ard`), so macOS does not block the first run. This is an accepted risk, recorded in the Guardrails section of `docs/proposal.md`. Notarization is the follow-up; when it lands, drop the hook from `.goreleaser.yaml`.

@@ -43,6 +43,23 @@ See [Configuration](docs/proposal.md#configuration) in the proposal for the full
 
 Pick credentials: a GitHub App (see Getting started), a personal access token in `ARD_GITHUB_TOKEN` (a fine-grained, single-repo token with an expiry is best), or nothing, in which case `ard serve` uses a logged-in `gh` CLI's token for the session. `ard serve` checks the credentials against the repository before it starts any loop. Then install the App if you use one, run `ard init`, commit and merge the tree, run `ard setup`, fix any manual rows it reports, try `ard serve --dry-run`, then go live. See [Getting started](docs/site/getting-started.md).
 
+## Install
+
+With Homebrew (macOS and Linux):
+
+```bash
+brew install --cask albertcbrown/tap/ard
+ard version
+```
+
+Upgrade with `brew upgrade --cask albertcbrown/tap/ard` (or plain `brew upgrade`). `brew uninstall --cask ard` removes the binary only; it leaves `~/.ard/` (state, locks, pause files) alone, so delete that directory by hand if you want it gone.
+
+The cask depends on the `git` formula. You still need the `claude` CLI and a model credential (`CLAUDE_CODE_OAUTH_TOKEN` or an API key) in the environment.
+
+The binary is not yet signed or notarized, so the cask clears the macOS quarantine flag after install (`hooks.post.install` in the cask). This is an accepted risk; see [Guardrails](docs/proposal.md#guardrails). Notarization is the follow-up.
+
+Building from source still works; see Development below and [Install](docs/site/install.md).
+
 ## Development
 
 Requires Go (see `go.mod`).
