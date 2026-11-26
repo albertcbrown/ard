@@ -23,7 +23,45 @@ type Engines struct{ Exec, Agent Engine }
 var (
 	_ Engine  = Engines{}
 	_ Readier = Engines{}
+	_ Engine  = Unavailable{}
+	_ Readier = Unavailable{}
 )
+
+// ErrExecutorUnsupported means the executor cannot run an LLM scanner (the
+// Kubernetes executor has no output dir yet, #454). Like ErrNoCredential, the
+// run is not recorded: the scanner stays due.
+var ErrExecutorUnsupported = errors.New("scanner: the executor cannot run LLM scanners")
+
+// Unavailable is an Engine that runs nothing: Ready and Scan return Err. Serve
+// sets it as Engines.Agent when the executor cannot run LLM scanners.
+type Unavailable struct{ Err error }
+
+// Ready returns u.Err.
+func (u Unavailable) Ready(config.Role) error { return u.Err }
+
+// Scan returns u.Err and runs nothing.
+func (u Unavailable) Scan(context.Context, *config.Resolved, config.Role, time.Time) (ScanResult, error) {
+	return ScanResult{}, u.Err
+}
+
+// skipReason names why an engine is not ready, for the scanner.skip log.
+func skipReason(err error) string {
+	switch {
+	case errors.Is(err, ErrNoCredential):
+		return "no_model_credential"
+	case errors.Is(err, ErrExecutorUnsupported):
+		return "executor_unsupported"
+	}
+	return "engine_unavailable"
+}
+
+// notReady is e's Ready verdict on role, or nil when e is not a Readier.
+func notReady(e Engine, role config.Role) error {
+	if r, ok := e.(Readier); ok {
+		return r.Ready(role)
+	}
+	return nil
+}
 
 // Scan runs role on the engine Ready picks.
 func (e Engines) Scan(ctx context.Context, cfg *config.Resolved, role config.Role, since time.Time) (ScanResult, error) {

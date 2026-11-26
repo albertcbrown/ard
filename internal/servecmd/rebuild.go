@@ -53,9 +53,9 @@ func rebuildState(ctx context.Context, e *cli.Env, name string, build readerBuil
 	if err != nil {
 		return err
 	}
-	role, ok := cfg.Role(config.KindScanner, name)
-	if !ok || role.ScanPath == "" {
-		return fmt.Errorf("ard rebuild-state: %q is not a scanner with a scan executable (built-in and LLM scanners keep no rebuildable state)", name)
+	// Any configured scanner, scan executable or prompt.txt, files the same markers.
+	if _, ok := cfg.Role(config.KindScanner, name); !ok {
+		return fmt.Errorf("ard rebuild-state: %q is not a configured scanner (built-in scanners keep no rebuildable state)", name)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
