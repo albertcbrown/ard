@@ -12,7 +12,9 @@ import (
 
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/pool"
+	"github.com/albertcbrown/ard/internal/scanner"
 	"github.com/albertcbrown/ard/internal/state"
+	"github.com/albertcbrown/ard/internal/state/scannerdb"
 )
 
 type lister struct {
@@ -106,8 +108,21 @@ func TestStaleScannerJobsAreFailedNotHeld(t *testing.T) {
 		{ID: "w1", Stage: "worker", Role: "w", Issue: 1, CreatedAt: at},
 	}}, cleanErr: errors.New("already gone")}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := failStaleScannerJobs(context.Background(), r, r, log); err != nil {
+	reg := scannerdb.NewRegistry(t.TempDir(), scannerdb.Options{})
+	defer reg.Close()
+	stores := func(ctx context.Context, name string) (scanner.Store, error) {
+		if name == "lint" {
+			return nil, errors.New("disk gone") // logged; startup goes on
+		}
+		return scanner.RegistryStores(reg)(ctx, name)
+	}
+	if err := failStaleScannerJobs(context.Background(), r, r, stores, log); err != nil {
 		t.Fatal(err)
+	}
+	// The interrupted run counts as a run, so the scanner is not due at once.
+	db, _ := reg.Get(context.Background(), "cve")
+	if run, err := db.LastRun(context.Background()); err != nil || run.Outcome != scanner.OutcomeScanFailed || run.StartedAt.Sub(at).Abs() > time.Second {
+		t.Errorf("cve run = %+v, %v", run, err)
 	}
 	if len(r.failed) != 2 || r.failed[0] != "s1" || r.failed[1] != "s2" || r.reasons[0] != "controller restarted" {
 		t.Errorf("failed %v %v", r.failed, r.reasons)

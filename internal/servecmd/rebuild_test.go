@@ -169,14 +169,18 @@ func TestRebuildStateRefusesWhileServeRuns(t *testing.T) {
 	}
 }
 
-func TestRebuildStateOnlyForExecutableScanners(t *testing.T) {
+func TestRebuildStateOnlyForConfiguredScanners(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := scannerRepo(t)
-	for _, name := range []string{"arch", "stale", "nope"} {
+	for _, name := range []string{"stale", "nope"} {
 		err := rebuildState(context.Background(), rebuildEnv(t, cfg, false, &bytes.Buffer{}), name, readerFor(fake.New()))
-		if err == nil || !strings.Contains(err.Error(), "not a scanner with a scan executable") {
+		if err == nil || !strings.Contains(err.Error(), "not a configured scanner") {
 			t.Errorf("%s: err = %v", name, err)
 		}
+	}
+	// An LLM scanner files the same markers, so it is rebuilt like any other.
+	if err := rebuildState(context.Background(), rebuildEnv(t, cfg, true, &bytes.Buffer{}), "arch", readerFor(fake.New())); err != nil {
+		t.Errorf("arch: %v", err)
 	}
 }
 

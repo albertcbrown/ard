@@ -11,7 +11,9 @@ import (
 
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/pool"
+	"github.com/albertcbrown/ard/internal/scanner"
 	"github.com/albertcbrown/ard/internal/state"
+	"github.com/albertcbrown/ard/internal/state/scannerdb"
 )
 
 // jobLister is the one state read adoption needs; *state.Store satisfies it.
@@ -80,11 +82,16 @@ type workspaceCleaner interface {
 }
 
 // failStaleScannerJobs retires scanner jobs still marked running at startup.
-// A phase 0 scan does not survive a restart, and a scanner job adopted as a
-// held slot would make every later Offer for its key a duplicate, so the
-// scanner would silently never run again. Each job's workspace is cleaned up
-// on a best-effort basis, the job is failed, and it is not held. ex may be nil.
-func failStaleScannerJobs(ctx context.Context, jobs scannerJobStore, ex workspaceCleaner, log *slog.Logger) error {
+// A scan does not survive a restart, and a scanner job adopted as a held slot
+// would make every later Offer for its key a duplicate, so the scanner would
+// silently never run again. Each job's workspace is cleaned up on a
+// best-effort basis, the job is failed, and it is not held. ex may be nil.
+//
+// The interrupted run counts as a run (#204): a scan_failed run starting at
+// the job's creation is recorded in the scanner's store, so an LLM scanner
+// that a restart interrupts does not spend again at once. A store error is
+// logged, never fatal. stores may be nil.
+func failStaleScannerJobs(ctx context.Context, jobs scannerJobStore, ex workspaceCleaner, stores scanner.Stores, log *slog.Logger) error {
 	running, err := jobs.RunningJobs(ctx)
 	if err != nil {
 		return fmt.Errorf("list running scanner jobs: %w", err)
@@ -107,8 +114,23 @@ func failStaleScannerJobs(ctx context.Context, jobs scannerJobStore, ex workspac
 			continue
 		}
 		log.Info("scanner.stale_job_failed", "job", j.ID, "scanner", j.Role)
+		if stores != nil {
+			recordInterruptedScan(ctx, stores, j, log)
+		}
 	}
 	return errors.Join(errs...)
+}
+
+// recordInterruptedScan records j, a scanner job a restart interrupted, as a
+// scan_failed run of its scanner.
+func recordInterruptedScan(ctx context.Context, stores scanner.Stores, j state.Job, log *slog.Logger) {
+	st, err := stores(ctx, j.Role)
+	if err == nil {
+		_, err = st.RecordRun(ctx, scannerdb.Run{StartedAt: j.CreatedAt, FinishedAt: time.Now(), Outcome: scanner.OutcomeScanFailed})
+	}
+	if err != nil {
+		log.Warn("scanner.stale_job_record_failed", "job", j.ID, "scanner", j.Role, "error", err)
+	}
 }
 
 // sweeper is the executor part that removes pods no job record owns.

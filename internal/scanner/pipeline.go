@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/albertcbrown/ard/internal/closeout"
 	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/config"
 	"github.com/albertcbrown/ard/internal/costblock"
@@ -148,14 +149,22 @@ func (p *Pipeline) openIssues(ctx context.Context, name string) ([]github.Issue,
 }
 
 // Run executes one scan of role at the given due time. A run that is dropped
-// or whose scan fails is recorded and returns a nil error; ErrNoSlot is not
-// recorded (the run stays due). The error is non-nil when GitHub, the store or
-// the committer failed part way, after the rest of the run was attempted.
+// or whose scan fails is recorded and returns a nil error; a denied slot, an
+// engine that is not ready (ErrNoCredential, ErrExecutorUnsupported) and a
+// usage-limit stop (ErrUsageLimit) are not recorded, so the run stays due.
+// The error is non-nil when GitHub, the store or the committer failed part
+// way, after the rest of the run was attempted.
 func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Role, due time.Time) (RunResult, error) {
 	start := p.now()
 	log := p.log().With("scanner", role.Name)
-	if role.ScanPath == "" {
-		log.Warn("scanner.skip", "reason", "no scan executable (LLM scanners arrive in phase 2)")
+	// Before any store, GitHub call or slot: an engine that cannot run the
+	// role records nothing.
+	if err := notReady(p.Engine, role); err != nil {
+		reason := skipReason(err)
+		log.Warn("scanner.skip", "reason", reason, "error", err.Error())
+		if reason == "engine_unavailable" {
+			return RunResult{Outcome: OutcomeSkipped}, fmt.Errorf("scanner %s: %w", role.Name, err)
+		}
 		return RunResult{Outcome: OutcomeSkipped}, nil
 	}
 	store, err := p.Stores(ctx, role.Name)
@@ -285,6 +294,16 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 			log.Info("scanner.no_slot", "due", due)
 			res.Outcome = OutcomeNoSlot
 			return res, errors.Join(errs...)
+		case errors.Is(err, ErrNoCredential), errors.Is(err, ErrExecutorUnsupported):
+			log.Warn("scanner.skip", "reason", skipReason(err))
+			res.Outcome = OutcomeSkipped
+			return res, errors.Join(errs...)
+		case errors.Is(err, ErrUsageLimit):
+			// The limits book holds the stop; the pool keeps the family off
+			// until the reset, and the scanner stays due.
+			log.Warn("scanner.limited", "due", due)
+			res.Outcome = OutcomeLimited
+			return res, errors.Join(errs...)
 		case errors.As(err, &se):
 			res.SHA = se.SHA
 			log.Warn("scanner.scan_failed", "error", se.Error(), "exit", se.Exit, "timed_out", se.TimedOut)
@@ -345,6 +364,15 @@ func (p *Pipeline) Run(ctx context.Context, cfg *config.Resolved, role config.Ro
 			return res, errors.Join(errs...)
 		}
 		closeOnly = true
+	}
+
+	if role.LLMScanner() {
+		// Defuse @-mentions after the guard, so an inserted zero-width space
+		// can never split a secret pattern the guard should see.
+		for i := range sr.Findings {
+			sr.Findings[i].Title = closeout.Sanitize(sr.Findings[i].Title)
+			sr.Findings[i].Body = closeout.Sanitize(sr.Findings[i].Body)
+		}
 	}
 
 	// 4. Diff.

@@ -29,12 +29,17 @@ type Builtin interface {
 }
 
 // Loop is the scanners loop. It runs at most one due scanner per tick, the
-// most overdue. A run that was denied a pool slot is not recorded, so the
-// scanner stays due and is offered again on the next tick. The loop claims
-// work (it files and closes issues), so the controller skips it while paused.
+// most overdue. A run that was denied a pool slot, skipped by its engine or
+// stopped by a usage limit is not recorded, so the scanner stays due and is
+// offered again on the next tick. The loop claims work (it files and closes
+// issues), so the controller skips it while paused.
 type Loop struct {
 	p        *Pipeline
 	builtins []Builtin
+	// warned holds "<scanner> <reason>" for engine skips already logged at
+	// Warn; later ones log at Debug. Only Tick touches it, and ticks of one
+	// loop never overlap.
+	warned map[string]bool
 }
 
 var (
@@ -49,14 +54,12 @@ func (l *Loop) Name() string                            { return "scanners" }
 func (l *Loop) Claims() bool                            { return true }
 func (l *Loop) Interval(*config.Resolved) time.Duration { return PollInterval }
 
-// TickTimeout bounds a tick by the longest scan timeout plus slack, so a long
-// scan is not cancelled at the poll interval.
+// TickTimeout bounds a tick by the longest scan timeout, LLM scanners
+// included, plus slack, so a long scan is not cancelled at the poll interval.
 func (l *Loop) TickTimeout(cfg *config.Resolved) time.Duration {
 	var longest time.Duration
 	for _, r := range cfg.RolesOf(config.KindScanner) {
-		if r.ScanPath != "" {
-			longest = max(longest, r.Timeout)
-		}
+		longest = max(longest, r.Timeout)
 	}
 	if longest == 0 {
 		return 0
@@ -87,9 +90,11 @@ func (d dueScanner) name() string {
 }
 
 // Tick runs due scanners, most overdue first, and stops after the first one
-// that did anything but get denied a pool slot. A scanner denied a slot stays
-// the most overdue; without the walk it would starve the built-ins and every
-// other scanner.
+// that did anything but get denied a pool slot, skipped or stopped by a usage
+// limit. Such a scanner stays the most overdue; without the walk it would
+// starve the built-ins and every other scanner. A scanner whose engine is not
+// ready (no model credential, an executor without LLM support) is left out
+// before its state is read, so it costs no GitHub call.
 func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 	cfg := env.Cfg
 	now := l.p.now()
@@ -115,12 +120,12 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 	}
 	var errs []error
 	for _, r := range cfg.RolesOf(config.KindScanner) {
-		switch {
-		case r.ScanPath == "":
-			env.Log.Debug("scanner.skip", "scanner", r.Name, "reason", "LLM scanner (phase 2)")
-			continue
-		case l.builtinNamed(r.Name):
+		if l.builtinNamed(r.Name) {
 			env.Log.Warn("scanner.skip", "scanner", r.Name, "reason", "name collides with a built-in scanner")
+			continue
+		}
+		if err := notReady(l.p.Engine, r); err != nil {
+			l.logSkip(env, r.Name, err)
 			continue
 		}
 		if err := consider(dueScanner{role: r}, r.Every); err != nil {
@@ -138,11 +143,27 @@ func (l *Loop) Tick(ctx context.Context, env controller.Env) error {
 		if err != nil {
 			errs = append(errs, err)
 		}
-		if outcome != OutcomeNoSlot {
+		if outcome != OutcomeNoSlot && outcome != OutcomeSkipped && outcome != OutcomeLimited {
 			break
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// logSkip logs an engine skip at Warn once per scanner and reason for the life
+// of the loop, then at Debug, so a missing credential does not warn every tick.
+func (l *Loop) logSkip(env controller.Env, name string, err error) {
+	reason := skipReason(err)
+	key := name + " " + reason
+	if l.warned[key] {
+		env.Log.Debug("scanner.skip", "scanner", name, "reason", reason)
+		return
+	}
+	if l.warned == nil {
+		l.warned = map[string]bool{}
+	}
+	l.warned[key] = true
+	env.Log.Warn("scanner.skip", "scanner", name, "reason", reason, "error", err.Error())
 }
 
 func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved, d dueScanner, now time.Time) (string, error) {
