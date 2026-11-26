@@ -377,7 +377,7 @@ func TestRedactTextSurvivesCancelledContextAndLogsFlag(t *testing.T) {
 		t.Errorf("got %q, log has failed=%v", got, buf.has("dryrun.redact_failed"))
 	}
 	// A scanner hit logs the count, never the text.
-	secret := "AKIAIOSFODNN7EXAMPLE"
+	secret := "AK" + "IA" + "QZ7K2M9TXW4HPN6B"
 	got = redactText(context.Background(), log, rd, "key "+secret)
 	if strings.Contains(got, secret) || buf.has(secret) {
 		t.Errorf("leak: %q", got)
