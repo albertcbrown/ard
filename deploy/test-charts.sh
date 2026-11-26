@@ -345,4 +345,90 @@ check "ard-root without an agent pin passes none to the child" \
   bash -c "helm template r '$ROOT_CHART' --set image.digest=$DIGEST --set image.commit=$COMMIT | yq 'select(.kind == \"Application\") | .spec.source.helm.valuesObject | has(\"agentImage\")' | grep -qx false"
 check "k8s pod spec has no imagePullSecrets (public images)" test "$(kdep '.spec.template.spec.imagePullSecrets // [] | length')" = "0"
 
+# ---- role images (#448) ----------------------------------------------------------------------------------------------
+BNS=ard-build-albertcbrown-ard
+BUILDER="$(yq .roleImages.builder.image "$SERVE_CHART/values.yaml")"
+cat >"$work/ri.yaml" <<EOF
+roleImages: {enabled: true, pushSecret: {externalSecret: {enabled: true, storeName: example-store, itemId: $ITEM, itemTitle: ghcr push}}}
+EOF
+if ! helm template ard-albertcbrown-ard "$SERVE_CHART" -f "$work/k8s.yaml" -f "$work/ri.yaml" --namespace ard >"$work/ri-out.yaml" 2>"$work/ri.err"; then
+  echo "ERROR: ard-serve does not render with roleImages: $(cat "$work/ri.err")" >&2; exit 1
+fi
+r() { yq "select($1) | $2" "$work/ri-out.yaml" | sed -e '/^$/d' -e '/^---$/d'; }
+rb() { r ".metadata.namespace == \"$BNS\" and .kind == \"$1\"" "$2"; }
+rvap='.kind == "ValidatingAdmissionPolicy" and .metadata.name == "ard-albertcbrown-ard-build"'
+
+check "roleImages off renders no build namespace objects" \
+  bash -c "! grep -q 'ard-build' '$work/k8s-out.yaml' '$work/serve.yaml'"
+check "roleImages adds exactly the build namespace objects" test "$(r '.metadata.namespace == "'"$BNS"'" or .metadata.name == "'"$BNS"'" or .metadata.name == "ard-albertcbrown-ard-build"' .kind | sort | paste -sd, -)" = \
+  "ExternalSecret,LimitRange,Namespace,NetworkPolicy,NetworkPolicy,ResourceQuota,Role,RoleBinding,ServiceAccount,ValidatingAdmissionPolicy,ValidatingAdmissionPolicyBinding"
+check "build namespace enforces privileged and warns and audits at baseline" test \
+  "$(r '.kind == "Namespace" and .metadata.name == "'"$BNS"'"' '.metadata.labels | to_entries | map(select(.key | test("^pod-security"))) | map(.key + "=" + .value) | sort | join(",")')" = \
+  "pod-security.kubernetes.io/audit-version=v1.30,pod-security.kubernetes.io/audit=baseline,pod-security.kubernetes.io/enforce=privileged,pod-security.kubernetes.io/warn-version=v1.30,pod-security.kubernetes.io/warn=baseline"
+
+build_np_ok() {
+  [ "$(rb NetworkPolicy 'select(.metadata.name == "default-deny") | .spec.policyTypes | sort | join(",")')" = "Egress,Ingress" ] || return 1
+  [ "$(rb NetworkPolicy '.spec.ingress // [] | length' | sort -u)" = "0" ] || return 1
+  [ "$(rb NetworkPolicy 'select(.metadata.name == "ard-build-egress") | .spec.podSelector.matchLabels' | labels)" = \
+    "app.kubernetes.io/component=ard-build,app.kubernetes.io/instance=ard-albertcbrown-ard,app.kubernetes.io/part-of=ard" ] || return 1
+  [ "$(rb NetworkPolicy 'select(.metadata.name == "ard-build-egress") | [.spec.egress[0].ports[].port] | join(",")')" = "53,53" ] || return 1
+  [ "$(rb NetworkPolicy 'select(.metadata.name == "ard-build-egress") | .spec.egress[1].to[0].ipBlock.except | sort | join(",")')" = \
+    "10.0.0.0/8,100.64.0.0/10,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16" ] || return 1
+}
+check "build networkpolicies: default-deny, no ingress, DNS and the internet minus private ranges" build_np_ok
+
+build_rbac_ok() {
+  [ "$(rb Role '.rules[] | (.apiGroups | join(",")) + "|" + (.resources | join(",")) + "|" + (.verbs | sort | join(","))' | sort | paste -sd' ' -)" = \
+    "|pods/log|get |pods|create,delete,get,list |secrets|create,delete" ] || return 1
+  [ "$(rb RoleBinding '.subjects | map(.kind + "/" + .namespace + "/" + .name) | join(",")')" = "ServiceAccount/ard/ard-albertcbrown-ard" ] || return 1
+  [ "$(rb ServiceAccount '.metadata.name + "=" + (.automountServiceAccountToken | tostring)')" = "ard-build=false" ] || return 1
+}
+check "build Role matches the jobs Role and binds the controller; ard-build has no token" build_rbac_ok
+
+build_vap_ok() {
+  [ "$(r "$rvap" .spec.failurePolicy)" = "Fail" ] || return 1
+  [ "$(r '.kind == "ValidatingAdmissionPolicyBinding" and .metadata.name == "ard-albertcbrown-ard-build"' '.spec.validationActions[0] + " " + .spec.matchResources.namespaceSelector.matchLabels["kubernetes.io/metadata.name"]')" = "Deny $BNS" ] || return 1
+  [ "$(r "$rvap" '.spec.validations[].expression' | grep -Fc "c.image == '$BUILDER'")" = "1" ] || return 1
+  [ "$(r "$rvap" '.spec.validations[].expression' | grep -Fc "['ard-role-image-push', object.metadata.name]")" = "1" ] || return 1
+  [ "$(r "$rvap" '.spec.validations[].expression' | grep -Fc "== 1000)")" = "1" ] || return 1
+  [ "$(r "$rvap" '.spec.validations | map(select((.message // "") == "")) | length')" = "0" ] || return 1
+}
+check "build ValidatingAdmissionPolicy pins the builder image, uid and push Secret, and denies" build_vap_ok
+
+push_ok() {
+  local e='.kind == "ExternalSecret" and .metadata.name == "ard-role-image-push"'
+  [ "$(r "$e" '.metadata.namespace + " " + .spec.target.template.type')" = "$BNS kubernetes.io/dockerconfigjson" ] || return 1
+  [ "$(r "$e" '.spec.target.template.data[".dockerconfigjson"]')" = \
+    '{"auths":{"ghcr.io":{"auth":"{{ printf "%s:%s" .username .token | b64enc }}"}}}' ] || return 1
+  [ "$(r "$e" '.spec.data | map(.secretKey + "=" + .remoteRef.key + "/" + .remoteRef.property) | join(",")')" = "username=$ITEM/username,token=$ITEM/token" ] || return 1
+  # nothing outside the build namespace names the push Secret except the controller's env (the name, not the value)
+  [ "$(yq 'select(.metadata.namespace != "'"$BNS"'" and .kind != "ValidatingAdmissionPolicy") | .. | select(tag == "!!str" and . == "ard-role-image-push") | path | join(".")' "$work/ri-out.yaml" | sed -e '/^$/d' -e '/^---$/d')" = \
+    "$(r '.kind == "Deployment"' '.spec.template.spec.containers[0].env | to_entries[] | select(.value.name == "ARD_K8S_ROLE_IMAGE_PUSH_SECRET") | "spec.template.spec.containers.0.env." + (.key | tostring) + ".value"')" ] || return 1
+}
+check "push credential: dockerconfigjson for ghcr.io in the build namespace only" push_ok
+
+check "controller gets the build settings as ARD_K8S_* env" test \
+  "$(r '.kind == "Deployment"' '.spec.template.spec.containers[0].env[] | select(.name | test("^ARD_K8S_(BUILD|ROLE)")) | .name + "=" + .value' | LC_ALL=C sort | paste -sd' ' -)" = \
+  "ARD_K8S_BUILDER_IMAGE=$BUILDER ARD_K8S_BUILDER_UID=1000 ARD_K8S_BUILD_NAMESPACE=$BNS ARD_K8S_ROLE_IMAGE_PUSH_SECRET=ard-role-image-push ARD_K8S_ROLE_IMAGE_REPOSITORY=ghcr.io/albertcbrown/ard"
+check "builder image is pinned by digest" bash -c "[[ '$BUILDER' =~ ^docker\.io/moby/buildkit@sha256:[0-9a-f]{64}\$ ]]"
+
+ri_refused() { local label="$1"; shift; check "$label refused" by_guard -f "$work/ri.yaml" "$@"; }
+ri_refused "roleImages with executor local" --set executor.kind=local --set instance.dryRun=true --set storage.accessMode=ReadWriteOnce
+ri_refused "a builder image by tag" --set roleImages.builder.image=docker.io/moby/buildkit:rootless
+ri_refused "a role image repository with a tag" --set roleImages.repository=ghcr.io/albertcbrown/ard:v1
+ri_refused "a role image repository without a registry host" --set roleImages.repository=albertcbrown/ard
+ri_refused "a build namespace equal to the jobs namespace" --set roleImages.buildNamespace=ard-jobs-albertcbrown-ard
+ri_refused "a builder uid equal to the agent uid" --set roleImages.builder.uid=65532
+ri_refused "a push Secret name that is not a name" --set roleImages.pushSecret.secretName=Bad_Name
+ri_refused "a push External Secret without a store" --set roleImages.pushSecret.externalSecret.storeName=
+
+cat >"$work/root-ri.yaml" <<EOF
+agentImage: {digest: "$AGENT"}
+site: {roleImages: {enabled: true}}
+instances: [{name: albertcbrown-ard, repo: albertcbrown/ard, dryRun: false, executor: {kind: k8s}}]
+EOF
+helm template ard-root "$ROOT_CHART" -f "$work/pin.yaml" -f "$work/site.yaml" -f "$work/root-ri.yaml" >"$work/root-ri-out.yaml" 2>&1
+check "ard-root passes site roleImages to the child" test \
+  "$(yq 'select(.kind == "Application") | .spec.source.helm.valuesObject.roleImages.enabled' "$work/root-ri-out.yaml")" = "true"
+
 [ "$failures" -eq 0 ] || { echo "$failures case(s) failed" >&2; exit 1; }

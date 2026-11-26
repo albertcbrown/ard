@@ -8,6 +8,8 @@ pod beside the old one would block on it. Pause: kubectl -n ard exec deploy/<nam
 /home/ard/.ard/pause/<owner>/<repo> (the kill switch; rm to resume).
 With executor k8s the pod gets its own ServiceAccount and a short-lived projected token (still no automount), and the
 --k8s-* settings as ARD_K8S_* env; it serves nothing, so there is no Service and no container port.
+With roleImages.enabled it also gets the build namespace, the builder image and uid, the role image repository and
+the push Secret's name (ARD_K8S_BUILD_*, ARD_K8S_BUILDER_*, ARD_K8S_ROLE_IMAGE_*; read by #449), never the credential.
 */ -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -73,6 +75,13 @@ spec:
             - {name: ARD_K8S_AGENT_IMAGE, value: {{ include "ard-serve.agentImage" . | quote }}}
             {{- with .Values.jobs.resources }}
             - {name: ARD_K8S_RESOURCES, value: {{ . | quote }}}
+            {{- end }}
+            {{- if include "ard-serve.roleImages" . }}
+            - {name: ARD_K8S_BUILD_NAMESPACE, value: {{ include "ard-serve.buildNamespace" . }}}
+            - {name: ARD_K8S_BUILDER_IMAGE, value: {{ .Values.roleImages.builder.image | quote }}}
+            - {name: ARD_K8S_BUILDER_UID, value: {{ .Values.roleImages.builder.uid | quote }}}
+            - {name: ARD_K8S_ROLE_IMAGE_REPOSITORY, value: {{ .Values.roleImages.repository | quote }}}
+            - {name: ARD_K8S_ROLE_IMAGE_PUSH_SECRET, value: {{ .Values.roleImages.pushSecret.secretName | quote }}}
             {{- end }}
             {{- with .Values.modelCredential }}{{ if .secretName }}
             # The model credential ard serve forwards into each agent job's Secret (#434).
