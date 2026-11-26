@@ -23,15 +23,21 @@ type CodeFile struct {
 
 // CodeRequest is one worker code commit on a worker/ branch.
 type CodeRequest struct {
-	Issue  int        // > 0 (dry-run: < 0 allowed, synthetic result, as Request)
-	Role   string     // ^[a-z0-9][a-z0-9-]*$
-	JobID  string     // required: the Ard-Job trailer
-	Type   string     // ^[a-z]{1,16}$, e.g. feat, fix; empty means no prefix
-	Title  string     // untrusted issue title
-	Body   string     // untrusted summary, already redacted by the caller
-	Base   string     // 40-hex SHA the job's worktree started from
-	Create bool       // the branch must not exist: cut it at Base
-	Files  []CodeFile // 1..MaxFiles, unique paths
+	Issue  int    // > 0 (dry-run: < 0 allowed, synthetic result, as Request)
+	Role   string // ^[a-z0-9][a-z0-9-]*$
+	JobID  string // required: the Ard-Job trailer
+	Type   string // ^[a-z]{1,16}$, e.g. feat, fix; empty means no prefix
+	Title  string // untrusted issue title
+	Body   string // untrusted summary, already redacted by the caller
+	Base   string // 40-hex SHA the job's worktree started from
+	Create bool   // the branch must not exist: cut it at Base
+	// MergeParent, when set, makes the commit a merge: the tree is the tip of
+	// main plus Files, with parents [branch tip, MergeParent]. It must be the
+	// current tip of main on the remote, the branch must still be at Base and
+	// Files must be the whole diff of the result against MergeParent. Never
+	// with Create. There is no retry: any movement is ErrConflict.
+	MergeParent string
+	Files       []CodeFile // 1..MaxFiles, unique paths
 }
 
 // ErrBranchExists means a Create found the branch already on the remote.
@@ -173,6 +179,8 @@ func (b *Branches) CommitCode(ctx context.Context, branch string, req CodeReques
 	}
 	if req.Create {
 		res, err = l.create(ctx, s)
+	} else if s.mergeParent != "" {
+		res, err = l.runMerge(ctx, s)
 	} else {
 		res, err = l.run(ctx, s)
 	}
@@ -196,11 +204,14 @@ func codeSnapshot(req CodeRequest, issue int) (snap, error) {
 	case len(req.Files) > MaxFiles:
 		return snap{}, fmt.Errorf("%w: %d files, max %d", ErrInvalid, len(req.Files), MaxFiles)
 	}
+	if req.MergeParent != "" && (req.Create || !shaRe.MatchString(req.MergeParent)) {
+		return snap{}, fmt.Errorf("%w: merge parent must be a 40-hex SHA and cannot create a branch", ErrMergeParent)
+	}
 	msg, err := CodeMessage(req.Type, req.Title, issue, req.Body, req.JobID)
 	if err != nil {
 		return snap{}, err
 	}
-	s := snap{msg: msg, base: req.Base}
+	s := snap{msg: msg, base: req.Base, mergeParent: req.MergeParent, issue: issue}
 	ge := &GuardError{}
 	seen := map[string]bool{}
 	for _, f := range req.Files {

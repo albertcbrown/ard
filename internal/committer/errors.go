@@ -11,6 +11,9 @@ var (
 	ErrInvalid = errors.New("committer: invalid request")
 	// ErrGuard is a path outside .ard/<issue#>/ (or an unsafe file kind).
 	ErrGuard = errors.New("committer: path guard")
+	// ErrMergeParent means a merge parent is malformed (ErrInvalid) or is not
+	// the tip of main on the remote.
+	ErrMergeParent = fmt.Errorf("%w: merge parent", ErrInvalid)
 	// ErrConflict means upstream changed one of the request's paths since the
 	// base the request was applied to. It is never retried or overwritten.
 	ErrConflict = errors.New("committer: upstream changed a requested path")

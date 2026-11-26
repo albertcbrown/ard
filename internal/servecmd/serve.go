@@ -735,7 +735,8 @@ var registerLoops = func(w *wiring) []controller.Loop {
 	if l := reviewerLoop(w); l != nil {
 		loops = append(loops, l)
 	}
-	loops = append(loops, reviewfixLoop(w), mergerLoop(w), prwatchLoop(w), janitorLoop(w))
+	rf := reviewfixLoop(w)
+	loops = append(loops, rf, mergerLoop(w, rf), prwatchLoop(w), janitorLoop(w))
 	if l := reaperLoop(w); l != nil {
 		loops = append(loops, l)
 	}
