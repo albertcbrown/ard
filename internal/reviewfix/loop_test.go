@@ -305,3 +305,30 @@ func TestLandingReviewNoCodeStillCaps(t *testing.T) {
 		t.Fatalf("phases = %q", got)
 	}
 }
+
+func TestMergeIncludesSecondParentOnMain(t *testing.T) {
+	for name, tc := range map[string]struct {
+		notOnMain bool
+		fetchErr  error
+		base      string
+		want      bool
+		wantErr   bool
+	}{
+		"second parent on main":     {want: true, base: "h1"},
+		"second parent not on main": {notOnMain: true, base: "h1"},
+		"fetch error":               {fetchErr: errors.New("boom"), base: "h1", wantErr: true},
+		"head is base":              {base: "m"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, 3, false)
+			h.git.ancestor, h.git.parents = true, []string{"h1", "x2"}
+			h.git.notOnMain, h.git.fetchErr = tc.notOnMain, tc.fetchErr
+			tk := &tick{l: h.loop}
+			head := "m"
+			got, err := tk.mergeIncludes(t.Context(), tc.base, head)
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("got %v, %v; want %v, err %v", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}

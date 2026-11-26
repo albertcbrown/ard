@@ -80,6 +80,13 @@ type job struct {
 
 	stepBudget float64 // max_budget_usd the current agent step runs with
 
+	// A conflict round: mainTip is the fetched tip of main (the committer's
+	// MergeParent), conflicted the paths the controller's trial merge left in
+	// conflict, mergePending that the first agent step still needs the merge.
+	mainTip      string
+	conflicted   map[string]bool
+	mergePending bool
+
 	reopened *state.PendingPR // the record this job reopens the PR from, if any
 }
 
@@ -116,7 +123,19 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		{Path: dir + "/comments.md", Data: agentjob.Comments(comments)},
 	}
 	untrusted := []string{dir + "/issue.md", dir + "/comments.md"}
+	var cround conflictRound
 	if exists {
+		var err error
+		if cround, err = l.conflictInput(ctx, n, branch); err != nil {
+			log.Error("worker.claim_failed", "step", "conflict_input", "error", err)
+			return
+		}
+		if cround.input != nil {
+			inputs = append(inputs, *cround.input)
+			untrusted = append(untrusted, cround.input.Path)
+		}
+	}
+	if exists && !cround.applies {
 		f, ok, err := l.reviewFeedback(ctx, role, n, branch)
 		if err != nil {
 			log.Error("worker.claim_failed", "step", "review_feedback", "error", err)
@@ -162,6 +181,9 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 
 	jb := &job{l: l, env: env, cfg: cfg, role: role, is: c.issue, log: log, sj: sj,
 		branch: branch, exists: exists, inputs: inputs, untrusted: untrusted}
+	if cround.input != nil {
+		jb.mainTip, jb.conflicted, jb.mergePending = cround.mainTip, cround.conflicted, true
+	}
 	jb.exec(ctx)
 }
 
@@ -267,6 +289,9 @@ func (jb *job) agentStep(ctx context.Context, id, ref string, extra []executor.F
 	s, cause, stopped := jb.runStep(ctx, ej, func(h executor.Handle) (executor.Command, error) {
 		// A: plan.md is passed only when triage wrote it.
 		untrusted = append(untrusted, jb.triageInputs(h.Worktree)...)
+		if err := jb.preMerge(ctx, h); err != nil {
+			return executor.Command{}, err
+		}
 		return jb.agentCommand(h, untrusted)
 	}, true, true)
 	if stopped {
@@ -310,6 +335,30 @@ func (jb *job) agentStep(ctx context.Context, id, ref string, extra []executor.F
 	}
 	jb.final = s
 	return s, true
+}
+
+// preMerge starts the merge of main in the worktree of a conflict round's
+// first agent step, before the agent runs, so it sees real conflict markers.
+// It runs once, as the controller, in a worktree the agent has not touched.
+// The conflicts must be the ones the trial merge recorded.
+func (jb *job) preMerge(ctx context.Context, h executor.Handle) error {
+	if !jb.mergePending {
+		return nil
+	}
+	jb.mergePending = false
+	paths, err := jb.l.d.Git.MergeNoCommit(ctx, h.Worktree, jb.mainTip)
+	if err != nil {
+		return fmt.Errorf("merge main into the worktree: %w", err)
+	}
+	if len(paths) != len(jb.conflicted) {
+		return fmt.Errorf("merge main into the worktree: %d conflicts, the trial merge found %d", len(paths), len(jb.conflicted))
+	}
+	for _, p := range paths {
+		if !jb.conflicted[p] {
+			return fmt.Errorf("merge main into the worktree: unexpected conflict in %q", p)
+		}
+	}
+	return nil
 }
 
 // stepTimeout is the budget a step starts with: what is left of the job's time.
@@ -572,7 +621,18 @@ func (jb *job) round(ctx context.Context, s step) (head string, noCode, done boo
 		jb.finishWithPR(ctx, s, "", jb.cause(closeout.CauseNoProcess, "the diff guard could not run", false))
 		return "", false, true
 	}
-	changes, prLines, err := jb.l.facts(ctx, n, s.h.Worktree, s.h.BaseSHA, jb.cfg.SHA, stage)
+	// In a conflict round the worktree holds main's changes too, so the PR's
+	// own changes are measured against the fetched tip of main, not BaseSHA.
+	factsBase, factsMain := s.h.BaseSHA, jb.cfg.SHA
+	if jb.mainTip != "" {
+		factsBase, factsMain = jb.mainTip, ""
+		if left := jb.markersLeft(s.h); len(left) > 0 {
+			jb.log.Info("worker.guard", "hold", true, "markers", len(left))
+			jb.finishWithPR(ctx, s, fmt.Sprintf("conflict markers left in %d file(s): %s", len(left), quoteNames(left)), closeout.Cause{})
+			return "", false, true
+		}
+	}
+	changes, prLines, err := jb.l.facts(ctx, n, s.h.Worktree, factsBase, factsMain, stage)
 	var le *gitx.LimitError
 	if errors.As(err, &le) {
 		// Too big or too many to look at: a hold, before anything was hashed.
@@ -616,6 +676,13 @@ func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 		Issue: jb.is.Number, Role: jb.role.Name, JobID: jb.sj.ID, Type: CommitType(jb.is.Labels),
 		Title: jb.is.Title, Body: jb.summary, Base: s.h.BaseSHA, Create: !jb.exists,
 	}
+	if jb.mainTip != "" {
+		req.MergeParent = jb.mainTip
+	}
+	if jb.mainTip != "" && len(v.Commit) > committer.MaxFiles {
+		jb.finishWithPR(ctx, s, fmt.Sprintf("the merge with main touches %d files, over the limit of %d", len(v.Commit), committer.MaxFiles), closeout.Cause{})
+		return "", false
+	}
 	for _, c := range v.Commit {
 		cf := committer.CodeFile{Path: c.Path, Delete: c.Deleted}
 		if !c.Deleted {
@@ -648,6 +715,11 @@ func (jb *job) push(ctx context.Context, s step, v Verdict) (string, bool) {
 			kind = "protected"
 		}
 		jb.log.Error("worker.push_failed", "kind", kind, "error", err)
+		if jb.mainTip != "" && strings.Contains(strings.ToLower(err.Error()), "workflow") {
+			// GitHub refuses a merge that brings in workflow changes when the App lacks that permission.
+			jb.finishWithPR(ctx, s, "GitHub rejected the merge with main, which changes workflow files the App may not push; a person must update the branch", closeout.Cause{})
+			return "", false
+		}
 		if errors.Is(err, committer.ErrTransient) {
 			jb.finishWithPR(ctx, s, "", jb.cause(closeout.CausePushTransient, "could not push the branch: remote unavailable after retries", !jb.pushed))
 			return "", false

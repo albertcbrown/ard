@@ -41,7 +41,7 @@ See [Configuration](docs/proposal.md#configuration) in the proposal for the full
 
 ## Getting started
 
-Install the App, run `ard init`, commit and merge the tree, run `ard setup`, fix any manual rows it reports, try `ard serve --dry-run`, then go live. See [Getting started](docs/site/getting-started.md).
+Pick credentials: a GitHub App (see Getting started), a personal access token in `ARD_GITHUB_TOKEN` (a fine-grained, single-repo token with an expiry is best), or nothing, in which case `ard serve` uses a logged-in `gh` CLI's token for the session. `ard serve` checks the credentials against the repository before it starts any loop. Then install the App if you use one, run `ard init`, commit and merge the tree, run `ard setup`, fix any manual rows it reports, try `ard serve --dry-run`, then go live. See [Getting started](docs/site/getting-started.md).
 
 ## Development
 

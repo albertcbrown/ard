@@ -92,6 +92,10 @@ type Git interface {
 	MergeBase(ctx context.Context, repoDir, a, b string) (string, error)
 	ChangedPaths(ctx context.Context, dir, from, to string, paths ...string) ([]string, error)
 	FileAt(ctx context.Context, dir, rev, path string, maxBytes int64) ([]byte, bool, error)
+	RevParse(ctx context.Context, dir, ref string) (string, error)
+	WorktreeAdd(ctx context.Context, repoDir, path, ref string) error
+	WorktreeRemove(ctx context.Context, repoDir, path string) error
+	MergeNoCommit(ctx context.Context, dir, ref string) ([]string, error)
 }
 
 // Offerer is *pool.Pool.

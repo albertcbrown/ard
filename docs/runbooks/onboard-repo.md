@@ -84,6 +84,15 @@ Dry-run keeps its own state in `~/.ard/state-dryrun/<owner>/<repo>/` and writes
 intended effects to `effects.jsonl`. Soak and read the ledger, then start
 `ard serve` without the flag.
 
+ard serve checks GitHub at startup and exits with one line if the repository
+is unreachable or a permission is missing. Instead of a GitHub App you can set
+`ARD_GITHUB_TOKEN` (a fine-grained, single-repo token with an expiry), or set
+nothing and log in with `gh auth login --hostname github.com --git-protocol
+https --scopes repo`: ard then uses the `gh` token for the session, in memory
+only. With a token, ard acts as the token's user, so protected-path PRs need
+approval from a different write-access user, and the bot-commit audit cannot
+tell ard's main-lane commits from yours.
+
 In the cluster, add an entry for the repository to the instances list in the
 deployment repository (check the key name in that repository's docs). Live agent
 jobs in the cluster need #54; until it lands, run the cluster instance in

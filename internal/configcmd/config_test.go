@@ -3,6 +3,10 @@ package configcmd
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
@@ -67,7 +71,7 @@ func TestCheckValid(t *testing.T) {
 	}
 	// The fixture's triage role has no Dockerfile and network defaults to
 	// true, so the host and host-network warnings are all that is on stderr.
-	if want := local.HostRoleText("triage", "lead") + local.HostNetworkText("triage", "lead"); stderr.String() != want {
+	if want := local.HostRoleText("triage", "lead") + local.HostNetworkText("triage", "lead"); withoutAuthLine(stderr.String()) != want {
 		t.Errorf("stderr = %q, want only the host warnings %q", stderr.String(), want)
 	}
 }
@@ -112,7 +116,7 @@ func TestCheckWarnsHostUntrusted(t *testing.T) {
 		t.Fatal(err)
 	}
 	logs, errs = count(root)
-	if strings.Contains(logs, "executor.host_untrusted") || errs != "" {
+	if strings.Contains(logs, "executor.host_untrusted") || withoutAuthLine(errs) != "" {
 		t.Errorf("Dockerfile role warned: logs %q stderr %q", logs, errs)
 	}
 }
@@ -405,10 +409,65 @@ func TestCheckNetworkFalseNoNetworkWarning(t *testing.T) {
 	if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if got, want := stderr.String(), local.HostRoleText("triage", "lead"); got != want {
+	if got, want := withoutAuthLine(stderr.String()), local.HostRoleText("triage", "lead"); got != want {
 		t.Errorf("stderr = %q, want only the host warning", got)
 	}
 	if !strings.Contains(stdout.String(), "network: false (advisory, host)") {
 		t.Errorf("stdout lacks the advisory suffix:\n%s", stdout.String())
 	}
+}
+
+// withoutAuthLine drops the "github auth:" line from stderr text.
+func withoutAuthLine(s string) string {
+	var keep []string
+	for _, l := range strings.SplitAfter(s, "\n") {
+		if !strings.HasPrefix(l, "ard config check: github auth:") {
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "")
+}
+
+func TestConfigCheckReportsIdentity(t *testing.T) {
+	tok := "ghp_" + strings.Repeat("d", 36)
+	key := testRSAKey(t)
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"none", nil, "none (ard serve will try gh)"},
+		{"token", map[string]string{"ARD_GITHUB_TOKEN": tok}, "token (ARD_GITHUB_TOKEN"},
+		{"app", map[string]string{"ARD_GITHUB_APP_ID": "1", "ARD_GITHUB_PRIVATE_KEY": key}, "app ("},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, n := range []string{"ARD_GITHUB_APP_ID", "ARD_GITHUB_INSTALLATION_ID", "ARD_GITHUB_PRIVATE_KEY", "ARD_GITHUB_PRIVATE_KEY_FILE", "ARD_GITHUB_TOKEN"} {
+				t.Setenv(n, tc.env[n])
+			}
+			// A gh that records any run would show up here; none is on PATH.
+			t.Setenv("PATH", "/usr/bin:/bin")
+			root := writeRepo(t, "max_pods: 5\n")
+			e, _, stderr := testEnv(t, filepath.Join(root, ".ard", "config.yaml"))
+			if err := Check(context.Background(), e, cli.ConfigCheckOpts{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(stderr.String(), "github auth: "+tc.want) {
+				t.Errorf("stderr = %q, want auth %q", stderr, tc.want)
+			}
+			for _, secret := range []string{tok, key} {
+				if strings.Contains(stderr.String(), secret) {
+					t.Errorf("stderr leaks a secret")
+				}
+			}
+		})
+	}
+}
+
+func testRSAKey(t *testing.T) string {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}))
 }
