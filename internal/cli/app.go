@@ -65,6 +65,13 @@ type K8sOpts struct {
 	Resources   string // "cpu=1,memory=2Gi,..." override; empty = defaults
 	PreBudget   time.Duration
 	ResultGrace time.Duration
+
+	// Role images (#449): on only when BuildNamespace is set.
+	BuildNamespace      string // namespace of the builder pods
+	BuilderImage        string // rootless BuildKit image, pinned by digest
+	BuilderUID          int64
+	RoleImageRepository string // e.g. ghcr.io/owner/ard
+	RoleImagePushSecret string // name of the push credential Secret in BuildNamespace
 }
 
 // ConfigCheckOpts is the parsed flag set of `ard config check`.
