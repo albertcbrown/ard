@@ -1,15 +1,17 @@
 ---
 role: lead
-status: blocked
+status: done
 attempt: 1
+next: [triage:engineer]
+worker: engineer
 ---
-What's left on this issue is the starter architecture scanner role and its rollout. It is still blocked on the LLM scanner engine tracked in #204. The filing rules from #204 are now on main, but the engine itself is not, so the issue stays blocked until that lands.
+The work that blocked this issue has now landed. The LLM scanner engine from #204 is on main: `AgentEngine`, `agentjob.ScannerCommand` and the `$ARD_OUT` output directory are all in the tree. What is left is the starter role `scanners/architecture` (the plan's PR 3). It is a narrow, well-fenced change under `internal/roles` and `internal/initcmd`, so it goes to the engineer planner and the engineer worker.
 
 ## Routing
-None.
+- triage:engineer: confirm the plan against main as it is now, then write the steps. That covers the starter prompt under `internal/roles/scanners/architecture`, its entry in `internal/roles/config.yaml`, the role list in `internal/roles/roles.go` and `internal/initcmd`, and the role tests. The tests check that the prompt's worked examples pass the fingerprint grammar check.
+- worker engineer: add the role files, the config entry and the tests.
 
 ## Open issues
-- Filing rules from #204 are now in the tree: `LLMScanner`, `CheckLLMFingerprints`, the near-duplicate skip and the autoclose check under `internal/config` and `internal/scanner`.
-- The engine half of #204 is still missing. There is no `AgentEngine`, no `agentjob.ScannerCommand` and no `$ARD_OUT` output directory, and `internal/scanner/loop.go:120` still skips LLM scanners. The role's prompt writes its findings to `$ARD_OUT`, so shipping it now would give every adopter a role that never runs.
-- Once the engine merges, route this to triage:engineer with the engineer worker. The work is the starter role under `internal/roles/scanners/architecture`, its starter `config.yaml` entry and the `ard init` updates. A maintainer should review the shipped prompt because it goes to every adopter.
-- The rollout step that adds the scanner to this repository's own `.ard/scanners/` and `.ard/config.yaml` touches protected paths. A human has to do it, not an agent.
+- No product-manager, architect, designer or documentation-planner triage role exists in this repository, so only the engineer plans this. The change adds a role to the starter set that `ard init` proposes to every adopter. A maintainer should read the shipped prompt before merging. `internal/roles/` is not in `merge.protected_paths`, so nothing forces that review.
+- The rollout has to be done by a human. Adding the scanner to this repository's own `.ard/scanners/` and `.ard/config.yaml`, after a dry-run smoke run, touches protected paths that agents may not change.
+- The plan calls for updates to the Configuration section of `docs/proposal.md` (the starter list). The engineer planner should check which of those #204 already made.
