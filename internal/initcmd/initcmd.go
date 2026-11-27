@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -32,6 +33,7 @@ type deps struct {
 	Effects   effects.Effects
 	RemoteURL string
 	Token     gitx.TokenFunc
+	AuthKind  github.AuthKind
 	Close     func() error // optional
 }
 
@@ -45,11 +47,8 @@ func Init(ctx context.Context, e *cli.Env, o cli.InitOpts) error {
 		if err != nil {
 			return deps{}, err
 		}
-		auth, err := github.AuthFromEnv(os.Getenv, os.ReadFile)
+		auth, err := resolveAuth(ctx, e)
 		if err != nil {
-			return deps{}, fmt.Errorf("ard init: %w", err)
-		}
-		if err := checkAuth(auth.Kind(), e.DryRun); err != nil {
 			return deps{}, err
 		}
 		fx, rd, err := effects.Open(ctx, effects.Options{
@@ -60,7 +59,7 @@ func Init(ctx context.Context, e *cli.Env, o cli.InitOpts) error {
 		if err != nil {
 			return deps{}, fmt.Errorf("ard init: %w", err)
 		}
-		d := deps{Repo: repo, Reader: rd, Effects: fx, Token: auth.Token, RemoteURL: fmt.Sprintf("https://github.com/%s.git", repo)}
+		d := deps{Repo: repo, Reader: rd, Effects: fx, Token: auth.Token, AuthKind: auth.Kind(), RemoteURL: fmt.Sprintf("https://github.com/%s.git", repo)}
 		if c, ok := fx.(interface{ Close() error }); ok {
 			d.Close = c.Close
 		}
@@ -95,12 +94,27 @@ func localPermissions(e *cli.Env) permFunc {
 	}
 }
 
-// checkAuth refuses a personal token for a live run, as serve does.
-func checkAuth(kind github.AuthKind, dryRun bool) error {
-	if kind == github.AuthToken && !dryRun {
-		return errors.New("ard init: ARD_GITHUB_TOKEN auth is for --dry-run only; configure a GitHub App")
+// Seams for tests, as in servecmd.
+var (
+	lookPath = exec.LookPath
+	runGh    = github.ExecRun
+)
+
+// resolveAuth reads credentials from the environment and, when none are set,
+// falls back to the gh CLI's token. The token stays in memory.
+func resolveAuth(ctx context.Context, e *cli.Env) (github.Auth, error) {
+	auth, err := github.AuthFromEnv(os.Getenv, os.ReadFile)
+	if errors.Is(err, github.ErrNoCredentials) {
+		ta, gerr := github.GhFallback(ctx, lookPath, runGh, e.Stderr)
+		if gerr != nil {
+			return nil, fmt.Errorf("ard init: %w", gerr)
+		}
+		return ta, nil
 	}
-	return nil
+	if err != nil {
+		return nil, fmt.Errorf("ard init: %w", err)
+	}
+	return auth, nil
 }
 
 // resolveRepo takes --repo, or falls back to the origin remote of root. Its
@@ -245,7 +259,7 @@ func run(ctx context.Context, e *cli.Env, o cli.InitOpts, open func(ctx context.
 
 	// 8. Open the PR.
 	pr, err = d.Effects.CreatePR(ctx, github.NewPR{
-		Title: prTitle, Body: initBody(pl, res), Head: committer.InitBranch, Base: "main",
+		Title: prTitle, Body: initBody(pl, res, d.AuthKind), Head: committer.InitBranch, Base: "main",
 	})
 	if err != nil {
 		return fmt.Errorf("ard init: branch %s pushed but opening the PR failed: %w; open it by hand, or delete the branch and rerun", committer.InitBranch, err)
