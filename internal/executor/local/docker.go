@@ -121,7 +121,12 @@ func (l *Local) ensureImage(ctx context.Context, j executor.Job, logPath string)
 	}
 	bctx, cancel := context.WithTimeout(ctx, l.buildTimeout)
 	defer cancel()
-	out, err := l.docker(bctx, "build", "-t", tag, "-f", j.Dockerfile, j.RoleDir)
+	args := []string{"build", "-t", tag}
+	if l.agentImage != "" {
+		// Role Dockerfiles that build on the agent image take it as AGENT_IMAGE.
+		args = append(args, "--build-arg", "AGENT_IMAGE="+l.agentImage)
+	}
+	out, err := l.docker(bctx, append(args, "-f", j.Dockerfile, j.RoleDir)...)
 	if f, ferr := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600); ferr == nil {
 		f.Write(out)
 		f.Close()

@@ -7,8 +7,10 @@ plain agent image. See
 [docs/proposal.md: Executors and the Reaper](../proposal.md#executors-and-the-reaper)
 and [Delivery](../proposal.md#delivery).
 
-The chart side is #448. ard serve uses it once #449 lands; until then the chart
-objects exist and nothing creates builder pods.
+The chart side is #448; ard serve (#449) uses it: when a job's role has a
+`Dockerfile`, it checks the registry for the role's content tag, builds the
+image in a builder pod if it is missing, and runs the job on the image by
+digest. A failed or timed-out build fails the job with its cause.
 
 ## What the chart creates
 
