@@ -5,11 +5,12 @@ import (
 	"strings"
 
 	"github.com/albertcbrown/ard/internal/config"
+	"github.com/albertcbrown/ard/internal/github"
 )
 
 // initBody is the PR description. It is fixed text built from the file list
 // and the validated protected paths, with no issue or comment text in it.
-func initBody(pl Result, res *config.Resolved) string {
+func initBody(pl Result, res *config.Resolved, kind github.AuthKind) string {
 	var b strings.Builder
 	b.WriteString("This PR adds the starter `.ard/` directory proposed by `ard init`.\n\n")
 	b.WriteString("## Files\n\n")
@@ -59,10 +60,17 @@ func initBody(pl Result, res *config.Resolved) string {
 	}
 	b.WriteString("- `scanners/trufflehog` is included. It files leaked-credential issues for a human (never for an agent) and needs a TruffleHog binary (AGPL-3.0; it is installed by the role's Dockerfile or taken from the host, and is not in the ard image). To opt out, delete `.ard/scanners/trufflehog/` and its `scanners/trufflehog` line under `overrides:` in `.ard/config.yaml` before merging.\n")
 	b.WriteString("- `scanners/trufflehog-history` is included. It scans the full git history weekly for leaked credentials, with the same fingerprints as `scanners/trufflehog`, and its issues never autoclose. It reads the controller's clone through a read-only mount and needs the same TruffleHog binary. To opt out, delete `.ard/scanners/trufflehog-history/` and its `scanners/trufflehog-history` line under `overrides:` in `.ard/config.yaml` before merging.\n")
-	b.WriteString("\n## Follow-up the App cannot do\n\n")
-	b.WriteString("ard's GitHub App has no permission to write `.github/`, so do this by hand:\n\n")
+	b.WriteString("\n## Follow-up ard does not do\n\n")
+	b.WriteString("ard never writes `.github/`, so do this by hand")
+	step2 := "Set the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login."
+	if kind == github.AuthToken {
+		b.WriteString(" (this PR was opened with a personal access token, which may be able to write `.github/`, but ard still never does):\n\n")
+		step2 = "Set the repository variable `ARD_BOT_LOGIN` to the login of the token's user. The bot-commit check cannot tell ard's main-lane commits from that user's own commits."
+	} else {
+		b.WriteString(": ard's GitHub App has no permission to write it.\n\n")
+	}
 	b.WriteString("1. Copy `.github/workflows/bot-commits.yml` from the ard repository into this repository.\n")
-	b.WriteString("2. Set the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login.\n")
+	b.WriteString("2. " + step2 + "\n")
 	b.WriteString("3. Optionally set the repository variable `ARD_BOT_CHECK_SINCE`.\n")
 	return b.String()
 }

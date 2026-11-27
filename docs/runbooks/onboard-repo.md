@@ -12,8 +12,9 @@ does not coordinate across processes. Roles live in the repository's own
 
 ## 1. Install the GitHub App
 
-Install the App on the target repository only. A fine-grained PAT is an
-alternative only once #302 lands; until then use the App.
+Install the App on the target repository only. A fine-grained PAT
+(`ARD_GITHUB_TOKEN`) or a logged-in `gh` CLI also works for `ard serve` and
+`ard init --pr`; with a token, PRs are authored by the token's user.
 
 ## 2. Initialise the repository
 
@@ -25,7 +26,8 @@ This writes the starter `.ard/` tree locally. Commit it on a branch and merge
 it with **Squash** or a **merge commit**, never fast-forward or rebase (see the
 `ard init` lane in [Guardrails](../proposal.md#guardrails)). Nothing takes
 effect until it is merged, because `ard serve` reads `origin/main`. Use
-`ard init --pr` to have ard open the `ard-init` PR.
+`ard init --pr` to have ard open the `ard-init` PR; it works with an App,
+`ARD_GITHUB_TOKEN` or the `gh` fallback, and never writes `.github/`.
 
 ## 3. Run setup
 

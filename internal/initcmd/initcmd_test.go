@@ -3,6 +3,10 @@ package initcmd
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"io/fs"
@@ -390,21 +394,6 @@ func TestInitMissingPieces(t *testing.T) {
 			t.Errorf("got %v, %v", got, err)
 		}
 	})
-	t.Run("checkAuth", func(t *testing.T) {
-		tests := []struct {
-			kind    github.AuthKind
-			dry     bool
-			wantErr bool
-		}{
-			{github.AuthToken, false, true}, {github.AuthToken, true, false},
-			{github.AuthApp, false, false}, {github.AuthApp, true, false},
-		}
-		for _, tt := range tests {
-			if err := checkAuth(tt.kind, tt.dry); (err != nil) != tt.wantErr {
-				t.Errorf("checkAuth(%v, %v) = %v", tt.kind, tt.dry, err)
-			}
-		}
-	})
 	t.Run("no .git at root", func(t *testing.T) {
 		dir := t.TempDir()
 		e := &cli.Env{Globals: cli.Globals{ConfigPath: filepath.Join(dir, ".ard", "config.yaml")}, Log: quiet, Stdout: io.Discard, Stderr: io.Discard}
@@ -512,7 +501,7 @@ func TestInitBodyProtectedPathsHint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := initBody(Result{}, res)
+	body := initBody(Result{}, res, github.AuthApp)
 	if !strings.Contains(body, "merge.protected_paths") || !strings.Contains(body, "`.ard/TECH_STACK.md`") {
 		t.Errorf("body lacks the protected_paths instruction:\n%s", body)
 	}
@@ -599,4 +588,95 @@ func starterData(t *testing.T, p string) []byte {
 	}
 	t.Fatalf("no starter file %s", p)
 	return nil
+}
+
+func TestInitBodyAuthKinds(t *testing.T) {
+	res, err := loadStarter(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := initBody(Result{}, res, github.AuthApp)
+	tok := initBody(Result{}, res, github.AuthToken)
+	for name, body := range map[string]string{"app": app, "token": tok} {
+		for _, want := range []string{"## Follow-up ard does not do", "ard never writes `.github/`", "bot-commits.yml", "ARD_BOT_LOGIN"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s body lacks %q", name, want)
+			}
+		}
+	}
+	if !strings.Contains(app, "App has no permission") || !strings.Contains(app, "<slug>[bot]") {
+		t.Errorf("app body:\n%s", app)
+	}
+	if strings.Contains(tok, "no permission") || strings.Contains(tok, "<slug>[bot]") || !strings.Contains(tok, "token's user") {
+		t.Errorf("token body:\n%s", tok)
+	}
+}
+
+func TestResolveAuth(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	secret := "tok-" + strings.Repeat("x", 12)
+	found := func(string) (string, error) { return "/bin/gh", nil }
+	missing := func(string) (string, error) { return "", errors.New("not found") }
+	ghOK := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "token" {
+			return []byte(secret + "\n"), nil
+		}
+		return nil, nil
+	}
+	ghOut := func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("not logged in") }
+	tests := []struct {
+		name     string
+		env      map[string]string
+		look     func(string) (string, error)
+		run      github.RunFunc
+		wantKind github.AuthKind
+		wantErr  error
+		anyErr   bool
+	}{
+		{name: "app", env: map[string]string{"ARD_GITHUB_APP_ID": "1", "ARD_GITHUB_INSTALLATION_ID": "2", "ARD_GITHUB_PRIVATE_KEY": pemKey}, look: missing, wantKind: github.AuthApp},
+		{name: "env token", env: map[string]string{"ARD_GITHUB_TOKEN": secret}, look: found, wantKind: github.AuthToken},
+		{name: "gh fallback", look: found, run: ghOK, wantKind: github.AuthToken},
+		{name: "no gh", look: missing, wantErr: github.ErrNoGh},
+		{name: "gh not logged in", look: found, run: ghOut, wantErr: github.ErrGhNotLoggedIn},
+		{name: "both", env: map[string]string{"ARD_GITHUB_TOKEN": secret, "ARD_GITHUB_APP_ID": "1"}, look: found, anyErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, k := range []string{"ARD_GITHUB_APP_ID", "ARD_GITHUB_INSTALLATION_ID", "ARD_GITHUB_PRIVATE_KEY", "ARD_GITHUB_PRIVATE_KEY_FILE", "ARD_GITHUB_TOKEN"} {
+				t.Setenv(k, tt.env[k])
+			}
+			oldLook, oldRun := lookPath, runGh
+			t.Cleanup(func() { lookPath, runGh = oldLook, oldRun })
+			ghCalled := false
+			lookPath = tt.look
+			runGh = func(ctx context.Context, n string, a ...string) ([]byte, error) {
+				ghCalled = true
+				return tt.run(ctx, n, a...)
+			}
+			e := &cli.Env{Stderr: io.Discard}
+			auth, err := resolveAuth(context.Background(), e)
+			if tt.wantErr != nil || tt.anyErr {
+				if err == nil || (tt.wantErr != nil && !errors.Is(err, tt.wantErr)) {
+					t.Fatalf("err = %v", err)
+				}
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("error contains token: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if auth.Kind() != tt.wantKind {
+				t.Errorf("kind = %v", auth.Kind())
+			}
+			if ghCalled != (tt.name == "gh fallback") {
+				t.Errorf("gh called = %v", ghCalled)
+			}
+		})
+	}
 }
