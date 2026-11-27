@@ -147,8 +147,12 @@ func buildPod(h executor.Handle, c executor.Command, o Options) *api.Pod {
 	agentRes.Limits["ephemeral-storage"] = qty(agentStore)
 	cmd := append([]string{jobpod.AgentBin, "job-exec", "--deadline", stamp(agentDeadline), "--", c.Path}, c.Args...)
 	sc := hardened(jobpod.AgentUID)
+	agentImage := o.AgentImage
+	if h.Image != "" { // a role image, pinned by digest
+		agentImage = h.Image
+	}
 	agent := api.Container{
-		Name: jobpod.ContainerAgent, Image: o.AgentImage, ImagePullPolicy: "IfNotPresent",
+		Name: jobpod.ContainerAgent, Image: agentImage, ImagePullPolicy: "IfNotPresent",
 		Command: cmd, Env: env, WorkingDir: jobpod.MountWork,
 		VolumeMounts: []api.VolumeMount{
 			mount(jobpod.VolWork, jobpod.MountWork, workRO), mount(jobpod.VolJob, jobpod.MountJob, false),

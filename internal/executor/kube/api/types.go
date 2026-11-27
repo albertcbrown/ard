@@ -125,13 +125,19 @@ type KeyToPath struct {
 
 // SecurityContext is the container security context.
 type SecurityContext struct {
-	RunAsUser                *int64          `json:"runAsUser,omitempty"`
-	RunAsGroup               *int64          `json:"runAsGroup,omitempty"`
-	RunAsNonRoot             *bool           `json:"runAsNonRoot,omitempty"`
-	AllowPrivilegeEscalation *bool           `json:"allowPrivilegeEscalation,omitempty"`
-	ReadOnlyRootFilesystem   *bool           `json:"readOnlyRootFilesystem,omitempty"`
-	Capabilities             *Capabilities   `json:"capabilities,omitempty"`
-	SeccompProfile           *SeccompProfile `json:"seccompProfile,omitempty"`
+	RunAsUser                *int64           `json:"runAsUser,omitempty"`
+	RunAsGroup               *int64           `json:"runAsGroup,omitempty"`
+	RunAsNonRoot             *bool            `json:"runAsNonRoot,omitempty"`
+	AllowPrivilegeEscalation *bool            `json:"allowPrivilegeEscalation,omitempty"`
+	ReadOnlyRootFilesystem   *bool            `json:"readOnlyRootFilesystem,omitempty"`
+	Capabilities             *Capabilities    `json:"capabilities,omitempty"`
+	SeccompProfile           *SeccompProfile  `json:"seccompProfile,omitempty"`
+	AppArmorProfile          *AppArmorProfile `json:"appArmorProfile,omitempty"`
+}
+
+// AppArmorProfile selects an AppArmor profile type.
+type AppArmorProfile struct {
+	Type string `json:"type"`
 }
 
 // PodSecurityContext is the pod-level security context.
