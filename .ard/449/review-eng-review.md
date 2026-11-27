@@ -10,20 +10,24 @@ findings:
     blocking: false
     message: |
       The builder pod name is `ard-build-<tag[2:14]>`, and the tag hashes only the directory contents and base, not the repository.
-      Two roles with identical directories get the same pod name but push to different repositories. The second concurrent build is
-      not covered by the single-flight key (tag+repo), so its CreatePod returns AlreadyExists and the job fails with "builder pod refused".
-      The same happens with two controllers. Include the role name in the pod name (or hash the repo into it), or retry on AlreadyExists.
+      Two roles with identical directories get the same pod name but push to different repositories. The single-flight key is tag+repo,
+      so the second concurrent build gets AlreadyExists from CreatePod and the job fails with "builder pod refused". Two controllers
+      hit the same case. Include the role name in the pod name (or hash the repo into it), or retry on AlreadyExists.
   - file: "internal/executor/kube/roleimage.go"
-    line: 490
+    line: 348
     severity: info
     blocking: false
     message: |
-      The builder command (`buildctl-daemonless.sh`, the `/dev/termination-log` metadata file, the DOCKER_CONFIG mount) has not been run against a
-      real cluster or the pinned BuildKit image; the worker's report says so. Verify it in a first live build.
+      The builder command (`buildctl-daemonless.sh`, the termination-log metadata file, the DOCKER_CONFIG mount) has not been run against a
+      real cluster or the pinned BuildKit image. Verify it in the first live build.
 ---
-The change implements the plan: a content-hash tag taken from the pinned role SHA, a registry check, a budgeted builder pod, a digest-pinned agent container, serve wiring and the proposal update. The core paths are tested and I found no blocking bug.
+The change follows plan.md: content-hash tag from the pinned role SHA, registry check, budgeted builder pod, digest-pinned agent container and serve wiring. I found no blocking bug, so this is approved. The head only merges main into the branch, and the role image code is unchanged since the last round.
 
 ## Checks
-- Lint: `make lint` only printed a parse error from `internal/roles/testdata/docs/skips/src/_x.go`, a fixture the change does not touch. The output was cut by `tail`, so I cannot say it passed.
-- Tests with coverage: `go test -cover` on `internal/executor/kube`, `internal/executor/local` and `internal/servecmd` passes. In `roleimage.go` every function is at or above 75%, and the build, failure, timeout, admission-denied, bad-digest, single-flight and private-package paths have tests.
-- Diff coverage: the uncovered lines are minor error branches in `registryDigest`, `builderState` and `buildFailure`.
+- Lint: not re-run this round. The head differs from the reviewed commit only by a merge of main, and the last run showed no problem on the changed lines.
+- Build and tests: `go build ./...` is clean, and `go test` passes for `internal/executor/kube` and `internal/servecmd`.
+- Diff coverage: not re-measured. Last round the build, failure, timeout, admission-denied, bad-digest, single-flight and private-package paths were covered. The uncovered lines were minor error branches.
+
+## Previous findings
+- internal/executor/kube/roleimage.go (pod name collision between roles with identical directories): still present, now at line 350. It stays low and non-blocking.
+- internal/executor/kube/roleimage.go (builder command unverified on a real cluster): still present as an info note, now at line 348.
