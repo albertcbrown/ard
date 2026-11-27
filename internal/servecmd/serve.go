@@ -523,7 +523,7 @@ var newKubeClient = func() (api.Client, error) { return api.InCluster(api.RESTOp
 
 func (w *wiring) k8sFlagsSet() bool {
 	k := w.K8s
-	return k.Namespace != "" || k.Instance != "" || k.AgentImage != "" || k.PodImage != ""
+	return k.Namespace != "" || k.Instance != "" || k.AgentImage != "" || k.PodImage != "" || k.BuildNamespace != ""
 }
 
 // normMode maps a config's executor to "local" or "k8s"; a Resolved built by
@@ -625,6 +625,10 @@ func (w *wiring) newKubeExecutor() (jobExecutor, error) {
 			return nil, err
 		}
 	}
+	ri, err := roleImages(k)
+	if err != nil {
+		return nil, err
+	}
 	res, err := parseResources(k.Resources)
 	if err != nil {
 		return nil, err
@@ -643,7 +647,7 @@ func (w *wiring) newKubeExecutor() (jobExecutor, error) {
 		return nil, fmt.Errorf("executor k8s: %w", err)
 	}
 	return kube.New(kube.Options{
-		Client: client, Tokens: minter, WS: ws, Namespace: k.Namespace, Instance: k.Instance,
+		RoleImages: ri, Client: client, Tokens: minter, WS: ws, Namespace: k.Namespace, Instance: k.Instance,
 		Repo: w.Repo.String(), AgentImage: k.AgentImage, PodImage: k.PodImage, GitBase: k.GitBase,
 		Resources: res, PreBudget: k.PreBudget, ResultGrace: k.ResultGrace,
 		Policy: executor.EnvPolicy{
@@ -652,6 +656,31 @@ func (w *wiring) newKubeExecutor() (jobExecutor, error) {
 		},
 		ConfigDirEnv: "CLAUDE_CONFIG_DIR", Log: w.Log,
 	})
+}
+
+// roleImages maps the build settings to kube.RoleImages: nil (images off)
+// when no build namespace is set, an error when the settings are partial.
+// Only the push Secret's name is handled here, never its value.
+func roleImages(k cli.K8sOpts) (*kube.RoleImages, error) {
+	if k.BuildNamespace == "" {
+		return nil, nil
+	}
+	for _, m := range []struct {
+		flag string
+		ok   bool
+	}{
+		{"--k8s-builder-image", k.BuilderImage != ""}, {"--k8s-builder-uid", k.BuilderUID > 0},
+		{"--k8s-role-image-repository", k.RoleImageRepository != ""}, {"--k8s-role-image-push-secret", k.RoleImagePushSecret != ""},
+	} {
+		if !m.ok {
+			return nil, fmt.Errorf("executor k8s: %s is required when --k8s-build-namespace is set", m.flag)
+		}
+	}
+	if err := executor.CheckImageRef(k.BuilderImage); err != nil {
+		return nil, err
+	}
+	return &kube.RoleImages{Namespace: k.BuildNamespace, BuilderImage: k.BuilderImage, BuilderUID: k.BuilderUID,
+		Repository: k.RoleImageRepository, PushSecret: k.RoleImagePushSecret}, nil
 }
 
 // parseResources applies --k8s-resources to the defaults. Keys: cpu and

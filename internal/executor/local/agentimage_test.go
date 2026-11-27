@@ -93,6 +93,38 @@ func TestPrepareDockerfileWins(t *testing.T) {
 	}
 }
 
+func TestRoleBuildPassesAgentBase(t *testing.T) {
+	for _, tc := range []struct {
+		image string
+		want  bool
+	}{{testDigestRef, true}, {"", false}} {
+		f := newFixture(t)
+		bin, calls := fakeDocker(t, "inspect")
+		f.withAgentImage(t, bin, tc.image)
+		os.WriteFile(filepath.Join(f.roleDir, "Dockerfile"), []byte("FROM scratch\n"), 0o644)
+		j := f.job(time.Minute)
+		j.Dockerfile = filepath.Join(f.roleDir, "Dockerfile")
+		h, err := f.l.Prepare(context.Background(), j)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.l.Cleanup(context.Background(), h, executor.CleanupOptions{})
+		b, _ := os.ReadFile(calls)
+		var build string
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(l, "build ") {
+				build = l
+			}
+		}
+		if build == "" {
+			t.Fatalf("no docker build in %q", b)
+		}
+		if got := strings.Contains(build, "--build-arg AGENT_IMAGE="+tc.image); got != tc.want {
+			t.Errorf("image %q: build args %q", tc.image, build)
+		}
+	}
+}
+
 func TestPrepareTrustedScannerStaysHost(t *testing.T) {
 	f := newFixture(t)
 	bin, calls := fakeDocker(t)

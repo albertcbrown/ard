@@ -50,8 +50,13 @@ type Options struct {
 	Policy                 executor.EnvPolicy
 	ConfigDirEnv           string // env name whose Fixed value must be the pod config dir
 	HTTP                   *http.Client
-	Now                    func() time.Time
-	Log                    *slog.Logger
+	// RoleImages turns on in-cluster role image builds; nil keeps role
+	// Dockerfiles ignored (the job runs on AgentImage). RoleTree reads the
+	// role directory from the controller clone (default: git).
+	RoleImages *RoleImages
+	RoleTree   RoleTree
+	Now        func() time.Time
+	Log        *slog.Logger
 
 	// Poll is the watcher interval (default 2s); PendingTimeout is how long a
 	// pod may stay unscheduled (default 5m). Tests shorten both.
@@ -78,6 +83,8 @@ type Executor struct {
 	o    Options
 	mu   sync.Mutex
 	live map[string]*liveJob
+	// builds is the single-flight map of role image builds, by repo and tag.
+	builds map[string]*buildCall
 }
 
 var _ executor.Executor = (*Executor)(nil)
@@ -120,7 +127,33 @@ func New(o Options) (*Executor, error) {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
-	return &Executor{o: o, live: map[string]*liveJob{}}, nil
+	if o.RoleImages != nil {
+		ri := *o.RoleImages
+		if ri.Namespace == "" || ri.BuilderImage == "" || ri.Repository == "" || ri.PushSecret == "" || ri.BuilderUID <= 0 {
+			return nil, errors.New("kube: RoleImages needs Namespace, BuilderImage, BuilderUID, Repository and PushSecret")
+		}
+		if err := executor.CheckImageRef(ri.BuilderImage); err != nil {
+			return nil, err
+		}
+		if !strings.Contains(ri.Repository, "/") {
+			return nil, errors.New("kube: RoleImages.Repository must be <registry>/<path>")
+		}
+		ri.Repository = strings.TrimSuffix(ri.Repository, "/")
+		if ri.AgentBase == "" {
+			ri.AgentBase = DefaultAgentBase
+		}
+		if ri.Budget <= 0 {
+			ri.Budget = 15 * time.Minute
+		}
+		if ri.MaxContext <= 0 {
+			ri.MaxContext = 512 << 10
+		}
+		o.RoleImages = &ri
+		if o.RoleTree == nil {
+			o.RoleTree = ExecTree("")
+		}
+	}
+	return &Executor{o: o, live: map[string]*liveJob{}, builds: map[string]*buildCall{}}, nil
 }
 
 func (e *Executor) get(id string) *liveJob {
@@ -141,14 +174,25 @@ func (e *Executor) Prepare(ctx context.Context, j executor.Job) (executor.Handle
 	if j.RoleSource.SHA == "" || j.RoleSource.Path == "" {
 		return executor.Handle{}, fmt.Errorf("%w: no role source (a config without a commit cannot run on Kubernetes)", executor.ErrInvalidJob)
 	}
+	image := e.o.AgentImage
+	if j.Dockerfile != "" {
+		if e.o.RoleImages == nil {
+			e.o.Log.Info("kube.dockerfile_ignored", "job", j.ID, "dockerfile", j.Dockerfile)
+		} else {
+			// Built from the pinned role SHA in the controller clone, before the
+			// worktree exists so a build failure leaves nothing to discard.
+			ref, err := e.roleImage(ctx, j)
+			if err != nil {
+				return executor.Handle{}, err
+			}
+			image = ref
+		}
+	}
 	h, err := e.o.WS.Prepare(ctx, j)
 	if err != nil {
 		return executor.Handle{}, err
 	}
-	if j.Dockerfile != "" {
-		e.o.Log.Info("kube.dockerfile_ignored", "job", j.ID, "dockerfile", j.Dockerfile)
-	}
-	h.Kind, h.Container, h.Image = Kind, jobpod.PodName(j.ID), e.o.AgentImage
+	h.Kind, h.Container, h.Image = Kind, jobpod.PodName(j.ID), image
 	h.View = jobpod.AgentPaths()
 	if h.SidecarDir == "" {
 		h.View.Sidecar = ""

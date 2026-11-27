@@ -195,3 +195,46 @@ func TestK8sRefusesPAT(t *testing.T) {
 		}
 	}
 }
+
+func TestRoleImagesSettings(t *testing.T) {
+	app := &github.AppAuth{}
+	full := func() cli.K8sOpts {
+		k := k8sOpts()
+		k.BuildNamespace, k.BuilderUID = "builds", 1000
+		k.BuilderImage = "moby/buildkit@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		k.RoleImageRepository, k.RoleImagePushSecret = "ghcr.io/o/ard", "push"
+		return k
+	}
+	build := func(k cli.K8sOpts) error {
+		w, _ := k8sWiring(t, k, app)
+		w.cfg.Store(&config.Resolved{Executor: "k8s"})
+		_, err := w.newExecutor()
+		return err
+	}
+	if err := build(full()); err != nil {
+		t.Fatalf("full settings: %v", err)
+	}
+	if ri, err := roleImages(k8sOpts()); ri != nil || err != nil {
+		t.Errorf("no build namespace: %v %v", ri, err)
+	}
+	ri, err := roleImages(full())
+	if err != nil || ri.Namespace != "builds" || ri.Repository != "ghcr.io/o/ard" || ri.PushSecret != "push" || ri.BuilderUID != 1000 {
+		t.Errorf("mapped %+v %v", ri, err)
+	}
+	if err := build(k8sOpts()); err != nil {
+		t.Errorf("images off: %v", err)
+	}
+	for name, mut := range map[string]func(*cli.K8sOpts){
+		"no image":      func(k *cli.K8sOpts) { k.BuilderImage = "" },
+		"no uid":        func(k *cli.K8sOpts) { k.BuilderUID = 0 },
+		"no repository": func(k *cli.K8sOpts) { k.RoleImageRepository = "" },
+		"no secret":     func(k *cli.K8sOpts) { k.RoleImagePushSecret = "" },
+		"unpinned":      func(k *cli.K8sOpts) { k.BuilderImage = "moby/buildkit:rootless" },
+	} {
+		k := full()
+		mut(&k)
+		if err := build(k); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
