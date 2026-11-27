@@ -295,6 +295,11 @@ func TestPrepareRefusals(t *testing.T) {
 	if _, err := e.ex.Prepare(ctx, j); !errors.Is(err, executor.ErrInvalidJob) {
 		t.Errorf("long id: %v", err)
 	}
+	j = testJob("01HFFFFFFFFFFFFFFFFFFFFFFE")
+	j.Stage, j.ReadOnly, j.Output = "scanner", true, true
+	if _, err := e.ex.Prepare(ctx, j); !errors.Is(err, executor.ErrInvalidJob) {
+		t.Errorf("output: %v", err)
+	}
 }
 
 func TestStartRefusals(t *testing.T) {

@@ -760,3 +760,46 @@ func TestNetworkEnvAndStart(t *testing.T) {
 		t.Errorf("advisory with credential: %v", err)
 	}
 }
+
+// A ReadOnly + Output scanner job can write $ARD_OUT and not its worktree;
+// Cleanup removes the output dir with the home.
+func TestReadOnlyOutputHost(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	j := f.job(time.Minute)
+	j.Stage, j.Issue, j.ReadOnly, j.Output = "scanner", 0, true, true
+	script := `echo ok > "$ARD_OUT/f" && ! touch "$ARD_WORK/y"`
+	if os.Getuid() == 0 {
+		script = `echo ok > "$ARD_OUT/f"` // root ignores a-w
+	}
+	h, st := f.run(t, j, executor.Command{Path: "/bin/sh", Args: []string{"-c", script}})
+	if st.State != executor.Exited || st.ExitCode != 0 {
+		t.Fatalf("status %+v, log %q", st, readFile(t, h.LogPath))
+	}
+	if want := filepath.Join(h.Home, "out"); h.OutDir != want || h.View.Out != want {
+		t.Errorf("OutDir %q View.Out %q, want %q", h.OutDir, h.View.Out, want)
+	}
+	if fi, err := os.Stat(h.OutDir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("out dir: %v %v", fi, err)
+	}
+	if got := readFile(t, filepath.Join(h.OutDir, "f")); got != "ok\n" {
+		t.Errorf("out file %q", got)
+	}
+	if err := f.l.Cleanup(ctx, h, executor.CleanupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(h.OutDir); !os.IsNotExist(err) {
+		t.Errorf("out dir remains: %v", err)
+	}
+}
+
+func TestNoOutputNoArdOut(t *testing.T) {
+	f := newFixture(t)
+	h, st := f.run(t, f.job(time.Minute), executor.Command{Path: "/bin/sh", Args: []string{"-c", `[ -z "${ARD_OUT+x}" ]`}})
+	if st.ExitCode != 0 || h.OutDir != "" || h.View.Out != "" {
+		t.Errorf("job without Output: exit %d OutDir %q View.Out %q", st.ExitCode, h.OutDir, h.View.Out)
+	}
+	if _, err := os.Stat(filepath.Join(h.Home, "out")); !os.IsNotExist(err) {
+		t.Errorf("out dir made without Output: %v", err)
+	}
+}

@@ -40,7 +40,9 @@ var rules = []rule{
 	{id: "stripe-live", re: regexp.MustCompile(`\b[rs]k_live_[A-Za-z0-9]{20,250}`), kw: kws("_live_")},
 	// generic-assignment skips unquoted values that are a Go selector or
 	// short identifier (u.Tokens) or all digits (token counts). Quoted values
-	// are always judged by entropy, so the rule stays fail-closed.
+	// are judged by entropy, so the rule stays fail-closed, except that any
+	// value that is an upper-case snake-case environment variable name is
+	// skipped.
 	{id: "generic-assignment", generic: true,
 		re: regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|passw(?:or)?d|auth)["']?\s{0,16}[:=]\s{0,16}(["']?)([A-Za-z0-9_\-+/=.]{16,250})`)},
 }
@@ -69,7 +71,16 @@ func placeholder(v []byte) bool {
 	if len(bytes.Trim(v, string(v[0]))) == 0 {
 		return true
 	}
-	return placeholderRE.Match(v)
+	return envName(v) || placeholderRE.Match(v)
+}
+
+var envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$`)
+
+// envName reports whether v is an upper-case snake-case environment variable
+// name: at least one underscore, no lower case, none of + / = . and at most 64
+// bytes.
+func envName(v []byte) bool {
+	return len(v) <= 64 && envNameRE.Match(v)
 }
 
 var codeRefRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)

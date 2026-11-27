@@ -47,6 +47,7 @@ import (
 	"github.com/albertcbrown/ard/internal/reaper"
 	"github.com/albertcbrown/ard/internal/redact"
 	"github.com/albertcbrown/ard/internal/repopath"
+	"github.com/albertcbrown/ard/internal/scanner"
 	"github.com/albertcbrown/ard/internal/scanner/stale"
 	"github.com/albertcbrown/ard/internal/snapshot"
 	"github.com/albertcbrown/ard/internal/state"
@@ -355,7 +356,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 						return err
 					}
 				}
-				if err := failStaleScannerJobs(ctx, store, cl, log); err != nil {
+				if err := failStaleScannerJobs(ctx, store, cl, scanner.RegistryStores(w.Scanners), log); err != nil {
 					return err
 				}
 				if _, err := w.limitsBook(ctx); err != nil {

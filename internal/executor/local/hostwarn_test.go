@@ -107,6 +107,20 @@ func TestTrustedScannerJobDoesNotWarn(t *testing.T) {
 	}
 }
 
+// An LLM scanner job (untrusted, with an output dir) still warns.
+func TestHostOutputJobWarns(t *testing.T) {
+	w := newWarnFixture(t)
+	j := w.job(20e9)
+	j.Stage, j.Issue, j.ReadOnly, j.Output = "scanner", 0, true, true
+	w.run(t, j, agent(t, "ok"))
+	if logs := w.logText(); strings.Count(logs, "executor.host_untrusted") != 1 {
+		t.Errorf("want one warning for the output job:\n%s", logs)
+	}
+	if len(w.calls) != 1 {
+		t.Errorf("hook calls = %v, want one", w.calls)
+	}
+}
+
 func TestHostHookErrorDoesNotFailJob(t *testing.T) {
 	w := newWarnFixture(t)
 	w.err = errors.New("db down")

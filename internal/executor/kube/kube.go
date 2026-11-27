@@ -167,6 +167,10 @@ func (e *Executor) Prepare(ctx context.Context, j executor.Job) (executor.Handle
 	if len(j.ID) > jobpod.MaxJobID {
 		return executor.Handle{}, fmt.Errorf("%w: id %q is too long for a pod name", executor.ErrInvalidJob, j.ID)
 	}
+	if j.Output {
+		// The pod has no writable output mount for a read-only job yet.
+		return executor.Handle{}, fmt.Errorf("%w: an output dir (LLM scanner) is not supported on Kubernetes yet", executor.ErrInvalidJob)
+	}
 	if j.RoleSource.SHA == "" || j.RoleSource.Path == "" {
 		return executor.Handle{}, fmt.Errorf("%w: no role source (a config without a commit cannot run on Kubernetes)", executor.ErrInvalidJob)
 	}

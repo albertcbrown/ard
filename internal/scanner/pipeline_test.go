@@ -517,17 +517,6 @@ func TestRunCommitterFailureDoesNotUndoTheIssue(t *testing.T) {
 	h.wantRow("a", 1, StatusOpen)
 }
 
-func TestRunSkipsLLMScanner(t *testing.T) {
-	h := newHarness(t, func(r *config.Role) { r.ScanPath = ""; r.PromptPath = ".ard/scanners/cve/prompt.txt" })
-	res := h.mustRun()
-	if res.Outcome != OutcomeSkipped || h.eng.calls != 0 {
-		t.Errorf("res = %+v", res)
-	}
-	if _, err := h.db.LastRun(h.ctx); !errors.Is(err, scannerdb.ErrNotFound) {
-		t.Error("a skipped run was recorded")
-	}
-}
-
 func TestRunAdoptsHumanChanges(t *testing.T) {
 	h := newHarness(t, func(r *config.Role) { r.GroupSize = 5 })
 	h.eng.set(gfnd("a", SevHigh, "g"), gfnd("b", SevHigh, "g"))

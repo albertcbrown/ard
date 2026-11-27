@@ -58,7 +58,7 @@ A row that setup cannot fix or read for itself prints as `manual: <name>: <fix>`
 - `app-permissions`: remove any permission the row names from the App.
 - `merge-settings`: turn off rebase merging, as the row says.
 
-Also audit the bot's commits. Set the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login, and add a workflow that fails when a bot commit changes anything outside a single `.ard/<issue#>/` directory. The example is [.github/workflows/bot-commits.yml](https://github.com/albertcbrown/ard/blob/main/.github/workflows/bot-commits.yml). The App cannot write workflows, so you add this one yourself.
+Also audit the bot's commits. `ard setup` sets the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login. Add a workflow that fails when a bot commit changes anything outside a single `.ard/<issue#>/` directory. The example is [.github/workflows/bot-commits.yml](https://github.com/albertcbrown/ard/blob/main/.github/workflows/bot-commits.yml). The App cannot write workflows, so you add this one yourself: `ard setup --print-workflow > .github/workflows/bot-commits.yml`, then open a PR.
 
 Rerun `ard setup` until no row is drift or manual. `ard config check` prints the resolved configuration and reports every problem with its file and key.
 

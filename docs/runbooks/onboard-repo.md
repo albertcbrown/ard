@@ -46,8 +46,9 @@ Each `manual: <name>: <fix>` row carries the exact fix. Typical ones:
   `main`; see "Branch protection and the bot" in the proposal.
 - `merge-settings`: turn off rebase merging.
 - Bot-commit audit, by hand in the target repository (do not edit `.github/`
-  here): copy `.github/workflows/bot-commits.yml` from this repository, then set
-  the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login.
+  here): run `ard setup --print-workflow > .github/workflows/bot-commits.yml` and open a PR;
+  `ard setup` sets the repository variable `ARD_BOT_LOGIN` to the App's `<slug>[bot]` login
+  (it asks before replacing a different value).
 
 Rerun `ard setup` until it is green.
 

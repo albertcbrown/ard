@@ -111,6 +111,9 @@ func TestScannerGenericAssignmentFalsePositives(t *testing.T) {
 		"TotalTokens: usage.TotalTokens,",
 		`"cache_read_input_tokens": 1106888`,
 		`"tokens": 11068881106888123`,
+		"EnvAPI" + "Key = \"ANTHROPIC_" + "API_KEY\"",
+		"token: CLAUDE_CODE_" + "OAUTH_TOKEN",
+		"SECRET_NAME = \"GITHUB_APP_" + "PRIVATE_KEY\"",
 	} {
 		if f := scanString(t, in); len(f) != 0 {
 			t.Errorf("%q: unexpected findings %v", in, f)
@@ -189,5 +192,59 @@ func TestScannerAWSExample(t *testing.T) {
 				t.Errorf("finding = %+v, want col %d", f[0], c.col)
 			}
 		})
+	}
+}
+
+// upperSnake returns a high-entropy upper-case string of n bytes with an
+// underscore after every seventh byte, starting with a letter.
+func upperSnake(seed uint64, n int) string {
+	b := []byte("K" + strings.ToUpper(randStr(seed, n-1)))
+	for i := 7; i < n-1; i += 8 {
+		b[i] = '_'
+	}
+	return string(b)
+}
+
+func TestScannerGenericAssignmentEnvNameBoundaries(t *testing.T) {
+	long := upperSnake(31, 64)
+	tooLong := upperSnake(32, 65)
+	noUnderscore := strings.ReplaceAll(upperSnake(33, 32), "_", "A")
+	mixed := upperSnake(34, 40)
+	mixed = strings.ToLower(mixed[:10]) + mixed[10:]
+	lower := strings.ToLower(upperSnake(35, 40))
+	snake := upperSnake(36, 40)
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"short", upperSnake(30, 20), false},
+		{"64 chars", long, false},
+		{"65 chars", tooLong, true},
+		{"no underscore", noUnderscore, true},
+		{"mixed case", mixed, true},
+		{"lower case", lower, true},
+		{"dot segment", snake + "." + upperSnake(37, 20), true},
+		{"plus", snake + "+" + upperSnake(38, 8), true},
+		{"slash", snake + "/" + upperSnake(39, 8), true},
+		{"equals", snake + "=", true},
+		{"leading underscore", "_" + snake, true},
+		{"leading digit", "7" + snake, true},
+		{"double underscore", snake[:20] + "__" + snake[20:], true},
+	} {
+		for _, in := range []string{
+			"api_" + "key = \"" + tc.value + "\"",
+			"token: " + tc.value,
+		} {
+			found := false
+			for _, f := range scanString(t, in) {
+				if f.Rule == "generic-assignment" {
+					found = true
+				}
+			}
+			if found != tc.want {
+				t.Errorf("%s: %q: flagged=%v, want %v", tc.name, in, found, tc.want)
+			}
+		}
 	}
 }

@@ -16,8 +16,11 @@ type Options struct {
 	Client     github.Client // tests only: used instead of github.New when non-nil
 	Git        *gitx.Git     // nil = gitx.New("")
 	LedgerPath string        // dry-run only; "" = no ledger file
-	Redact     func(string) string
-	Log        *slog.Logger
+	// OperatorToken returns the operator's own token for SetRepoVariable. It
+	// is called only then and never stored.
+	OperatorToken func(ctx context.Context) (string, error)
+	Redact        func(string) string
+	Log           *slog.Logger
 }
 
 // readOnly exposes only the Reader. Because the field is an interface of
@@ -47,7 +50,7 @@ func Open(ctx context.Context, o Options) (Effects, github.Reader, error) {
 		}
 		return d, readOnly{client}, nil
 	}
-	return NewLive(client, g, o.Log), readOnly{client}, nil
+	return NewLive(client, g, o.Log).WithOperator(o.OperatorToken, o.GitHub), readOnly{client}, nil
 }
 
 // newClient returns o.Client, or builds the HTTP client. Under dry-run the

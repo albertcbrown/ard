@@ -17,8 +17,9 @@ transaction. The run history is kept.
 Stop ard serve first: a running controller holds the leader lock and the
 command refuses to run. With --dry-run the report is printed and nothing is
 written. The dry-run state database holds synthetic issues that are not on
-GitHub, so it is never rebuilt. Only scanners with a scan executable can be
-rebuilt.`,
+GitHub, so it is never rebuilt. Any configured scanner can be rebuilt, LLM
+(prompt.txt) scanners included; the built-in stale closer keeps no state to
+rebuild.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.run(cmd, func(ctx context.Context, e *Env) error {

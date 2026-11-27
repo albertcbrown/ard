@@ -63,6 +63,11 @@ type Effects interface {
 	// of repo (owner/name). It is not part of github.Writer, so the App client
 	// can never reach it. ErrGHUnavailable means gh is missing or logged out.
 	ApproveIssue(ctx context.Context, repo string, n int) error
+	// SetRepoVariable creates or updates an Actions variable of repo
+	// (owner/name) with the operator's token (Options.OperatorToken). Like
+	// ApproveIssue it is outside github.Writer, so the App client cannot reach
+	// it. ErrNoOperatorToken means no token was available.
+	SetRepoVariable(ctx context.Context, repo, name, value string) error
 	// DryRun reports whether effects are only logged.
 	DryRun() bool
 }

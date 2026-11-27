@@ -122,10 +122,15 @@ const (
 	OutcomeScanFailed   = "scan_failed"
 	OutcomeTimeout      = "timeout"
 	OutcomeError        = "error"
-	// OutcomeNoSlot, OutcomePaused and OutcomeSkipped are reported but never recorded.
+	// OutcomeNoSlot, OutcomePaused, OutcomeSkipped and OutcomeLimited are
+	// reported but never recorded, so the scanner stays due. OutcomeSkipped
+	// is an engine that cannot run the role (no model credential, or an
+	// executor without LLM-scanner support); OutcomeLimited is a run stopped
+	// by a usage limit that the limits book now holds.
 	OutcomeNoSlot  = "dropped_no_slot"
 	OutcomePaused  = "paused"
 	OutcomeSkipped = "skipped"
+	OutcomeLimited = "dropped_limited"
 )
 
 func hasLabel(lbls []string, want string) bool {

@@ -301,3 +301,39 @@ func TestCLIDontAskOutcomes(t *testing.T) {
 		})
 	}
 }
+
+// A scanner's Write tool reaches only its output dir: the output file is
+// written, a file in the read-only cwd fails, and $HOME/x (outside the working
+// dirs) is denied by the CLI. Bash is not confined by this (see the proposal).
+func TestCLIScannerWriteScope(t *testing.T) {
+	work, _ := scriptRepo(t)
+	sidecar, outDir, home := t.TempDir(), t.TempDir(), t.TempDir()
+	c := scannerArgv(t, sidecar, outDir)
+	readOnlyDir(t, work)
+	outFile := filepath.Join(outDir, "findings.jsonl")
+	url, _ := scriptedAPI(t, []toolStep{
+		{"Write", map[string]any{"file_path": outFile, "content": "{}\n"}},
+		{"Write", map[string]any{"file_path": filepath.Join(work, "new.txt"), "content": "x"}},
+		{"Write", map[string]any{"file_path": filepath.Join(home, "x"), "content": "x"}},
+	})
+	out, _ := runCLI(t, work, c, c.Argv, "HOME="+home, "ANTHROPIC_API_KEY=dummy-not-a-key", "ANTHROPIC_BASE_URL="+url)
+	res := finalResult(t, out)
+	var got []bool
+	for _, r := range toolResults(t, out) {
+		got = append(got, r.IsError)
+	}
+	if want := []bool{false, true, true}; !slices.Equal(got, want) {
+		t.Errorf("tool errors = %v, want %v\n%s", got, want, out)
+	}
+	if len(res.PermissionDenials) != 1 {
+		t.Errorf("permission_denials = %d, want 1 (the $HOME write)", len(res.PermissionDenials))
+	}
+	if b, err := os.ReadFile(outFile); err != nil || string(b) != "{}\n" {
+		t.Errorf("output file = %q, %v", b, err)
+	}
+	for _, p := range []string{filepath.Join(work, "new.txt"), filepath.Join(home, "x")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s was written", p)
+		}
+	}
+}

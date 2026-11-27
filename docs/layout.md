@@ -23,7 +23,7 @@ internal/agent/             Adapter interface, Spec/Result types, Registry (pure
 internal/agent/claude/      Claude Code adapter (`claude -p`, stream-json parser)
 internal/modelauth/         picks the one model credential (OAuth token or API key) from the controller env and carries its value to the executor; never logged
 internal/state/             SQLite controller and scanner state (sqlitex, scannerdb)
-internal/scanner/           scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, the scanners Loop, rebuild
+internal/scanner/           scanner pipeline: findings, markers, reconcile, diff, group, ExecEngine, AgentEngine (prompt.txt scanners), Engines, the pre-filing guard, the scanners Loop, rebuild
 internal/costblock/         the issue body's ard-owned cost block: render, strict parse, strip (admission), splice, per-issue Locks; leaf, stdlib only
 internal/tarball/          safe streaming tar.gz pack/unpack through os.Root; leaf, stdlib only
 internal/jobpod/           controller-pod contract of the k8s executor: paths, Secret items, input manifest, result route, key helpers; imports only executor and gitref
@@ -59,7 +59,7 @@ internal/reviewer/          the reviewer loop: claims `ard:review:<role>` on ard
 internal/triage/            the triage Loop: intake sweep, admission gate (body-hash re-gate), `after:` ordering, claim, watcher, fan-in gate (adds `ard:worker:<role>`); closes out through the shared Finisher
 internal/labels/            the one place that spells an `ard:` label; catalogue from config
 internal/labels/labelsync/  `ard labels sync`: diff catalogue vs repo, create/update via effects
-internal/setupcmd/          `ard setup`: checks, then applies (labels) when green; --check, --dry-run
+internal/setupcmd/          `ard setup`: checks, then applies (labels, ARD_BOT_LOGIN) when green; --check, --dry-run, --print-workflow; workflow/ holds the embedded bot-commits.yml copy
 internal/gitref/            ref-name checks shared by config and executor; leaf, stdlib only
 internal/repopath/          owner/repo to lowercased, nested local path segments (state, lock, work, logs); leaf, stdlib only
 internal/initcmd/           ard init: proposes the starter .ard/ as a PR on ard-init

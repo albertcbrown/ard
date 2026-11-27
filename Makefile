@@ -1,13 +1,16 @@
 VERSION ?= $(shell git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test kind-e2e docs-check release-check
+.PHONY: build test test-race lint fmt clean cve-fixtures lts-fixtures lint-scanner-fixtures chart-test image-test agent-image agent-image-test kind-e2e docs-check release-check
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/ard ./cmd/ard
 
 test:
 	go test ./...
+
+test-race:
+	go test -race ./...
 
 lint:
 	go vet ./...

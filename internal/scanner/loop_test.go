@@ -1,8 +1,12 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,12 +21,16 @@ type namedEngine struct {
 	ran    []string
 	tried  []string
 	noSlot bool
+	fail   map[string]error // per scanner
 }
 
 func (e *namedEngine) Scan(_ context.Context, _ *config.Resolved, r config.Role, _ time.Time) (ScanResult, error) {
 	e.tried = append(e.tried, r.Name)
 	if e.noSlot {
 		return ScanResult{}, ErrNoSlot
+	}
+	if err := e.fail[r.Name]; err != nil {
+		return ScanResult{}, err
 	}
 	e.ran = append(e.ran, r.Name)
 	return ScanResult{SHA: "s"}, nil
@@ -179,17 +187,86 @@ func TestLoopDroppedRunCountsAsARun(t *testing.T) {
 	}
 }
 
-func TestLoopSkipsLLMScannersAndBuiltinCollisions(t *testing.T) {
-	llm := every("arch", time.Hour)
-	llm.ScanPath, llm.PromptPath = "", ".ard/scanners/arch/prompt.txt"
+func TestLoopSkipsBuiltinCollisions(t *testing.T) {
 	b := &fakeBuiltin{name: "stale", every: time.Hour}
-	f := newLoopFixture(t, []config.Role{llm, every("stale", time.Hour)}, b)
+	f := newLoopFixture(t, []config.Role{every("stale", time.Hour)}, b)
 	f.tick()
 	if len(f.eng.ran) != 0 {
 		t.Errorf("ran %v", f.eng.ran)
 	}
 	if b.runs != 1 {
 		t.Errorf("the built-in did not run: %d", b.runs)
+	}
+}
+
+func llmEvery(name string, d time.Duration) config.Role {
+	r := every(name, d)
+	asLLM(&r)
+	return r
+}
+
+// An LLM scanner whose engine is not ready is left out before its state or
+// GitHub is read, warns once, and does not block a due cve.
+func TestLoopSkipsNotReadyLLMScanner(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		agent        Engine
+	}{
+		{"no credential", "no_model_credential", nil},
+		{"k8s", "executor_unsupported", Unavailable{Err: ErrExecutorUnsupported}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLoopFixture(t, []config.Role{llmEvery("arch", 24*time.Hour), every("cve", 6*time.Hour)})
+			f.seedRun("cve", 10*time.Hour)
+			f.loop.p.Engine = Engines{Exec: f.eng, Agent: tc.agent}
+			var buf bytes.Buffer
+			f.env.Log = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			f.tick()
+			f.clock = f.clock.Add(7 * time.Hour)
+			f.tick()
+			if len(f.eng.tried) != 2 || f.eng.tried[0] != "cve" || f.eng.tried[1] != "cve" {
+				t.Errorf("tried %v", f.eng.tried)
+			}
+			if _, ok := f.lastRun("arch"); ok {
+				t.Error("a skipped LLM scanner recorded a run")
+			}
+			log := buf.String()
+			if n := strings.Count(log, "level=WARN msg=scanner.skip scanner=arch reason="+tc.reason); n != 1 {
+				t.Errorf("%d warnings, want 1:\n%s", n, log)
+			}
+			if !strings.Contains(log, "level=DEBUG msg=scanner.skip scanner=arch reason="+tc.reason) {
+				t.Errorf("no debug skip on the second tick:\n%s", log)
+			}
+		})
+	}
+}
+
+// A run stopped by a usage limit, or skipped by its engine, is not recorded
+// and the tick moves on to the next due scanner.
+func TestLoopStoppedLLMScannerDoesNotBlockOthers(t *testing.T) {
+	for _, err := range []error{
+		&limitStop{err: fmt.Errorf("%w: weekly", ErrUsageLimit)},
+		fmt.Errorf("scanner arch: %w", ErrNoCredential),
+	} {
+		t.Run(err.Error(), func(t *testing.T) {
+			f := newLoopFixture(t, []config.Role{llmEvery("arch", 24*time.Hour), every("cve", 6*time.Hour)})
+			f.seedRun("cve", 10*time.Hour)
+			f.eng.fail = map[string]error{"arch": err}
+			f.tick()
+			if len(f.eng.tried) != 2 || f.eng.tried[0] != "arch" || len(f.eng.ran) != 1 || f.eng.ran[0] != "cve" {
+				t.Errorf("tried %v, ran %v", f.eng.tried, f.eng.ran)
+			}
+			if _, ok := f.lastRun("arch"); ok {
+				t.Error("the stopped run was recorded")
+			}
+			// Still due: offered again on the next tick.
+			f.eng.tried, f.eng.ran = nil, nil
+			f.clock = f.clock.Add(PollInterval)
+			f.tick()
+			if len(f.eng.tried) != 1 || f.eng.tried[0] != "arch" {
+				t.Errorf("tried %v", f.eng.tried)
+			}
+		})
 	}
 }
 
@@ -223,11 +300,10 @@ func TestLoopTickTimeout(t *testing.T) {
 	a.Timeout = 10 * time.Minute
 	b := every("b", time.Hour)
 	b.Timeout = 45 * time.Minute
-	llm := every("c", time.Hour)
-	llm.ScanPath = ""
+	llm := llmEvery("c", 24*time.Hour)
 	llm.Timeout = 5 * time.Hour
 	f := newLoopFixture(t, []config.Role{a, b, llm})
-	if got := f.loop.TickTimeout(f.cfg); got != 45*time.Minute+tickSlack {
+	if got := f.loop.TickTimeout(f.cfg); got != 5*time.Hour+tickSlack {
 		t.Errorf("TickTimeout = %v", got)
 	}
 	if got := newLoopFixture(t, nil).loop.TickTimeout(&config.Resolved{}); got != 0 {
