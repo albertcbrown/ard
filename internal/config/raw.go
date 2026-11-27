@@ -25,6 +25,7 @@ type rawConfig struct {
 	globalMaxOpen          *int
 	paused                 *bool
 	intervals              rawIntervals
+	limits                 rawLimits
 	intake                 rawIntake
 	protectedPaths         []string // merge.protected_paths
 	haveMerge              bool
@@ -125,6 +126,8 @@ func parseConfigDoc(doc *yaml.Node, cfgPath string) (rawConfig, Errors) {
 			errs = append(errs, decodeValue(value, cfgPath, name, &raw.paused)...)
 		case "intervals":
 			errs = append(errs, raw.intervals.parse(value, cfgPath, "intervals")...)
+		case "limits":
+			errs = append(errs, raw.limits.parse(value, cfgPath)...)
 		case "intake":
 			errs = append(errs, raw.parseIntake(value, cfgPath)...)
 		case "merge":

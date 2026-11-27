@@ -15,6 +15,18 @@ intervals:
   merger: 5m
   prwatch: 10m
   approvals: 1m
+limits:
+  stop_workers_pct: 75
+  stop_all_pct: 90
+  weekly_stop_workers_pct_by_day:
+    - 20
+    - 35
+    - 50
+    - 60
+    - 70
+    - 80
+    - 85
+  weekly_stop_all_pct: 90
 intake:
   mode: label
 protected_paths:

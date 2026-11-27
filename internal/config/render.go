@@ -31,6 +31,7 @@ type resolvedYAML struct {
 	GlobalMaxOpen   int                    `yaml:"global_max_open"`
 	Paused          bool                   `yaml:"paused"`
 	Intervals       intervalsYAML          `yaml:"intervals"`
+	Limits          limitsYAML             `yaml:"limits"`
 	Intake          intakeYAML             `yaml:"intake"`
 	ProtectedPaths  []string               `yaml:"protected_paths,omitempty"`
 	Stale           staleYAML              `yaml:"stale"`
@@ -49,6 +50,13 @@ type intervalsYAML struct {
 	Merger    Duration `yaml:"merger"`
 	PRWatch   Duration `yaml:"prwatch"`
 	Approvals Duration `yaml:"approvals"`
+}
+
+type limitsYAML struct {
+	StopWorkersPct            int   `yaml:"stop_workers_pct"`
+	StopAllPct                int   `yaml:"stop_all_pct"`
+	WeeklyStopWorkersPctByDay []int `yaml:"weekly_stop_workers_pct_by_day"`
+	WeeklyStopAllPct          int   `yaml:"weekly_stop_all_pct"`
 }
 
 type intakeYAML struct {
@@ -149,6 +157,8 @@ func (r *Resolved) render() resolvedYAML {
 			PRWatch:   r.Intervals.PRWatch,
 			Approvals: r.Intervals.Approvals,
 		},
+		Limits: limitsYAML{StopWorkersPct: r.Limits.StopWorkersPct, StopAllPct: r.Limits.StopAllPct,
+			WeeklyStopWorkersPctByDay: r.Limits.WeeklyStopWorkersPctByDay, WeeklyStopAllPct: r.Limits.WeeklyStopAllPct},
 		Intake:         intakeYAML{Mode: r.Intake.Mode, Label: r.Intake.Label},
 		ProtectedPaths: r.ProtectedPaths,
 		Stale: staleYAML{

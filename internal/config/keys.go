@@ -11,6 +11,8 @@ func Keys() []string {
 		"budget_usd_per_day", "tokens_per_day", "max_budget_usd", "global_max_open", "paused",
 		"intervals.scanners", "intervals.triage", "intervals.workers",
 		"intervals.reviewers", "intervals.merger", "intervals.prwatch", "intervals.approvals",
+		"limits.stop_workers_pct", "limits.stop_all_pct",
+		"limits.weekly_stop_workers_pct_by_day", "limits.weekly_stop_all_pct",
 		"pr_watch.pending_timeout", "roles_repo",
 		"intake.mode", "intake.label",
 		"merge.protected_paths",

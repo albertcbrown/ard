@@ -18,8 +18,8 @@ const readingsKey = "limits.readings"
 // once the book holds this many.
 const maxReadings = 16
 
-// Reading is the latest observed usage of one subscription window. Nothing
-// gates on it yet (#63).
+// Reading is the latest observed usage of one subscription window.
+// Book.Gate (policy.go) gates agent jobs on it (#63).
 type Reading struct {
 	Window      string    `json:"window"`
 	Utilization float64   `json:"utilization"` // as the stream reports it

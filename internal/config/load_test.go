@@ -1076,3 +1076,40 @@ func TestReviewerAidDiscovery(t *testing.T) {
 		t.Error("the rendered config does not show the aid")
 	}
 }
+
+func TestLoadLimits(t *testing.T) {
+	d := mustLoad(t, baseFS()).Limits
+	if d.StopWorkersPct != 75 || d.StopAllPct != 90 || d.WeeklyStopAllPct != 90 ||
+		len(d.WeeklyStopWorkersPctByDay) != 7 || d.WeeklyStopWorkersPctByDay[0] != 20 || d.WeeklyStopWorkersPctByDay[6] != 85 {
+		t.Errorf("default Limits = %+v", d)
+	}
+	got := mustLoad(t, withConfig(t, "limits:\n  stop_workers_pct: 60\n  weekly_stop_all_pct: 95\n  weekly_stop_workers_pct_by_day: [10, 10, 20, 30, 40, 95, 95]\n")).Limits
+	if got.StopWorkersPct != 60 || got.StopAllPct != 90 || got.WeeklyStopAllPct != 95 || got.WeeklyStopWorkersPctByDay[5] != 95 {
+		t.Errorf("custom Limits = %+v", got)
+	}
+}
+
+func TestLoadLimitsRejects(t *testing.T) {
+	tests := []struct{ name, yaml, key string }{
+		{"six values", "limits: {weekly_stop_workers_pct_by_day: [1,2,3,4,5,6]}\n", "limits.weekly_stop_workers_pct_by_day"},
+		{"eight values", "limits: {weekly_stop_workers_pct_by_day: [1,2,3,4,5,6,7,8]}\n", "limits.weekly_stop_workers_pct_by_day"},
+		{"zero", "limits: {weekly_stop_workers_pct_by_day: [0,2,3,4,5,6,7]}\n", "limits.weekly_stop_workers_pct_by_day[0]"},
+		{"101", "limits: {weekly_stop_all_pct: 100, weekly_stop_workers_pct_by_day: [1,2,3,4,5,6,101]}\n", "limits.weekly_stop_workers_pct_by_day[6]"},
+		{"decreasing", "limits: {weekly_stop_workers_pct_by_day: [20,35,50,40,70,80,85]}\n", "limits.weekly_stop_workers_pct_by_day[3]"},
+		{"above weekly stop-all", "limits: {weekly_stop_all_pct: 80}\n", "limits.weekly_stop_workers_pct_by_day[6]"},
+		{"non-integer", "limits: {weekly_stop_workers_pct_by_day: [1.5,2,3,4,5,6,7]}\n", "limits.weekly_stop_workers_pct_by_day"},
+		{"workers above all", "limits: {stop_workers_pct: 95}\n", "limits.stop_workers_pct"},
+		{"unknown key", "limits: {bogus: 1}\n", "limits.bogus"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := loadErrs(t, withConfig(t, tt.yaml))
+			for _, e := range errs {
+				if e.Key == tt.key {
+					return
+				}
+			}
+			t.Errorf("no error for key %s: %v", tt.key, errs)
+		})
+	}
+}
