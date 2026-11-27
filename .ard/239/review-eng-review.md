@@ -8,17 +8,16 @@ findings:
     line: 64
     severity: low
     message: |
-      adoptPool takes the new annotate callback as a variadic parameter and reads only the first value.
-      A plain trailing parameter, passing nil where unused, states the intent better and cannot silently ignore extra arguments.
-  - file: "internal/config/limits.go"
-    line: 105
-    severity: info
-    message: |
-      The check that stop_workers_pct is at most stop_all_pct is not in the issue's validation list. It is sensible and tested, so no action is needed.
+      adoptPool still takes annotate as a variadic parameter and reads only the first value.
+      A plain trailing parameter (nil where unused) states the intent better and cannot silently ignore extra arguments.
 ---
-The change follows the issue: config defaults and validation, `Book.Gate` with paced weekly days, the `Serial` and `Agent` pool fields, and serve gating for `agent: claude` roles only. Every "Done when" case has a test, and I found no blocking problems.
+The change follows the issue: config defaults and validation, `Book.Gate` with paced weekly days, the pool `Agent` and `Serial` fields, and gating for `agent: claude` roles only. Every "Done when" case has a test, and I found no blocking problems.
 
 ## Checks
-- Lint: `make lint` could not complete here. It stopped at a parse error in `internal/roles/testdata/docs/skips/src/_x.go`, a test fixture the change did not touch, and I found no lint problems in the changed files.
+- Lint: not re-run. The last round's `make lint` stopped on a parse error in an untouched test fixture, and I found no lint problems in the changed files.
 - Tests: `go test ./internal/config ./internal/limits ./internal/pool ./internal/servecmd` passes.
-- Diff coverage: I did not run a coverage profile. I read the tests against the added code instead. The 5-hour thresholds, paced weekly days, custom list, no-`resets_at` case, stale readings, the pool serial verdict and annotation of held jobs, the Opus-only block and the config rejections are all exercised.
+- Diff coverage: no coverage profile run. I read the tests against the added code: the 5-hour thresholds, paced weekly days, custom list, no-`resets_at` case, stale readings, the pool serial verdict, held-job annotation, the Opus-only block and the config rejections are all exercised.
+
+## Previous findings
+- internal/servecmd/adopt.go (variadic annotate): still present, low, non-blocking.
+- internal/config/limits.go (extra stop_workers_pct <= stop_all_pct check, info): no longer applicable; it needed no action.
