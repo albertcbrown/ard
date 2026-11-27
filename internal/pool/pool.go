@@ -24,9 +24,10 @@ const (
 	DeniedInvalid           // malformed candidate (caller bug)
 	DeniedLimited           // its account or model family is out of quota until a reset time
 	DeniedBudget            // a daily dollar or token cap is reached
+	DeniedSerial            // a Serial candidate while another Agent job is held or granted earlier in the batch
 )
 
-var verdictNames = [...]string{"granted", "full", "outranked", "issue-busy", "duplicate", "invalid", "limited", "budget"}
+var verdictNames = [...]string{"granted", "full", "outranked", "issue-busy", "duplicate", "invalid", "limited", "budget", "serial"}
 
 // String returns the verdict's log name.
 func (v Verdict) String() string {
@@ -66,6 +67,10 @@ type Options struct {
 	// reason. nil disables the check. A refused candidate takes no slot and
 	// reserves no demand; a job already held is never affected.
 	Budget func(c Candidate) (denied bool, reason string)
+	// Annotate, when non-nil, is applied to every offered candidate and every
+	// Held entry to set Agent and Serial, so loops need not know the usage
+	// policy. It runs under the pool's lock and must not block or call the pool.
+	Annotate func(c Candidate) Candidate
 }
 
 // Pool is the in-memory slot arbiter. One mutex guards all state; there are
@@ -78,6 +83,7 @@ type Pool struct {
 	starveAfter time.Duration
 	limited     func(c Candidate) time.Time
 	budget      func(c Candidate) (bool, string)
+	annotate    func(c Candidate) Candidate
 	held        map[string]*Slot
 	demand      map[string]*loopDemand
 	firstDenied map[string]time.Time
@@ -95,6 +101,7 @@ func New(o Options) *Pool {
 		starveAfter: o.StarveAfter,
 		limited:     o.Limited,
 		budget:      o.Budget,
+		annotate:    o.Annotate,
 		held:        map[string]*Slot{},
 		demand:      map[string]*loopDemand{},
 		firstDenied: map[string]time.Time{},
@@ -112,6 +119,9 @@ func New(o Options) *Pool {
 		p.starveAfter = 24 * time.Hour
 	}
 	for _, h := range o.Held {
+		if p.annotate != nil {
+			h.Candidate = p.annotate(h.Candidate)
+		}
 		k := h.Candidate.Key()
 		if p.held[k] != nil {
 			p.log.Warn("pool.adopt_duplicate", "key", k, "job_id", h.JobID)
@@ -185,7 +195,16 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 	// Validation and duplicates.
 	inBatch := map[string]bool{}
 	var items []item
+	agentHeld := 0
+	for _, s := range p.held {
+		if s.cand.Agent {
+			agentHeld++
+		}
+	}
 	for i, c := range cands {
+		if p.annotate != nil {
+			c = p.annotate(c)
+		}
 		decisions[i].Candidate = c
 		if why := c.invalid(); why != "" {
 			decisions[i].Verdict, decisions[i].Reason = DeniedInvalid, why
@@ -223,6 +242,7 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 	// Walk the merged ranking.
 	reserved := 0
 	triageGranted := map[int]bool{}
+	agentGranted := 0
 	var denied []Candidate
 	capDenied := 0
 	for _, it := range items {
@@ -238,8 +258,14 @@ func (p *Pool) Offer(loop string, ttl time.Duration, cands []Candidate) []Decisi
 		switch {
 		case c.Class == ClassTriage && (triageHeld[c.Number] || triageGranted[c.Number]):
 			d.Verdict, d.Reason = DeniedIssueBusy, fmt.Sprintf("a triage job on #%d is already held", c.Number)
+		case c.Serial && agentHeld+agentGranted > 0:
+			d.Verdict, d.Reason = DeniedSerial, "usage is high: one agent job at a time"
+			p.noteRefusalLocked(c, DeniedSerial, now)
 		case free > 0:
 			free--
+			if c.Agent {
+				agentGranted++
+			}
 			s := &Slot{pool: p, cand: c, grantedAt: now}
 			p.held[c.Key()] = s
 			if c.Class == ClassTriage {

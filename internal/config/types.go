@@ -220,6 +220,7 @@ type Resolved struct {
 	Paused          bool
 
 	Intervals      Intervals
+	Limits         Limits
 	Intake         Intake
 	ProtectedPaths []string // merge.protected_paths: "dir/" = directory prefix, else doublestar glob; see Protected
 	Stale          Stale

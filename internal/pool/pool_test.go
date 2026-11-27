@@ -864,3 +864,56 @@ func TestWaitingRoles(t *testing.T) {
 		t.Fatalf("WaitingRoles = %+v", st.WaitingRoles)
 	}
 }
+
+func TestSerialVerdict(t *testing.T) {
+	if DeniedSerial.String() != "serial" {
+		t.Errorf("String = %q", DeniedSerial.String())
+	}
+	serial := true
+	annotate := func(c Candidate) Candidate {
+		c.Agent = c.Role != "plain"
+		c.Serial = serial && c.Agent
+		return c
+	}
+	ck := &clock{t: t0.Add(1000 * time.Hour)}
+	held := []Held{{Candidate: cand(ClassWorker, "eng", 1, 0), JobID: "j1"}}
+	p := New(Options{Max: 4, Now: ck.now, Held: held, Annotate: annotate})
+
+	// An Agent job is held: a second Agent candidate is refused, a plain one starts.
+	ds := p.Offer("w", time.Minute, []Candidate{cand(ClassWorker, "eng", 2, 0), cand(ClassWorker, "plain", 3, 0)})
+	if want := []Verdict{DeniedSerial, Granted}; !eq(verdicts(ds), want) {
+		t.Fatalf("verdicts = %v, want %v", verdicts(ds), want)
+	}
+	if ds[0].Slot != nil || !ds[0].Candidate.Serial || !ds[0].Candidate.Agent {
+		t.Errorf("decision = %+v", ds[0])
+	}
+	// The held job is never revoked and a refused one reserved nothing.
+	if s := p.Stats(); s.Held != 2 {
+		t.Errorf("held = %d", s.Held)
+	}
+
+	// With no Agent job held, one batch grants only the first.
+	p2 := New(Options{Max: 4, Now: ck.now, Annotate: annotate})
+	ds = p2.Offer("w", time.Minute, []Candidate{cand(ClassWorker, "a", 1, 0), cand(ClassWorker, "b", 2, 1), cand(ClassReview, "c", 3, 2)})
+	// The reviewer ranks first and takes the only Agent turn.
+	if want := []Verdict{DeniedSerial, DeniedSerial, Granted}; !eq(verdicts(ds), want) {
+		t.Fatalf("batch verdicts = %v, want %v", verdicts(ds), want)
+	}
+
+	// Serial off (usage below the threshold): every Agent job may start.
+	serial = false
+	p3 := New(Options{Max: 4, Now: ck.now, Annotate: annotate})
+	ds = p3.Offer("w", time.Minute, []Candidate{cand(ClassWorker, "a", 1, 0), cand(ClassWorker, "b", 2, 1)})
+	if want := []Verdict{Granted, Granted}; !eq(verdicts(ds), want) {
+		t.Fatalf("serial off verdicts = %v, want %v", verdicts(ds), want)
+	}
+}
+
+func TestAnnotateAppliesToHeld(t *testing.T) {
+	p := New(Options{Max: 4, Held: []Held{{Candidate: cand(ClassWorker, "eng", 1, 0), JobID: "j"}},
+		Annotate: func(c Candidate) Candidate { c.Agent, c.Serial = true, true; return c }})
+	s, _ := p.Lookup(cand(ClassWorker, "eng", 1, 0).Key())
+	if s == nil || !s.cand.Agent {
+		t.Fatalf("held slot not annotated: %+v", s)
+	}
+}

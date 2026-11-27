@@ -158,11 +158,9 @@ func (w *wiring) limitsBook(ctx context.Context) (*limits.Book, error) {
 	return b, nil
 }
 
-// limitedFor is the pool's Options.Limited: when a candidate may next start
-// given the usage limits recorded so far. Deterministic scanners use no model
-// and are never limited. A role missing from the config is never offered, so
-// it is not limited either.
-func (w *wiring) limitedFor(c pool.Candidate) time.Time {
+// limitRole finds the configured role of a candidate and the latest config.
+// ok is false for an unknown class or a role missing from the config.
+func (w *wiring) limitRole(c pool.Candidate) (cfg *config.Resolved, role config.Role, ok bool) {
 	var kind config.Kind
 	switch c.Class {
 	case pool.ClassScanner:
@@ -174,14 +172,24 @@ func (w *wiring) limitedFor(c pool.Candidate) time.Time {
 	case pool.ClassReview:
 		kind = config.KindReviewer
 	default:
-		return time.Time{}
+		return nil, config.Role{}, false
 	}
-	cfg := w.cfg.Load()
+	cfg = w.cfg.Load()
 	if cfg == nil {
-		return time.Time{}
+		return nil, config.Role{}, false
 	}
-	role, ok := cfg.Role(kind, c.Role)
-	if !ok || (kind == config.KindScanner && role.ScanPath != "") {
+	role, ok = cfg.Role(kind, c.Role)
+	return cfg, role, ok
+}
+
+// limitedFor is the pool's Options.Limited: when a candidate may next start
+// given the usage limits recorded so far. Deterministic scanners use no model
+// and are never limited. A role missing from the config is never offered, so
+// it is not limited either. For an agent: claude role the reactive per-family
+// pause is joined with the threshold gate (#63): the later time wins.
+func (w *wiring) limitedFor(c pool.Candidate) time.Time {
+	cfg, role, ok := w.limitRole(c)
+	if !ok || (role.Kind == config.KindScanner && role.ScanPath != "") {
 		return time.Time{}
 	}
 	w.initMu.Lock()
@@ -190,7 +198,59 @@ func (w *wiring) limitedFor(c pool.Candidate) time.Time {
 	if book == nil {
 		return time.Time{}
 	}
-	return book.Until(limits.FamilyOf(role.Model))
+	until := book.Until(limits.FamilyOf(role.Model))
+	if !isClaude(role) {
+		return until
+	}
+	g := book.Gate(policyOf(cfg.Limits), tierOf(c))
+	if g.Deny {
+		gu := g.Until
+		if now := book.Now(); !gu.After(now) {
+			gu = now.Add(gateRecheck)
+		}
+		if gu.After(until) {
+			until = gu
+		}
+	}
+	return until
+}
+
+// gateRecheck is how long a threshold denial lasts when the reading carries no
+// reset time.
+const gateRecheck = 5 * time.Minute
+
+func isClaude(role config.Role) bool { return role.Agent == "claude" }
+
+func tierOf(c pool.Candidate) limits.Tier {
+	if c.Class == pool.ClassReview {
+		return limits.TierReviewer
+	}
+	return limits.TierWorker
+}
+
+func policyOf(l config.Limits) limits.Policy {
+	p := limits.Policy{StopWorkersPct: l.StopWorkersPct, StopAllPct: l.StopAllPct, WeeklyStopAllPct: l.WeeklyStopAllPct}
+	copy(p.WeeklyByDay[:], l.WeeklyStopWorkersPctByDay)
+	return p
+}
+
+// annotate is the pool's Options.Annotate: it marks a candidate that runs the
+// Claude agent (it counts toward the one-job rule) and sets Serial while the
+// 5-hour usage is at or above stop_workers_pct. Deterministic scanners and
+// roles of other agents are left alone.
+func (w *wiring) annotate(c pool.Candidate) pool.Candidate {
+	cfg, role, ok := w.limitRole(c)
+	if !ok || (role.Kind == config.KindScanner && role.ScanPath != "") || !isClaude(role) {
+		return c
+	}
+	c.Agent = true
+	w.initMu.Lock()
+	book := w.lim
+	w.initMu.Unlock()
+	if book != nil {
+		c.Serial = book.Gate(policyOf(cfg.Limits), tierOf(c)).Serial
+	}
+	return c
 }
 
 // finisher returns the shared Finisher the loops call when a job's process

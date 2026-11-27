@@ -362,7 +362,7 @@ func serveLoops(ctx context.Context, e *cli.Env, build builder, wantLoops []stri
 				if _, err := w.limitsBook(ctx); err != nil {
 					return err
 				}
-				p, err := adoptPool(ctx, store, w.MaxPods, log, w.limitedFor, w.budgetGate().Denied)
+				p, err := adoptPool(ctx, store, w.MaxPods, log, w.limitedFor, w.budgetGate().Denied, w.annotate)
 				if err != nil {
 					return err
 				}

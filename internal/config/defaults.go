@@ -180,6 +180,7 @@ func applyGlobals(res *Resolved, raw rawConfig, cfgPath string) Errors {
 		errs = append(errs, &Error{File: cfgPath, Key: "pr_watch.pending_timeout", Msg: fmt.Sprintf("must be at least intervals.prwatch (%s) and at most 7d, got %s", res.Intervals.PRWatch, pt)})
 	}
 
+	errs = append(errs, applyLimits(res, raw.limits, cfgPath)...)
 	errs = append(errs, applyIntake(res, raw.intake, cfgPath)...)
 
 	if raw.haveMerge {

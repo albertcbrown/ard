@@ -18,6 +18,13 @@ type Candidate struct {
 	// The zero value is P0, so callers must set it; labels.Priority returns 2
 	// for an unlabelled item, and scanner runs use 2.
 	Priority int
+	// Agent marks a job that runs a limited agent (agent: claude); it counts
+	// toward the one-job rule (#63).
+	Agent bool
+	// Serial means the job must not start while another Agent job is held or
+	// granted earlier in the same batch. It is set per tick by Options.Annotate
+	// from the current usage reading.
+	Serial bool
 }
 
 // Key returns KeyFor(c.Class, c.Role, c.Number); callers never build keys by hand.
