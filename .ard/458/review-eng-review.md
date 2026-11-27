@@ -1,7 +1,7 @@
 ---
 role: eng-review
 status: done
-attempt: 1
+attempt: 2
 verdict: approve
 findings:
   - file: "internal/initcmd/initcmd.go"
@@ -9,11 +9,14 @@ findings:
     severity: low
     blocking: false
     message: |
-      No test drives `Init`/`run` with a token to check that `AuthKind` reaches `initBody` and that a live token run is no longer refused.
+      No test drives `Init`/`run` with a token-kind `deps` to check that `AuthKind` reaches `initBody` in the PR body.
       `resolveAuth` and `initBody` are each tested, but the wiring between them is not. Consider one `run` case with a token-kind `deps` that asserts the PR body contains "token's user".
 ---
-The change removes the token refusal in `ard init --pr` and reuses serve's `GhFallback`. It words the PR body for both auth kinds and updates the proposal and runbook as the issue asks. `resolveAuth` has table tests for the App, env token, gh fallback, no gh, not logged in and conflicting credentials cases. Approved.
+The change drops the token refusal in `ard init --pr`, reuses serve's `GhFallback`, words the PR body for both auth kinds, and updates the docs as the issue asks. It is approved. The only remaining finding is the non-blocking wiring test gap from the previous round.
 
 ## Checks
-- Lint: `make lint` stops on `internal/roles/testdata/docs/skips/src/_x.go` (a syntax error in a fixture the change did not touch). `go vet ./internal/initcmd` and `go build ./...` are clean.
-- Tests: `go test ./internal/initcmd -cover` passes, 82.3% coverage for the package. `resolveAuth` and the new `initBody` branches are executed by the new tests.
+- Lint: not re-run. The previous round found `make lint` stopping on an untouched fixture, which this round did not change.
+- Tests: `go test ./internal/initcmd -cover` passes with 82.3% coverage. `resolveAuth` and the new `initBody` branches are executed.
+
+## Previous findings
+- internal/initcmd/initcmd.go (wiring test for AuthKind into the PR body): still present, low and non-blocking.
