@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/albertcbrown/ard/internal/closeout"
+	"github.com/albertcbrown/ard/internal/committer"
 	"github.com/albertcbrown/ard/internal/executor"
 	"github.com/albertcbrown/ard/internal/github"
 	"github.com/albertcbrown/ard/internal/gitx/gittest"
@@ -91,11 +93,86 @@ func TestConflictRoundInput(t *testing.T) {
 
 func TestConflictRoundCleanMerge(t *testing.T) {
 	h := newHarness(t)
-	n, branch, _ := conflictSetup(t, h, []string{"a.txt"}, false)
+	n, branch, mainTip := conflictSetup(t, h, []string{"a.txt"}, false)
 	requestConflictRound(t, h, n)
 	cr, err := h.loop.conflictInput(context.Background(), n, branch)
-	if err != nil || !cr.applies || cr.input != nil || len(cr.conflicted) != 0 {
-		t.Fatalf("cr = %+v, err = %v; want a round with no input", cr, err)
+	if err != nil || !cr.applies || !cr.clean || cr.input != nil || len(cr.conflicted) != 0 {
+		t.Fatalf("cr = %+v, err = %v; want a clean round with no input", cr, err)
+	}
+	if cr.mainTip != mainTip || cr.wt == "" || cr.branchTip == "" {
+		t.Errorf("mainTip %q (want %q), wt %q, branchTip %q", cr.mainTip, mainTip, cr.wt, cr.branchTip)
+	}
+	cr.release()
+	if _, err := os.Stat(cr.wt); err == nil {
+		t.Error("release left the scratch worktree")
+	}
+}
+
+// noAgent fails the test when an agent step starts.
+func noAgent(t *testing.T, h *harness) {
+	t.Helper()
+	h.ex.run = func(kind string, j executor.Job, hd executor.Handle) int {
+		if kind == "agent" {
+			t.Error("an agent started in a clean-merge conflict round")
+		}
+		return 0
+	}
+}
+
+func TestConflictRoundCleanMergePushes(t *testing.T) {
+	h := newHarness(t)
+	n, branch, mainTip := conflictSetup(t, h, []string{"a.txt"}, false)
+	requestConflictRound(t, h, n)
+	noAgent(t, h)
+	tip := strings.TrimSpace(gittest.Run(t, h.clone, "rev-parse", localRef(branch)))
+	h.code.shas[0] = tip
+	buf := h.captureLog()
+	h.mustTick()
+	if h.claimed() {
+		t.Errorf("executor jobs = %v, want none", h.ex.ids())
+	}
+	if h.code.n() != 1 {
+		t.Fatalf("commit requests = %d, want 1; issue labels %v", h.code.n(), h.getIssue(n).Labels)
+	}
+	req := h.code.reqs[0]
+	if req.MergeParent != mainTip || req.Base != tip || req.Create {
+		t.Errorf("request merge parent %q base %q create %v; want %q, %q, false", req.MergeParent, req.Base, req.Create, mainTip, tip)
+	}
+	if got := h.code.files[0]["a.txt"]; got != "branch\n" {
+		t.Errorf("committed a.txt = %q", got)
+	}
+	if !strings.Contains(buf.String(), "worker.conflict_clean_merge") {
+		t.Error("worker.conflict_clean_merge not logged")
+	}
+	fc := h.only()
+	if fc.Opts.Worker == nil || !fc.Opts.Worker.Pushed || fc.Opts.Worker.Hold != "" || fc.Opts.Cause.Kind != "" {
+		t.Errorf("finish options %+v, want a pushed result with no hold", fc.Opts)
+	}
+}
+
+func TestConflictRoundCleanMergePushFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		cause closeout.CauseKind
+	}{
+		{"branch moved", committer.ErrConflict, closeout.CauseNoProcess},
+		{"transient", fmt.Errorf("%w: down", committer.ErrTransient), closeout.CausePushTransient},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			n, _, _ := conflictSetup(t, h, []string{"a.txt"}, false)
+			requestConflictRound(t, h, n)
+			noAgent(t, h)
+			h.code.err = tc.err
+			h.mustTick()
+			if h.claimed() {
+				t.Errorf("executor jobs = %v, want none", h.ex.ids())
+			}
+			if got := h.only().Opts.Cause.Kind; got != tc.cause {
+				t.Errorf("cause = %q, want %q", got, tc.cause)
+			}
+		})
 	}
 }
 

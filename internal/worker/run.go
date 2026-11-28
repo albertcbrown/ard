@@ -130,6 +130,9 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 			log.Error("worker.claim_failed", "step", "conflict_input", "error", err)
 			return
 		}
+		if cround.clean {
+			defer cround.release()
+		}
 		if cround.input != nil {
 			inputs = append(inputs, *cround.input)
 			untrusted = append(untrusted, cround.input.Path)
@@ -183,6 +186,12 @@ func (l *Loop) run(ctx context.Context, env controller.Env, cfg *config.Resolved
 		branch: branch, exists: exists, inputs: inputs, untrusted: untrusted}
 	if cround.input != nil {
 		jb.mainTip, jb.conflicted, jb.mergePending = cround.mainTip, cround.conflicted, true
+	}
+	if cround.clean {
+		// Nothing to resolve: the controller merges main itself, no agent runs.
+		jb.mainTip = cround.mainTip
+		jb.cleanMergeRound(ctx, cround)
+		return
 	}
 	jb.exec(ctx)
 }
