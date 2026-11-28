@@ -17,7 +17,7 @@ A scanner finds problems (CVEs, lint, missing tests, docs gaps, secrets) and fil
 
 ## Starter roles
 
-`cve`, `docs`, `error-codes`, `lint`, `missing-tests`, `trufflehog`, `trufflehog-history`.
+`architecture` (an LLM scanner), `cve`, `docs`, `error-codes`, `lint`, `missing-tests`, `trufflehog`, `trufflehog-history`.
 
 ## Config overrides
 

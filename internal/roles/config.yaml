@@ -50,6 +50,8 @@ overrides:
   scanners/trufflehog: { every: 24h, max_open: 5, group_size: 1, autoclose: true, route: needs-human, timeout: 30m }
   # Full git history (read-only mount of the clone); history never goes away, so no autoclose.
   scanners/trufflehog-history: { every: 7d, max_open: 5, group_size: 1, autoclose: false, route: needs-human, timeout: 60m }
+  # LLM scanner: spend per run is capped by max_budget_usd.
+  scanners/architecture: { model: claude-sonnet-5-5, every: 3d, max_open: 3, group_size: 1, timeout: 20m, max_budget_usd: 2 }
   triage/lead:  { model: claude-opus-5-5, timeout: 15m }
   triage/product-manager: { model: claude-opus-5-5 }
   triage/architect: { model: claude-opus-5-5, after: [product-manager] }
