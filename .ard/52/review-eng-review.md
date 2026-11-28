@@ -1,7 +1,7 @@
 ---
 role: eng-review
 status: done
-attempt: 1
+attempt: 2
 verdict: approve
 findings:
   - file: "internal/roles/scanners/architecture/prompt.txt"
@@ -10,9 +10,12 @@ findings:
     message: |
       This prompt ships to every `ard init` adopter and runs unattended on a timer in host mode. internal/roles/ is not in merge.protected_paths, so nothing forces a maintainer to read it. The plan asks for a human read before merge.
 ---
-The change matches plan.md: it adds the embedded `scanners/architecture` prompt, the config override, the embed line, the init PR body bullet, the docs and the tests. The tests pass and I found no blocking problem.
+The change matches plan.md: it adds the embedded `scanners/architecture` prompt, the config override, the embed line, the init PR body bullet, docs and tests. I found no blocking problem. Approved.
 
 ## Checks
-- Lint: `make lint` was not completed. My first combined run with the tests hit the 2-minute timeout, and I did not retry it.
-- Tests: `go test ./internal/roles ./internal/initcmd` passes. The tests cover config loading as an LLM scanner, HostUntrusted, the prompt contract, example decoding with `CheckLLMFingerprints`, and a drift-catching negative case.
+- Tests: `go test ./internal/roles ./internal/initcmd ./internal/config` passes. They cover config loading as an LLM scanner, HostUntrusted, the prompt contract, example decoding with `CheckLLMFingerprints`, a drift-catching negative case, the embedded file list and the init PR body.
+- Lint: `make lint` stopped with `internal/roles/testdata/docs/skips/src/_x.go:3:8: expected ')', found 'EOF'`. That fixture is not touched by the change, so I treat it as pre-existing. I did not get a clean lint result for the changed files.
 - Diff coverage: not measured. The change adds no Go logic apart from the embed line, and the new tests exercise the new prompt and config.
+
+## Previous findings
+- internal/roles/scanners/architecture/prompt.txt (info, human read before merge): still present. It needs no action from the worker.
