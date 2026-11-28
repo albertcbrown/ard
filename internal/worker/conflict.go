@@ -32,6 +32,14 @@ type conflictRound struct {
 	input      *executor.File  // conflict.md; nil when the merge is clean
 	mainTip    string          // the fetched tip of main: the only source of MergeParent
 	conflicted map[string]bool // paths the controller's own trial merge left conflicted
+
+	// clean: the trial merge had no conflicts, so no agent runs. wt is the
+	// scratch worktree holding the uncommitted merge, branchTip the branch
+	// commit it was made on, and release must be called to remove it.
+	clean     bool
+	wt        string
+	branchTip string
+	release   func()
 }
 
 // conflictInput decides whether the issue's newest requested round is a
@@ -60,18 +68,33 @@ func (l *Loop) conflictInput(ctx context.Context, n int, branch string) (conflic
 	if err != nil {
 		return cr, err
 	}
-	defer os.RemoveAll(scratch)
 	wt := filepath.Join(scratch, "wt")
-	if err := d.Git.WorktreeAdd(ctx, d.RepoDir, wt, localRef(branch)); err != nil {
+	keep := false
+	release := func() {
+		_ = d.Git.WorktreeRemove(context.WithoutCancel(ctx), d.RepoDir, wt)
+		_ = os.RemoveAll(scratch)
+	}
+	defer func() {
+		if !keep {
+			release()
+		}
+	}()
+	if cr.branchTip, err = d.Git.RevParse(ctx, d.RepoDir, localRef(branch)); err != nil {
+		return cr, err
+	}
+	if err := d.Git.WorktreeAdd(ctx, d.RepoDir, wt, cr.branchTip); err != nil {
 		return cr, fmt.Errorf("scratch worktree: %w", err)
 	}
-	defer func() { _ = d.Git.WorktreeRemove(context.WithoutCancel(ctx), d.RepoDir, wt) }()
 	paths, err := d.Git.MergeNoCommit(ctx, wt, cr.mainTip)
 	if err != nil {
 		return cr, fmt.Errorf("trial merge: %w", err)
 	}
 	if len(paths) == 0 {
-		return cr, nil // GitHub's view is stale or the conflict is gone: nothing to resolve
+		// GitHub's view is stale or the conflict is gone: nothing to resolve.
+		// The caller merges main itself, with no agent, and releases wt.
+		keep = true
+		cr.clean, cr.wt, cr.release = true, wt, release
+		return cr, nil
 	}
 	sort.Strings(paths)
 	cr.conflicted = map[string]bool{}
